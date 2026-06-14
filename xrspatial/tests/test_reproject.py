@@ -2163,6 +2163,80 @@ class TestCupyPyprojFallbackParity:
                                    rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+class TestCupyMultibandCoordUpload:
+    """Multi-band cupy reproject on the CPU-fallback transform path must
+    move the shared coordinate arrays to the device once per chunk, not
+    once per band (#3268).
+
+    EPSG:4326 -> EPSG:28992 (sterea) has no CUDA transform kernel, so the
+    chunk worker computes coordinates on the CPU and hands numpy arrays to
+    the per-band resample loop.
+    """
+
+    def _make_multiband(self, n_bands):
+        ny, nx = 48, 48
+        y = np.linspace(53.5, 50.5, ny)
+        x = np.linspace(3.5, 7.0, nx)
+        rng = np.random.default_rng(3268)
+        data = rng.random((ny, nx, n_bands))
+        coords = {'y': y, 'x': x, 'band': list(range(1, n_bands + 1))}
+        return data, coords
+
+    def test_coord_uploads_do_not_scale_with_bands(self, monkeypatch):
+        from xrspatial.reproject import reproject
+
+        data, coords = self._make_multiband(6)
+        raster = xr.DataArray(
+            cp.asarray(data), dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+
+        uploads = []
+        orig_asarray = cp.asarray
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.ndim == 2:
+                uploads.append(a.shape)
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(cp, 'asarray', counting_asarray)
+        result = reproject(raster, 'EPSG:28992')
+
+        out_shape = result.shape[:2]
+        coord_uploads = [s for s in uploads if s == out_shape]
+        # One upload each for the shared row and column coordinate arrays,
+        # regardless of the band count. Before #3268 this was 2 * n_bands.
+        # All recorded 2-D upload shapes are included in the failure
+        # message so a future failure shows what extra upload appeared.
+        assert len(coord_uploads) == 2, (
+            f"expected 2 coordinate uploads of shape {out_shape}, got "
+            f"{len(coord_uploads)}; all 2-D ndarray uploads: {uploads}"
+        )
+
+    def test_multiband_fallback_matches_numpy(self):
+        from xrspatial.reproject import reproject
+
+        data, coords = self._make_multiband(3)
+        raster_np = xr.DataArray(
+            data, dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+        raster_cp = xr.DataArray(
+            cp.asarray(data), dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+
+        ref = np.asarray(reproject(raster_np, 'EPSG:28992').data)
+        out = cp.asnumpy(reproject(raster_cp, 'EPSG:28992').data)
+
+        assert ref.shape == out.shape
+        np.testing.assert_array_equal(np.isfinite(ref), np.isfinite(out))
+        finite = np.isfinite(ref) & np.isfinite(out)
+        np.testing.assert_allclose(ref[finite], out[finite],
+                                   rtol=1e-6, atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Dask graph optimization tests
 # ---------------------------------------------------------------------------
@@ -2603,6 +2677,120 @@ class TestSecurityGuards:
 
         with pytest.raises(ValueError, match="too large"):
             merge([a, b], resolution=4e-5)
+
+
+# ---------------------------------------------------------------------------
+# Issue #3267: output-size based promotion to the dask path
+# ---------------------------------------------------------------------------
+
+class TestReprojectOutputSizePromotion:
+    """reproject() must consider the *output* size when deciding between the
+    in-memory and dask paths (#3267). The eager numpy path holds several
+    output-sized float64 temporaries, so a small input upsampled to a large
+    output OOMs long before the pixel-count guard trips.
+    """
+
+    def _patch_threshold(self, monkeypatch, value):
+        import importlib
+        _reproject = importlib.import_module('xrspatial.reproject')
+        monkeypatch.setattr(_reproject, '_REPROJECT_OOM_THRESHOLD', value)
+
+    def test_small_output_stays_numpy(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:3857')
+        assert isinstance(result.data, np.ndarray)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_large_output_auto_promotes_to_dask(self, monkeypatch):
+        """A numpy input whose output exceeds the byte budget comes back
+        dask-backed instead of allocating the whole working set."""
+        from xrspatial.reproject import reproject
+
+        raster = _gradient_raster(h=32, w=32)
+
+        # Reference result on the eager path (budget effectively disabled).
+        self._patch_threshold(monkeypatch, 1 << 60)
+        eager = reproject(raster, 'EPSG:3857', width=128, height=128)
+        assert isinstance(eager.data, np.ndarray)
+
+        # Tiny budget: the same call must promote to the dask path.
+        self._patch_threshold(monkeypatch, 1024)
+        lazy = reproject(raster, 'EPSG:3857', width=128, height=128)
+        assert isinstance(lazy.data, da.Array)
+
+        computed = lazy.compute()
+        np.testing.assert_allclose(
+            eager.values, computed.values,
+            rtol=1e-5, atol=1e-5, equal_nan=True,
+        )
+        np.testing.assert_allclose(eager.y.values, computed.y.values)
+        np.testing.assert_allclose(eager.x.values, computed.x.values)
+        assert eager.attrs['crs'] == computed.attrs['crs']
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_large_output_auto_promotes_3d(self, monkeypatch):
+        """The promotion also covers multi-band inputs."""
+        from xrspatial.reproject import reproject
+
+        h, w, b = 16, 16, 3
+        data = np.random.default_rng(3267).random((h, w, b))
+        raster = xr.DataArray(
+            data, dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(10, 0, h), 'x': np.linspace(0, 10, w),
+                    'band': [1, 2, 3]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+        self._patch_threshold(monkeypatch, 1 << 60)
+        eager = reproject(raster, 'EPSG:3857', width=64, height=64)
+
+        self._patch_threshold(monkeypatch, 1024)
+        lazy = reproject(raster, 'EPSG:3857', width=64, height=64)
+        assert isinstance(lazy.data, da.Array)
+
+        np.testing.assert_allclose(
+            eager.values, lazy.compute().values,
+            rtol=1e-5, atol=1e-5, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_numpy_input_over_pixel_limit_promotes_instead_of_raising(self):
+        """A numpy input whose output exceeds 1e9 pixels promotes to the
+        lazy path rather than tripping the guard, matching merge() (#3048)."""
+        from xrspatial.reproject import reproject
+
+        raster = _make_raster(
+            np.arange(64 * 64, dtype='float64').reshape(64, 64),
+            crs='EPSG:4326',
+            x_range=(-105, -104),
+            y_range=(39, 40),
+        )
+
+        out = reproject(raster, target_crs='EPSG:3857',
+                        resolution=2.0, chunk_size=1024)
+
+        assert isinstance(out.data, da.Array)
+        assert out.shape[0] * out.shape[1] > 1_000_000_000
+        # A single block computes without materializing the whole grid.
+        assert out.data.blocks[0, 0].compute().shape == (1024, 1024)
+
+    def test_inmemory_over_limit_still_raises(self, monkeypatch):
+        """With promotion disabled, the pixel-count guard still rejects a
+        genuinely in-memory output over the limit."""
+        from xrspatial.reproject import reproject
+
+        self._patch_threshold(monkeypatch, 1 << 60)
+
+        raster = _make_raster(
+            np.arange(64 * 64, dtype='float64').reshape(64, 64),
+            crs='EPSG:4326',
+            x_range=(-105, -104),
+            y_range=(39, 40),
+        )
+
+        with pytest.raises(ValueError, match="too large"):
+            reproject(raster, target_crs='EPSG:3857', resolution=2.0)
 
 
 # =====================================================================
@@ -7507,3 +7695,183 @@ class TestNonWgsDatumCudaFastPath:
         np.testing.assert_allclose(
             eager, gpu_arr, rtol=1e-4, atol=1e-4, equal_nan=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# merge() integer dtype round-trip (#3262)
+# ---------------------------------------------------------------------------
+
+class TestMergeIntegerDtype:
+    """merge() casts back to the shared integer input dtype (#3262).
+
+    Matches the reproject() convention (#2505/#3093): integer sources
+    round-trip back to their dtype after the float64 merge; mixed or
+    float inputs keep returning float64.
+    """
+
+    @staticmethod
+    def _tile_3262(x0, dtype=np.int16, fill=None, attrs=None):
+        if fill is None:
+            data = np.arange(64, dtype=dtype).reshape(8, 8)
+        else:
+            data = np.full((8, 8), fill, dtype=dtype)
+        base_attrs = {'crs': 'EPSG:4326'}
+        if attrs:
+            base_attrs.update(attrs)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8),
+                    'x': np.linspace(x0, x0 + 10, 8)},
+            attrs=base_attrs,
+        )
+
+    def test_merge_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5), self._tile_3262(5)])
+        assert result.dtype == np.int16
+
+    def test_merge_uint8_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.uint8),
+                        self._tile_3262(5, np.uint8)])
+        assert result.dtype == np.uint8
+
+    def test_merge_int16_same_crs_values_exact(self):
+        from xrspatial.reproject import merge
+        tile = self._tile_3262(-5)
+        result = merge([tile, self._tile_3262(5)])
+        # Same-CRS direct placement must not perturb integer values.
+        np.testing.assert_array_equal(
+            result.values[:, :8], tile.values,
+        )
+
+    def test_merge_int16_default_nodata_sentinel(self):
+        from xrspatial.reproject import merge
+        # Tiles with a gap between them: the gap must hold the int16
+        # default sentinel, not 0 (NaN collapsed by the cast) -- the
+        # same hazard reproject fixed in #2185.
+        result = merge([self._tile_3262(-20), self._tile_3262(5)])
+        assert result.dtype == np.int16
+        assert result.attrs['nodata'] == np.iinfo(np.int16).min
+        assert (result.values == np.iinfo(np.int16).min).any()
+
+    def test_merge_uint16_default_nodata_sentinel_is_max(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-20, np.uint16),
+                        self._tile_3262(5, np.uint16)])
+        assert result.dtype == np.uint16
+        assert result.attrs['nodata'] == np.iinfo(np.uint16).max
+
+    def test_merge_declared_sentinel_respected(self):
+        from xrspatial.reproject import merge
+        result = merge([
+            self._tile_3262(-20, np.int16, attrs={'nodata': -7}),
+            self._tile_3262(5, np.int16, attrs={'nodata': -7}),
+        ])
+        assert result.dtype == np.int16
+        assert result.attrs['nodata'] == -7.0
+        assert (result.values == -7).any()
+
+    def test_merge_explicit_out_of_range_nodata_raises(self):
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match='nodata'):
+            merge([self._tile_3262(-5, np.uint8),
+                   self._tile_3262(5, np.uint8)], nodata=-9999)
+
+    def test_merge_mixed_dtypes_return_float64(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.int16),
+                        self._tile_3262(5, np.float32)])
+        assert result.dtype == np.float64
+
+    def test_merge_float_inputs_stay_float64(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.float64),
+                        self._tile_3262(5, np.float64)])
+        assert result.dtype == np.float64
+        assert np.isnan(result.attrs['nodata'])
+
+    def test_merge_mean_strategy_rounds_to_int(self):
+        from xrspatial.reproject import merge
+        result = merge([
+            self._tile_3262(-5, np.int16, fill=2),
+            self._tile_3262(-5, np.int16, fill=5),
+        ], strategy='mean')
+        assert result.dtype == np.int16
+        # mean(2, 5) = 3.5 rounds (half-to-even) to 4
+        assert result.values[4, 4] == 4
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        lazy = self._tile_3262(-5).copy(
+            data=da.from_array(
+                np.arange(64, dtype=np.int16).reshape(8, 8), chunks=(4, 4),
+            ),
+        )
+        result = merge([lazy, self._tile_3262(5)])
+        # The lazy graph must advertise the same dtype the chunks return.
+        assert result.data.dtype == np.int16
+        assert result.compute().dtype == np.int16
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import merge
+        # A gap forces no-overlap output chunks; their fills must not
+        # promote the assembled mosaic (#3096 trap).
+        lazy_a = self._tile_3262(-30).copy(
+            data=da.from_array(
+                np.arange(64, dtype=np.int16).reshape(8, 8), chunks=(4, 4),
+            ),
+        )
+        result = merge([lazy_a, self._tile_3262(5)], chunk_size=4)
+        computed = result.compute()
+        assert computed.dtype == np.int16
+        assert (computed.values == np.iinfo(np.int16).min).any()
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy/CUDA required")
+    def test_merge_cupy_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        gpu_a = self._tile_3262(-5).copy(
+            data=cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8)),
+        )
+        gpu_b = self._tile_3262(5).copy(
+            data=cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8)),
+        )
+        result = merge([gpu_a, gpu_b])
+        assert isinstance(result.data, cp.ndarray)
+        assert result.dtype == np.int16
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy/CUDA required")
+    def test_merge_dask_cupy_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+
+        def gpu_lazy_tile(x0):
+            d = cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8))
+            return self._tile_3262(x0).copy(
+                data=da.from_array(d, chunks=(4, 4)),
+            )
+
+        result = merge([gpu_lazy_tile(-5), gpu_lazy_tile(5)])
+        assert result.data.dtype == np.int16
+        computed = result.data.compute()
+        assert isinstance(computed, cp.ndarray)
+        assert computed.dtype == np.int16
+
+    def test_merge_rejects_inf_nodata(self):
+        # Explicit nodata now goes through _detect_nodata, matching
+        # reproject(): inf is rejected because it breaks np.isnan masks.
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match='finite'):
+            merge([self._tile_3262(-5, np.float64),
+                   self._tile_3262(5, np.float64)], nodata=np.inf)
+
+    def test_merge_explicit_int_sentinel_lands_as_float_attr(self):
+        # Same convention as reproject(): the resolved sentinel is a
+        # float even when passed as an int.
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5), self._tile_3262(5)],
+                       nodata=-7)
+        assert result.attrs['nodata'] == -7.0
+        assert isinstance(result.attrs['nodata'], float)

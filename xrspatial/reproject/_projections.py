@@ -135,22 +135,34 @@ _DATUM_PARAMS = {
 }
 
 
+def _crs_to_dict(crs):
+    """``crs.to_dict()`` without pyproj's lossy-PROJ-string UserWarning.
+
+    crs.to_dict() goes through pyproj's to_proj4(), which warns that a
+    PROJ string drops detail. The param extractors here only read short
+    names and numeric projection parameters, never the lossy string, so
+    silence that one warning.
+
+    ``catch_warnings`` swaps process-global filter state and is not
+    thread-safe; callers are expected to hold ``_PARALLEL_KERNEL_LOCK``
+    (all current callers run inside the ``*_locked`` entry points).
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore',
+            message='.*lose important projection information.*',
+            category=UserWarning,
+        )
+        return crs.to_dict()
+
+
 def _get_datum_params(crs):
     """Return (dx, dy, dz, rx, ry, rz, ds, a_src, f_src) for a non-WGS84 datum.
 
     Returns None for WGS84/NAD83/GRS80 (no shift needed).
     """
     try:
-        # crs.to_dict() goes through pyproj's to_proj4(), which warns that a
-        # PROJ string drops detail. We only read the datum/ellps short names
-        # here, never the lossy string, so silence that one warning.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                'ignore',
-                message='.*lose important projection information.*',
-                category=UserWarning,
-            )
-            d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     datum = d.get('datum', '')
@@ -220,25 +232,29 @@ def _authalic_q(sinphi, e):
 
 
 def _authalic_apa(e):
-    """Precompute 6 coefficients for the authalic latitude inverse series.
+    """Precompute coefficients for the authalic latitude inverse series.
 
-    Returns array [APA0..APA5] used by _authalic_inv.
-    6 terms give sub-centimetre accuracy (vs ~4m with 3 terms).
-    Coefficients from Snyder (1987) / Karney (2011).
+    Returns array [APA0..APA5] used by _authalic_inv (terms 4-6 are
+    zero, kept so existing kernel signatures stay unchanged).
+
+    Coefficients match PROJ's pj_authset (Snyder 1987, eq. 3-18):
+    phi = beta + APA0*sin(2*beta) + APA1*sin(4*beta) + APA2*sin(6*beta).
+    Measured against exact numerical inversion of _authalic_q this
+    series is accurate to ~2.5e-10 rad (1.6 mm) for the WGS84
+    eccentricity. The previous coefficients (e.g. 17/360 instead of
+    23/360 at the e^4 order of APA1) did not invert _authalic_q and
+    were off by up to 7.5e-7 rad (~4.8 m); see GH #3274.
     """
     e2 = e * e
     e4 = e2 * e2
     e6 = e4 * e2
-    e8 = e6 * e2
-    e10 = e8 * e2
     apa = np.empty(6, dtype=np.float64)
-    apa[0] = (e2 / 3.0 + 31.0 * e4 / 180.0 + 59.0 * e6 / 560.0
-              + 17141.0 * e8 / 166320.0 + 28289.0 * e10 / 249480.0)
-    apa[1] = 17.0 * e4 / 360.0 + 61.0 * e6 / 1260.0 + 10217.0 * e8 / 120960.0 + 319.0 * e10 / 3024.0
-    apa[2] = 383.0 * e6 / 45360.0 + 34729.0 * e8 / 1814400.0 + 192757.0 * e10 / 5765760.0
-    apa[3] = 6007.0 * e8 / 272160.0 + 36941.0 * e10 / 1270080.0
-    apa[4] = 33661.0 * e10 / 5765760.0
-    apa[5] = 0.0  # 12th order term negligible for Earth
+    apa[0] = e2 / 3.0 + 31.0 * e4 / 180.0 + 517.0 * e6 / 5040.0
+    apa[1] = 23.0 * e4 / 360.0 + 251.0 * e6 / 3780.0
+    apa[2] = 761.0 * e6 / 45360.0
+    apa[3] = 0.0
+    apa[4] = 0.0
+    apa[5] = 0.0
     return apa
 
 
@@ -246,7 +262,7 @@ def _authalic_apa(e):
 def _authalic_inv(beta, apa):
     """Inverse authalic latitude: beta (authalic, rad) -> phi (geodetic, rad).
 
-    6-term Fourier series for sub-centimetre accuracy.
+    Snyder 3-term series (PROJ pj_authlat); ~1.6 mm max error on WGS84.
     """
     t = 2.0 * beta
     return (beta
@@ -308,7 +324,7 @@ def _lcc_params(crs):
     Returns (lon0, lat0, n, c, rho0, k0) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'lcc':
@@ -453,10 +469,12 @@ def _aea_params(crs):
     Returns (lon0, n, c, dd, rho0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'aea':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
         return None
 
     lat_1 = math.radians(d.get('lat_1', 0.0))
@@ -557,10 +575,12 @@ def _cea_params(crs):
     Returns (lon0, k0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'cea':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
         return None
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
@@ -676,7 +696,7 @@ def _sinu_params(crs):
     Returns (lon0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'sinu':
@@ -742,7 +762,7 @@ def _laea_params(crs):
     Or None if not LAEA.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'laea':
@@ -862,13 +882,23 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
         else:
             lam = math.atan2(x_a, -y_a)
     else:  # OBLIQ or EQUIT
-        # PROJ: x /= dd, y *= dd (undo the xmf/ymf scaling)
-        xn = x / (a * xmf)   # = x / (a * rq * dd)
-        yn = y / (a * ymf)   # = y / (a * rq / dd) = y * dd / (a * rq)
+        # PROJ: x /= dd, y *= dd (undo only the dd part of the xmf/ymf
+        # scaling). The rq factor must stay in rho because the angular
+        # distance below divides by rq exactly once. Dividing by
+        # (a * xmf) alone strips rq here and then divides by it again
+        # in sce, which inflated distances by ~0.11% (#3274).
+        xn = x / (a * xmf) * rq   # = x / (a * dd)
+        yn = y / (a * ymf) * rq   # = y * dd / a
         rho = math.hypot(xn, yn)
         if rho < 1e-30:
             return math.degrees(lon0), math.degrees(math.asin(sinb1))
-        sce = 2.0 * math.asin(0.5 * rho / rq)
+        # Clamp the asin argument: points beyond the projection disc
+        # (rho > 2*rq) are invalid input; clamping matches the ratio
+        # clamps elsewhere in this kernel instead of emitting NaN.
+        half_rho_rq = 0.5 * rho / rq
+        if half_rho_rq > 1.0:
+            half_rho_rq = 1.0
+        sce = 2.0 * math.asin(half_rho_rq)
         sinz = math.sin(sce)
         cosz = math.cos(sce)
         if mode == 0:  # OBLIQ
@@ -925,7 +955,7 @@ def _stere_params(crs):
     and generic stere/ups proj definitions with polar lat_0.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     proj = d.get('proj', '')
@@ -1066,7 +1096,7 @@ def _sterea_params(crs):
     Returns (lon0, sinc0, cosc0, R2, C_gauss, K_gauss, ratexp, fe, fn, e) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'sterea':
@@ -1202,7 +1232,7 @@ def _omerc_params(crs):
              singam, cosgam, sinaz, cosaz, BH, AH, e) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'omerc':
@@ -1671,7 +1701,7 @@ def _tmerc_params(crs):
     Zb is the Krueger northing offset for non-zero lat_0.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'tmerc':
@@ -1748,10 +1778,34 @@ def _is_wgs84_compatible_ellipsoid(crs):
     Returns True for WGS84/NAD83 (no shift needed) and for datums
     with known Helmert parameters (NAD27, etc.) since the dispatch
     will wrap the projection with a datum shift.
+
+    CRSes that define the ellipsoid through explicit axes instead of an
+    ``ellps``/``datum`` name are only accepted when the axes match
+    WGS84/GRS80. PROJ normalizes a spherical definition (``+a=R +b=R``)
+    to a single ``R`` key with no ``ellps``, so without the axis check a
+    sphere-based CRS such as the MODIS sinusoidal grid
+    (``+proj=sinu +a=6371007.181 +b=6371007.181``) sailed through the
+    empty-string match and ran the WGS84 kernels, landing ~19 km off
+    (GH #3275).
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
+        return False
+    # Explicit sphere radius: never WGS84-compatible.
+    if 'R' in d:
+        return False
+    # Explicit semi-axes must match WGS84/GRS80. The two ellipsoids
+    # differ by ~1e-4 m in b, so a 0.5 m tolerance keeps GRS80 in while
+    # rejecting every other ellipsoid (Bessel, Clarke, intl, spheres).
+    a_axis = d.get('a')
+    if a_axis is not None and abs(float(a_axis) - _WGS84_A) > 0.5:
+        return False
+    b_axis = d.get('b')
+    if b_axis is not None and abs(float(b_axis) - _WGS84_B) > 0.5:
+        return False
+    rf = d.get('rf')
+    if rf is not None and abs(float(rf) - 1.0 / _WGS84_F) > 0.01:
         return False
     ellps = d.get('ellps', '')
     datum = d.get('datum', '')

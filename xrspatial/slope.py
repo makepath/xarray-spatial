@@ -29,6 +29,7 @@ from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_das
                              _extract_latlon_coords, _pad_array, _validate_boundary,
                              _validate_raster, cuda_args, get_dataarray_resolution, ngjit,
                              warn_if_unit_mismatch)
+from xrspatial.utils import _dask_task_name_kwargs
 
 
 def _geodesic_cuda_dims(shape):
@@ -93,7 +94,8 @@ def _run_dask_numpy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array((), dtype=np.float32))
+                           meta=np.array((), dtype=np.float32),
+                           **_dask_task_name_kwargs('xrspatial.slope'))
     return out
 
 
@@ -109,7 +111,8 @@ def _run_dask_cupy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array((), dtype=cupy.float32))
+                           meta=cupy.array((), dtype=cupy.float32),
+                           **_dask_task_name_kwargs('xrspatial.slope'))
     return out
 
 
@@ -272,6 +275,7 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
         depth=(0, 1, 1),
         boundary={0: np.nan, 1: dask_bnd, 2: dask_bnd},
         meta=np.array((), dtype=np.float32),
+        **_dask_task_name_kwargs('xrspatial.slope'),
     )
     return out[0]
 
@@ -304,6 +308,7 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='na
         depth=(0, 1, 1),
         boundary={0: cupy.nan, 1: dask_bnd, 2: dask_bnd},
         meta=cupy.array((), dtype=cupy.float32),
+        **_dask_task_name_kwargs('xrspatial.slope'),
     )
     return out[0]
 

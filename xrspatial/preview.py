@@ -9,6 +9,7 @@ from xrspatial.utils import (
     has_cuda_and_cupy,
     is_cupy_array,
 )
+from xrspatial.utils import _dask_task_name_kwargs
 
 _COARSEN_METHODS = ('mean', 'median', 'max', 'min')
 _METHODS = (*_COARSEN_METHODS, 'nearest', 'bilinear')
@@ -153,6 +154,7 @@ def _reduce_dask(agg, factor_y, factor_x, method, y_dim, x_dim):
         _reduce_block, data,
         dtype=agg.dtype,
         chunks=(out_chunks_y, out_chunks_x),
+        **_dask_task_name_kwargs('xrspatial.preview'),
     )
 
     out_h = sum(out_chunks_y)
@@ -227,6 +229,7 @@ def _bilinear_dask(agg, out_h, out_w, y_dim, x_dim):
         _zoom_block, agg.data,
         dtype=agg.dtype,
         chunks=(out_chunks_y, out_chunks_x),
+        **_dask_task_name_kwargs('xrspatial.preview'),
     )
 
     coords = {}

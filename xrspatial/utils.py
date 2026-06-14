@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from math import ceil
 import warnings
 
@@ -316,6 +317,29 @@ def _boundary_to_dask(boundary, is_cupy=False):
         'wrap': 'periodic',
     }
     return _mode_map[boundary]
+
+
+@lru_cache(maxsize=1)
+def _map_blocks_name_appends_token():
+    """Whether ``map_blocks(name=...)`` appends a deterministic hash.
+
+    dask 2023.11-2025.x treat ``name=`` as the key prefix and append a
+    token hash; dask >= 2026 reverted to using ``name=`` verbatim and
+    un-deprecated ``token=`` as the prefix spelling (dask#11952).
+    Probe once per process so ``_dask_task_name_kwargs`` picks the
+    spelling that hashes: a verbatim name reused by two computations in
+    one graph silently merges them into one task.
+    """
+    import dask.array as da
+    probe = da.zeros(1, chunks=1).map_blocks(lambda b: b, name='xrspatial-probe')
+    return probe.name != 'xrspatial-probe'
+
+
+def _dask_task_name_kwargs(prefix):
+    """kwargs for ``map_blocks``/``map_overlap`` labeling tasks ``<prefix>-<hash>``."""
+    if _map_blocks_name_appends_token():
+        return {'name': prefix}
+    return {'token': prefix}
 
 
 def _pad_array(data, depth, boundary):

@@ -87,6 +87,7 @@ def _check_gpu_memory(height, width):
 
 from .perlin import _make_perm_table, _perlin, _perlin_gpu, _perlin_gpu_xy
 from .worley import _worley_cpu, _worley_numpy_xy, _worley_gpu, _worley_gpu_xy
+from xrspatial.utils import _dask_task_name_kwargs
 
 
 def _scale(value, old_range, new_range):
@@ -288,7 +289,8 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         return out
 
     return da.map_blocks(_chunk_terrain, data, dtype=np.float32,
-                         meta=np.array((), dtype=np.float32))
+                         meta=np.array((), dtype=np.float32),
+                         **_dask_task_name_kwargs('xrspatial.terrain'))
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +553,8 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         return out
 
     data = da.map_blocks(_chunk_terrain, data, dtype=cupy.float32,
-                         meta=cupy.array((), dtype=cupy.float32))
+                         meta=cupy.array((), dtype=cupy.float32),
+                         **_dask_task_name_kwargs('xrspatial.terrain'))
 
     data = da.clip(data, -1, 1)
     data = (data + 1) / 2

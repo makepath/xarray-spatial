@@ -47,6 +47,16 @@ _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 # to the lazy dask path instead of allocating the whole array.
 _MERGE_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
+# Byte budget above which reproject() auto-promotes an in-memory raster
+# to the lazy dask path. Compared against the input array size and one
+# float64 output array independently, not against total memory: the
+# eager numpy path holds ~7 output-sized float64 temporaries (coordinate
+# grids, pixel-index grids, result), so eager-path peak RSS can reach
+# ~7x this budget. That multiplier is why a small input upsampled to a
+# large output exhausted memory long before the _MAX_OUTPUT_PIXELS
+# guard tripped (#3267).
+_REPROJECT_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
+
 # Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
 # from reproject output matches the convention used by xrspatial.geotiff,
 # which also writes EPSG ints to attrs['vertical_crs'].
@@ -632,6 +642,14 @@ def _reproject_chunk_cupy(
     # signature mismatch (#2027).
     if window.ndim == 3:
         n_bands = window.shape[2]
+        # The coordinate arrays are shared by every band. On the CPU
+        # transform fallback they arrive as numpy; convert them to the
+        # device once here, otherwise _resample_cupy_native re-uploads
+        # the same two chunk-sized arrays on every band iteration (#3268).
+        if not isinstance(local_row, cp.ndarray):
+            local_row = cp.asarray(local_row)
+        if not isinstance(local_col, cp.ndarray):
+            local_col = cp.asarray(local_col)
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(cp.float64)
@@ -714,6 +732,11 @@ def reproject(
     Supports numpy, cupy, dask+numpy, and dask+cupy backends. For dask
     inputs, the computation is fully lazy: each output chunk independently
     reads only the source pixels it needs.
+
+    Numpy inputs whose input or output working set exceeds ~512 MB are
+    routed through the same lazy dask path when dask is installed, so the
+    result is dask-backed in that case. Without dask, a streaming
+    fallback bounds memory via ``max_memory``.
 
     Parameters
     ----------
@@ -961,20 +984,45 @@ def reproject(
     else:
         is_cupy = is_cupy_array(data)
 
-    # For large in-memory datasets, wrap in dask for chunked processing.
-    # map_blocks generates an O(1) HighLevelGraph (single blockwise layer)
-    # so graph metadata is no longer a concern -- the streaming fallback
-    # is only needed when dask itself is unavailable.
+    # Compute the output grid with the size guard disabled: whether the
+    # guard applies depends on the final execution path (a lazy dask
+    # output never materializes the full grid), and the path decision
+    # below needs the output shape. The guard is re-applied after the
+    # path is known -- same pattern merge() uses.
+    grid = _compute_output_grid(
+        src_bounds, src_shape, src_crs, tgt_crs,
+        resolution=resolution, bounds=bounds,
+        width=width, height=height,
+        bounds_policy=bounds_policy,
+        lazy_output=True,
+    )
+    out_bounds = grid['bounds']
+    out_shape = grid['shape']
+
+    # For large workloads, wrap in dask for chunked processing. Both the
+    # input and the output size count: the eager numpy path holds several
+    # output-sized float64 temporaries (coordinate grids, pixel-index
+    # grids, result), so a small input upsampled to a large output can
+    # exhaust memory well before the _MAX_OUTPUT_PIXELS guard trips
+    # (#3267). map_blocks generates an O(1) HighLevelGraph (single
+    # blockwise layer) so graph metadata is no longer a concern -- the
+    # streaming fallback is only needed when dask itself is unavailable.
     _use_streaming = False
     if not is_dask and not is_cupy:
         nbytes = src_shape[0] * src_shape[1] * data.dtype.itemsize
+        out_nbytes = out_shape[0] * out_shape[1] * 8  # float64 working set
         if data.ndim == 3:
             nbytes *= data.shape[2]
-        _OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
-        if nbytes > _OOM_THRESHOLD:
+            out_nbytes *= data.shape[2]
+        if (nbytes > _REPROJECT_OOM_THRESHOLD
+                or out_nbytes > _REPROJECT_OOM_THRESHOLD):
             cs = chunk_size or 2048
             if isinstance(cs, int):
                 cs = (cs, cs)
+            if data.ndim == 3:
+                # Band axis stays one chunk; the per-chunk workers read
+                # all bands of a (y, x) window together.
+                cs = (cs[0], cs[1], data.shape[2])
             try:
                 import dask.array as _da
                 data = _da.from_array(data, chunks=cs)
@@ -987,17 +1035,16 @@ def reproject(
                 # dask not available -- fall back to streaming
                 _use_streaming = True
 
-    # Compute output grid. A dask output is lazy, so the output-size
-    # guard is skipped for it (peak memory is bounded by chunk size).
-    grid = _compute_output_grid(
-        src_bounds, src_shape, src_crs, tgt_crs,
-        resolution=resolution, bounds=bounds,
-        width=width, height=height,
-        bounds_policy=bounds_policy,
-        lazy_output=is_dask,
-    )
-    out_bounds = grid['bounds']
-    out_shape = grid['shape']
+    # Re-apply the output-size guard for paths that materialize the whole
+    # output (in-memory numpy/cupy and streaming). A lazy dask output
+    # skips it because peak memory is bounded by the chunk size.
+    if not is_dask and out_shape[0] * out_shape[1] > _MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"Computed output grid is too large ({out_shape[1]} x "
+            f"{out_shape[0]} = {out_shape[0] * out_shape[1]:,} pixels, "
+            f"limit is {_MAX_OUTPUT_PIXELS:,}). Increase the resolution "
+            f"parameter or reduce the output extent."
+        )
 
     # Output coordinates
     y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
@@ -2207,7 +2254,12 @@ def merge(
     resampling : str
         Interpolation method: 'nearest', 'bilinear', 'cubic'.
     nodata : float or None
-        Nodata value for the output.
+        Nodata value for the output. Auto-detected from the first
+        raster if None. When every input shares one integer dtype, an
+        explicit value that does not fit that dtype range raises
+        ``ValueError``, and an auto-detected NaN falls back to
+        ``dtype.min`` for signed or ``dtype.max`` for unsigned -- the
+        same rules ``reproject`` applies (#2185/#2572).
     strategy : str
         Merge strategy: 'first', 'last', 'mean', 'max', 'min'.
     chunk_size : int or (int, int) or None
@@ -2228,6 +2280,11 @@ def merge(
     Returns
     -------
     xr.DataArray
+        When every input shares the same integer dtype, the mosaic is
+        cast back to that dtype (values rounded and clipped, matching
+        ``reproject``'s integer round-trip). Mixed input dtypes and
+        float inputs produce a float64 mosaic.
+
         The output y coordinate is always emitted in descending order
         (top-down, north-up) regardless of the input direction. This
         matches the standard raster convention and the output of common
@@ -2314,12 +2371,24 @@ def merge(
             "Could not detect target CRS. Pass target_crs explicitly."
         )
 
+    # Output dtype follows the reproject() convention (#3262): when every
+    # input shares one integer dtype, the mosaic is cast back to that
+    # dtype after the float64 merge; mixed dtypes and float inputs return
+    # float64. Resolved before nodata detection so the sentinel gets the
+    # same dtype-aware treatment as reproject() (#2185/#2572): NaN is
+    # swapped for a representable sentinel and an explicit out-of-range
+    # nodata raises.
+    in_dtypes = {np.dtype(r.dtype) for r in rasters}
+    if len(in_dtypes) == 1 and np.issubdtype(next(iter(in_dtypes)), np.integer):
+        out_dtype = next(iter(in_dtypes))
+    else:
+        out_dtype = np.dtype(np.float64)
+
     # Detect output nodata (the sentinel the user asked for). The merge
-    # output is always float64, so NaN is fine as the output sentinel
-    # when the user didn't supply one -- the integer-cast hazard from
-    # #2185 only applies to the per-input ``r_nd`` values that flow into
-    # the per-raster reproject worker.
-    nd = nodata if nodata is not None else _detect_nodata(rasters[0], nodata)
+    # runs in float64 with NaN as the canonical sentinel, so NaN is fine
+    # when the user didn't supply one and the output dtype is float; for
+    # integer output the dtype hint resolves a representable sentinel.
+    nd = _detect_nodata(rasters[0], nodata, dtype=out_dtype)
 
     # Gather source info for each raster
     raster_infos = []
@@ -2450,11 +2519,13 @@ def merge(
         result_data = _merge_dask(
             raster_infos, tgt_wkt, out_bounds, out_shape,
             resampling, nd, strategy, chunk_size, transform_precision,
+            out_dtype=out_dtype,
         )
     else:
         result_data = _merge_inmemory(
             raster_infos, tgt_wkt, out_bounds, out_shape,
             resampling, nd, strategy, transform_precision,
+            out_dtype=out_dtype,
         )
 
     y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
@@ -2646,9 +2717,26 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
     return out_data
 
 
+def _cast_merged_dtype(merged, out_dtype):
+    """Cast a float64 merged mosaic back to an integer output dtype.
+
+    Matches the round/clip/cast convention the reproject() workers use
+    for integer sources (#2505/#3093). Must run after the NaN canonical
+    sentinel has been converted back to the resolved output nodata --
+    for integer ``out_dtype`` that sentinel is guaranteed non-NaN by
+    ``_detect_nodata``'s dtype hint, so no NaN survives to the cast.
+    No-op for float output dtypes.
+    """
+    if np.issubdtype(out_dtype, np.integer):
+        info = np.iinfo(out_dtype)
+        merged = np.clip(np.round(merged), info.min, info.max).astype(out_dtype)
+    return merged
+
+
 def _merge_inmemory(
     raster_infos, tgt_wkt, out_bounds, out_shape,
     resampling, nodata, strategy, transform_precision,
+    out_dtype=np.float64,
 ):
     """In-memory merge using numpy.
 
@@ -2697,7 +2785,7 @@ def _merge_inmemory(
     merged = _merge_arrays_numpy(arrays, float('nan'), strategy)
     if not np.isnan(nodata):
         merged = np.where(np.isnan(merged), nodata, merged)
-    return merged
+    return _cast_merged_dtype(merged, out_dtype)
 
 
 def _merge_block_adapter(
@@ -2708,6 +2796,7 @@ def _merge_block_adapter(
     resampling, nodata, strategy, precision,
     src_footprints_tgt, raster_nodata_list, same_crs_list,
     x_desc_list=None,
+    out_dtype=np.float64,
 ):
     """``map_blocks`` adapter for merge.
 
@@ -2760,16 +2849,19 @@ def _merge_block_adapter(
         arrays.append(arr)
 
     if not arrays:
-        return np.full(chunk_shape, nodata, dtype=np.float64)
+        # Empty-chunk fills must match the template dtype, or a single
+        # no-overlap chunk would promote the assembled output (#3096).
+        return np.full(chunk_shape, nodata, dtype=out_dtype)
     merged = _merge_arrays_numpy(arrays, float('nan'), strategy)
     if not np.isnan(nodata):
         merged = np.where(np.isnan(merged), nodata, merged)
-    return merged
+    return _cast_merged_dtype(merged, out_dtype)
 
 
 def _merge_dask(
     raster_infos, tgt_wkt, out_bounds, out_shape,
     resampling, nodata, strategy, chunk_size, transform_precision,
+    out_dtype=np.float64,
 ):
     """Dask merge backend using ``map_blocks``."""
     import functools
@@ -2824,15 +2916,18 @@ def _merge_dask(
         raster_nodata_list=rnodata_list,
         same_crs_list=same_crs_list,
         x_desc_list=xdesc_list,
+        out_dtype=out_dtype,
     )
 
+    # The template dtype must match what the chunks actually return, or
+    # the graph advertises one dtype and computes another (#3096).
     template = da.empty(
-        out_shape, dtype=np.float64, chunks=(row_chunks, col_chunks)
+        out_shape, dtype=out_dtype, chunks=(row_chunks, col_chunks)
     )
 
     return da.map_blocks(
         bound_adapter,
         template,
-        dtype=np.float64,
-        meta=np.array((), dtype=np.float64),
+        dtype=out_dtype,
+        meta=np.array((), dtype=out_dtype),
     )

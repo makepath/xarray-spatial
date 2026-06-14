@@ -8,6 +8,7 @@ from numba import cuda, jit, prange
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, cuda_args,
                              get_dataarray_resolution, not_implemented_func)
+from xrspatial.utils import _dask_task_name_kwargs
 
 # 3rd-party
 try:
@@ -396,7 +397,8 @@ def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
 
@@ -470,7 +472,8 @@ def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
 

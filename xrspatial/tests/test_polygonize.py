@@ -204,6 +204,34 @@ def test_polygonize_invalid_return_type(raster_3x3):
         polygonize(raster, return_type=return_type)
 
 
+@pytest.mark.parametrize("dtype", [np.uint64])
+def test_polygonize_invalid_return_type_rejected_before_compute(
+        raster_3x3, monkeypatch):
+    # An invalid return_type must raise before the backend runs, not
+    # after the whole raster has been polygonized (#3307).  The error
+    # lists the allowed values, like contours().
+    # importlib because the package re-exports the polygonize function
+    # under the same name as the module.
+    import importlib
+    polygonize_module = importlib.import_module("xrspatial.polygonize")
+
+    calls = []
+    orig = polygonize_module._polygonize_numpy
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(polygonize_module, "_polygonize_numpy", spy)
+    raster = xr.DataArray(raster_3x3)
+    with pytest.raises(
+            ValueError,
+            match="Invalid return_type 'qwerty'") as excinfo:
+        polygonize_module.polygonize(raster, return_type="qwerty")
+    assert calls == []
+    assert "Allowed values are" in str(excinfo.value)
+
+
 @pytest.mark.parametrize(
     "dtype",
     [np.int32, np.int64, np.float32, np.float64])
@@ -232,6 +260,17 @@ def test_polygonize_geojson(raster_3x3, connectivity):
             assert len(ring) >= 4
             # Ring is closed.
             assert ring[0] == ring[-1]
+
+
+@pytest.mark.parametrize("dtype", [np.int32])
+def test_polygonize_geojson_column_name(raster_3x3):
+    # column_name is the property key on each geojson feature (#3306).
+    raster = xr.DataArray(raster_3x3)
+    fc = polygonize(raster, return_type="geojson", column_name="myval")
+    for f in fc["features"]:
+        assert list(f["properties"].keys()) == ["myval"]
+    values = [f["properties"]["myval"] for f in fc["features"]]
+    assert_allclose(values, [0, 1, 4])
 
 
 @pytest.mark.parametrize("transform", [
@@ -1627,6 +1666,35 @@ class TestPolygonizeCRSPropagation:
             raster, return_type="geopandas", simplify_tolerance=0.5)
         assert df.crs is not None
         assert df.crs.to_epsg() == 4326
+
+    def test_no_georef_marker_suppresses_crs(self):
+        """attrs['_xrspatial_no_georef']=True suppresses CRS propagation.
+
+        The geotiff reader emits this attrs shape for a file with CRS
+        geokeys but no geotransform tags (georef_status == 'crs_only').
+        The marker also suppresses transform auto-detection, so the
+        geometries stay in pixel space; attaching the CRS would claim
+        they are in EPSG:4326 coordinates (#3293).
+        """
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            attrs={'crs': 4326, '_xrspatial_no_georef': True})
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
+        # Geometries are in pixel space, consistent with the missing CRS.
+        bounds = df.geometry.total_bounds
+        assert bounds[2] <= 3.0 + 1e-6
+        assert bounds[3] <= 3.0 + 1e-6
+
+    def test_no_georef_marker_suppresses_crs_wkt(self):
+        """The marker suppresses the crs_wkt fallback too (#3293)."""
+        pyproj = pytest.importorskip("pyproj")
+        wkt = pyproj.CRS.from_epsg(4326).to_wkt()
+        raster = self._raster_with_attrs(
+            crs_wkt=wkt, _xrspatial_no_georef=True)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
 
 
 # --- transform attr propagation tests (issue #2536) ---

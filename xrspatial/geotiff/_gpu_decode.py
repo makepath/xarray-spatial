@@ -3129,9 +3129,10 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
             # path. Say so instead of silently compressing at the
             # library default (#3167). The GPU writer calls this
             # function once per IFD part (full resolution plus each
-            # COG overview level); the default warning filter dedups
-            # by location, so normal runs see the message once, but
-            # ``-W always`` repeats it per part.
+            # COG overview level), or once per tile-row band when
+            # streaming dask input (#3166); the default warning filter
+            # dedups by location, so normal runs see the message once,
+            # but ``-W always`` repeats it per call.
             warnings.warn(
                 f"compression_level={compression_level} is ignored by "
                 "the nvCOMP GPU encoder; tiles are compressed at the "

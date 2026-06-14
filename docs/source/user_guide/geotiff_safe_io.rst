@@ -41,10 +41,10 @@ the read and write paths:
        eager numpy reader; dask, GPU, VRT, and remote-URL paths require
        a string. A ``.vrt`` source reads a GDAL mosaic (tier:
        ``advanced``) over a documented subset of the GDAL VRT schema;
-       unsupported features raise ``VRTUnsupportedError`` or
+       unsupported features raise
+       :class:`xrspatial.geotiff.VRTUnsupportedError` or
        :class:`xrspatial.geotiff.UnsupportedGeoTIFFFeatureError` at
-       graph-build time rather than producing wrong pixels. Both error
-       classes live in :mod:`xrspatial.geotiff._errors`.
+       graph-build time rather than producing wrong pixels.
    * - :func:`xrspatial.geotiff.to_geotiff`
      - Write a DataArray to a local path. Pass ``cog=True`` for a
        Cloud-optimized GeoTIFF layout. Pass ``allow_experimental_codecs=True``
@@ -229,7 +229,7 @@ the ambiguous-metadata family at once.
      - ``attrs['nodata']`` and ``attrs['nodatavals']`` disagree on
        write.
      - Resolve in caller code; the writer will not pick one silently.
-   * - ``VRTUnsupportedError``
+   * - :class:`~xrspatial.geotiff.VRTUnsupportedError`
      - The parsed VRT declares a feature the read pipeline does not
        honour (CRS / dtype / band / nodata / transform / pixel-size /
        window / resampling mismatch).

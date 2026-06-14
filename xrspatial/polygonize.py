@@ -905,7 +905,22 @@ def _detect_raster_crs(raster: xr.DataArray):
     2. ``raster.attrs['crs_wkt']``
     3. ``raster.rio.crs`` (rioxarray, if installed)
     4. ``None``
+
+    A raster carrying ``attrs['_xrspatial_no_georef']=True`` (the
+    xrspatial.geotiff "no georeference" marker) always resolves to
+    ``None``, matching ``_detect_raster_transform``.  The geotiff
+    reader emits the marker together with ``attrs['crs']`` for files
+    that have CRS geokeys but no geotransform tags
+    (``georef_status == 'crs_only'``); transform auto-detection is
+    suppressed on that path, so the geometries stay in pixel space and
+    attaching the CRS would misrepresent them (#3293).  The marker
+    suppresses CRS detection even when the caller passes an explicit
+    ``transform=`` -- a caller overriding the opt-out can set the CRS
+    on the result (e.g. ``GeoDataFrame.set_crs``).
     """
+    if raster.attrs.get('_xrspatial_no_georef'):
+        return None
+
     crs_attr = raster.attrs.get('crs')
     if crs_attr is not None:
         return crs_attr
@@ -1126,14 +1141,17 @@ def _to_geojson(
     return {"type": "FeatureCollection", "features": features}
 
 
-def _polygonize_numpy(
+def _polygonize_numpy_regions(
     values: np.ndarray,
     mask: Optional[np.ndarray],
     connectivity_8: bool,
     transform: Optional[np.ndarray],
     atol: float = _DEFAULT_ATOL,
     rtol: float = _DEFAULT_RTOL,
-) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
+) -> Tuple[List[Union[int, float]], List[List[np.ndarray]], np.ndarray]:
+    """Like :func:`_polygonize_numpy` but also returns the flat region
+    labels so callers (the dask chunk path) can reuse them instead of
+    re-running ``_calculate_regions`` on the same block (#3303)."""
 
     ny, nx = values.shape
 
@@ -1165,6 +1183,19 @@ def _polygonize_numpy(
     column, polygon_points = _scan(
         regions, values_flat, mask_flat, connectivity_8, transform, nx, ny)
 
+    return column, polygon_points, regions
+
+
+def _polygonize_numpy(
+    values: np.ndarray,
+    mask: Optional[np.ndarray],
+    connectivity_8: bool,
+    transform: Optional[np.ndarray],
+    atol: float = _DEFAULT_ATOL,
+    rtol: float = _DEFAULT_RTOL,
+) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
+    column, polygon_points, _ = _polygonize_numpy_regions(
+        values, mask, connectivity_8, transform, atol=atol, rtol=rtol)
     return column, polygon_points
 
 
@@ -1202,6 +1233,8 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
     unique_vals = data[valid] if valid is not None else data.ravel()
     unique_vals = cp.unique(unique_vals)
 
+    max_region = int(np.iinfo(_regions_dtype).max)
+
     uid = 1
     for v in unique_vals:
         bin_mask = (data == v)
@@ -1210,6 +1243,16 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
         labeled, n_features = cp_label(bin_mask, structure=structure)
         if n_features == 0:
             continue
+        # Guard against uint32 region-ID exhaustion, mirroring the CPU
+        # _calculate_regions check.  Without it the uint32 addition below
+        # wraps modulo 2**32: the first wrapped ID is 0 (the masked-out
+        # sentinel) and later ones collide with real low region IDs, so
+        # polygons silently vanish or merge instead of erroring.
+        if uid - 1 + int(n_features) > max_region:
+            raise RuntimeError(
+                "polygonize generates too many polygons, "
+                "split your raster into smaller chunks."
+            )
         # Vectorized assignment: offset labeled region IDs by (uid - 1) so
         # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
         where = labeled > 0
@@ -1316,7 +1359,7 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     if mask_block is not None:
         mask_block = _to_numpy(mask_block)
     ny, nx = block.shape
-    column, polygon_points = _polygonize_numpy(
+    column, polygon_points, regions = _polygonize_numpy_regions(
         block, mask_block, connectivity_8, transform=None,
         atol=atol, rtol=rtol)
 
@@ -1331,7 +1374,7 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
         val_ranges, boundary_cells = _compute_region_value_ranges(
             block, mask_block, connectivity_8, atol, rtol, column,
             row_offset=row_offset, col_offset=col_offset,
-            ny_total=ny_total, nx_total=nx_total)
+            ny_total=ny_total, nx_total=nx_total, regions=regions)
     else:
         val_ranges = [(c, c) for c in column]
         boundary_cells = [{} for _ in column]
@@ -1372,16 +1415,113 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     return interior, boundary
 
 
+# Per-pixel companion kernel for _compute_region_value_ranges (#3303).
+# Aggregates per-region (min, max) values and collects the pixels lying on
+# internal chunk edges, recording numpy CCL's direct W / S close test for
+# each.  Runs jitted because the previous pure-Python version of this loop
+# dominated float dask chunk time (~95% of _polygonize_chunk).  Calling
+# _is_close here (in nopython mode) also gives the real boolean result;
+# from pure Python the numba overload generator returns its implementation
+# function instead of a bool, so the old loop recorded always-truthy
+# w_match / s_match flags.
+@ngjit
+def _region_ranges_scan(
+    regions: np.ndarray,               # _regions_dtype, shape (nx_eff*ny,)
+    values_flat: np.ndarray,           # shape (nx_eff*ny,)
+    mask_flat: Optional[np.ndarray],   # shape (nx_eff*ny,)
+    n_regions: int,
+    nx: int,                           # original (un-padded) row length
+    ny: int,
+    nx_eff: int,                       # row length after nx==1 padding
+    left_internal: bool,
+    right_internal: bool,
+    bottom_internal: bool,
+    top_internal: bool,
+    atol: float,
+    rtol: float,
+):
+    val_min = np.empty(n_regions, dtype=values_flat.dtype)
+    val_max = np.empty(n_regions, dtype=values_flat.dtype)
+    has_value = np.zeros(n_regions, dtype=np.bool_)
+
+    # Internal-edge pixels live on at most four one-pixel-wide strips.
+    max_cells = 2 * (nx + ny)
+    cell_ij = np.empty(max_cells, dtype=np.int64)
+    cell_w = np.empty(max_cells, dtype=np.bool_)
+    cell_s = np.empty(max_cells, dtype=np.bool_)
+    n_cells = 0
+
+    for ij in range(len(regions)):
+        r = regions[ij]
+        if r == 0:
+            continue
+        if mask_flat is not None and not mask_flat[ij]:
+            continue
+        idx = r - 1
+        if idx >= n_regions:
+            continue
+        v = values_flat[ij]
+        if not has_value[idx]:
+            has_value[idx] = True
+            val_min[idx] = v
+            val_max[idx] = v
+        else:
+            if v < val_min[idx]:
+                val_min[idx] = v
+            if v > val_max[idx]:
+                val_max[idx] = v
+
+        local_col = ij % nx_eff
+        local_row = ij // nx_eff
+        # nx==1 padded a dummy column; skip it (only local_col 0 is real).
+        if nx == 1 and local_col != 0:
+            continue
+        on_internal = (
+            (left_internal and local_col == 0) or
+            (right_internal and local_col == nx - 1) or
+            (bottom_internal and local_row == 0) or
+            (top_internal and local_row == ny - 1))
+        if on_internal:
+            # Record whether numpy CCL's per-pixel close test matched
+            # this pixel against its in-chunk W / S orthogonal
+            # neighbour.  This mirrors the ``matches_W`` / ``matches_S``
+            # predicates in :func:`_calculate_regions` exactly -- it is
+            # the direct ``_is_close(cur, neighbour)`` test, NOT region
+            # co-membership (two pixels can share a region via a third
+            # path without being directly close).  The 8-conn diagonal
+            # guard (#2677) consults the diagonal only when this
+            # orthogonal test failed, matching numpy's
+            # ``if not matches_W`` / ``if not matches_S`` shortcut.  W
+            # is (local_row, local_col-1); S is (local_row-1, local_col).
+            w_match = (
+                local_col > 0 and
+                (mask_flat is None or mask_flat[ij - 1]) and
+                _is_close(v, values_flat[ij - 1], atol, rtol))
+            s_match = (
+                local_row > 0 and
+                (mask_flat is None or mask_flat[ij - nx_eff]) and
+                _is_close(v, values_flat[ij - nx_eff], atol, rtol))
+            cell_ij[n_cells] = ij
+            cell_w[n_cells] = w_match
+            cell_s[n_cells] = s_match
+            n_cells += 1
+
+    return val_min, val_max, has_value, cell_ij, cell_w, cell_s, n_cells
+
+
 def _compute_region_value_ranges(block, mask_block, connectivity_8,
                                  atol, rtol, column,
                                  row_offset=0, col_offset=0,
-                                 ny_total=None, nx_total=None):
+                                 ny_total=None, nx_total=None,
+                                 regions=None):
     """Return per-region value ranges and internal-boundary cell values.
 
     ``column`` is the polygon-order value list from ``_polygonize_numpy``;
-    the returned lists are parallel to it.  Re-runs the same
-    ``_calculate_regions`` pass used inside ``_polygonize_numpy`` (so
-    region IDs match exactly), then groups pixel values by region.
+    the returned lists are parallel to it.  ``regions`` takes the flat
+    region labels already computed by ``_polygonize_numpy_regions`` for
+    this block; when ``None`` the same ``_calculate_regions`` pass is
+    re-run here (so region IDs match exactly).  Pixel values are then
+    grouped by region in the jitted :func:`_region_ranges_scan` (#3303).
 
     Returns ``(val_ranges, boundary_cells)`` where:
 
@@ -1432,8 +1572,13 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
         nx_eff = nx
 
     mask_flat = full_mask.ravel() if full_mask is not None else None
-    regions = _calculate_regions(
-        values_flat, mask_flat, connectivity_8, nx_eff, ny, atol, rtol)
+    if regions is None:
+        regions = _calculate_regions(
+            values_flat, mask_flat, connectivity_8, nx_eff, ny, atol, rtol)
+    elif len(regions) != nx_eff * ny:
+        raise ValueError(
+            f"regions length {len(regions)} does not match the block's "
+            f"padded flat size {nx_eff * ny}")
 
     # Which chunk edges are internal (shared with a neighbour chunk)?
     track_cells = ny_total is not None and nx_total is not None
@@ -1443,69 +1588,35 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
     top_internal = track_cells and row_offset + ny < ny_total
 
     # Aggregate min/max value per region in raster-scan order so the
-    # output is parallel to the polygon column from _scan.
+    # output is parallel to the polygon column from _scan.  The per-pixel
+    # work runs in the jitted _region_ranges_scan; only the per-region
+    # assembly (tuples and dicts) stays in Python (#3303).
     n_regions = len(column)
     if n_regions == 0:
         return [], []
-    val_min = [None] * n_regions
-    val_max = [None] * n_regions
-    boundary_cells = [None] * n_regions
-    for ij in range(len(regions)):
-        r = regions[ij]
-        if r == 0:
-            continue
-        if mask_flat is not None and not mask_flat[ij]:
-            continue
-        idx = r - 1
-        if idx >= n_regions:
-            continue
-        v = values_flat[ij]
-        if val_min[idx] is None or v < val_min[idx]:
-            val_min[idx] = v
-        if val_max[idx] is None or v > val_max[idx]:
-            val_max[idx] = v
+    val_min, val_max, has_value, cell_ij, cell_w, cell_s, n_cells = \
+        _region_ranges_scan(
+            regions, values_flat, mask_flat, n_regions, nx, ny, nx_eff,
+            bool(left_internal), bool(right_internal),
+            bool(bottom_internal), bool(top_internal), atol, rtol)
 
-        if track_cells:
-            local_col = ij % nx_eff
-            local_row = ij // nx_eff
-            # nx==1 padded a dummy column; skip it (only local_col 0 is real).
-            if nx == 1 and local_col != 0:
-                continue
-            on_internal = (
-                (left_internal and local_col == 0) or
-                (right_internal and local_col == nx - 1) or
-                (bottom_internal and local_row == 0) or
-                (top_internal and local_row == ny - 1))
-            if on_internal:
-                cells = boundary_cells[idx]
-                if cells is None:
-                    cells = {}
-                    boundary_cells[idx] = cells
-                # Record whether numpy CCL's per-pixel close test matched
-                # this pixel against its in-chunk W / S orthogonal
-                # neighbour.  This mirrors the ``matches_W`` / ``matches_S``
-                # predicates in :func:`_calculate_regions` exactly -- it is
-                # the direct ``_is_close(cur, neighbour)`` test, NOT region
-                # co-membership (two pixels can share a region via a third
-                # path without being directly close).  The 8-conn diagonal
-                # guard (#2677) consults the diagonal only when this
-                # orthogonal test failed, matching numpy's
-                # ``if not matches_W`` / ``if not matches_S`` shortcut.  W
-                # is (local_row, local_col-1); S is (local_row-1, local_col).
-                w_match = (
-                    local_col > 0 and
-                    (mask_flat is None or mask_flat[ij - 1]) and
-                    _is_close(v, values_flat[ij - 1], atol, rtol))
-                s_match = (
-                    local_row > 0 and
-                    (mask_flat is None or mask_flat[ij - nx_eff]) and
-                    _is_close(v, values_flat[ij - nx_eff], atol, rtol))
-                cells[(local_col + col_offset, local_row + row_offset)] = (
-                    v, bool(w_match), bool(s_match))
+    boundary_cells = [None] * n_regions
+    for k in range(n_cells):
+        ij = int(cell_ij[k])
+        idx = int(regions[ij]) - 1
+        cells = boundary_cells[idx]
+        if cells is None:
+            cells = {}
+            boundary_cells[idx] = cells
+        local_col = ij % nx_eff
+        local_row = ij // nx_eff
+        cells[(local_col + col_offset, local_row + row_offset)] = (
+            values_flat[ij], bool(cell_w[k]), bool(cell_s[k]))
+
     out = []
     cells_out = []
     for i in range(n_regions):
-        if val_min[i] is None:
+        if not has_value[i]:
             # Fall back to the polygon's representative value if no
             # pixel matched (defensive; shouldn't happen).
             out.append((column[i], column[i]))
@@ -2628,8 +2739,9 @@ def polygonize(
         Optional affine transform to apply to return polygon coordinates.
 
     column_name: str, default="DN"
-        Name to use for column returned.  Only used if return_type is
-        "geopandas" or "spatialpandas".
+        Name to use for the values column.  Used if return_type is
+        "geopandas" or "spatialpandas" (column name) or "geojson"
+        (property key on each feature).
 
     return_type: str, default="numpy"
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
@@ -2700,7 +2812,14 @@ def polygonize(
     the output ``GeoDataFrame``.  The resolution order is
     ``raster.attrs['crs']``, then ``raster.attrs['crs_wkt']``, then
     ``raster.rio.crs`` (if rioxarray is installed).  An unparseable CRS
-    value is dropped rather than raised.  The ``spatialpandas`` and
+    value is dropped rather than raised, and no CRS is attached when the
+    raster carries ``attrs['_xrspatial_no_georef']=True`` (the
+    xrspatial.geotiff "no georeference" marker) -- the marker also
+    suppresses transform auto-detection, leaving the geometries in
+    pixel space, where a CRS would misrepresent them.  The marker
+    suppresses the CRS even when an explicit ``transform=`` is passed;
+    call ``set_crs`` on the result if you are deliberately overriding
+    the opt-out.  The ``spatialpandas`` and
     ``geojson`` return types do not carry CRS metadata: spatialpandas
     has no CRS slot, and GeoJSON (RFC 7946) is WGS84 only.
 
@@ -2743,6 +2862,17 @@ def polygonize(
         raise ValueError(
             f"connectivity must be either 4 or 8, not {connectivity}")
     connectivity_8 = (connectivity == 8)
+
+    # Check return_type before running the (possibly expensive)
+    # polygonize computation, matching contours().  Checking it only at
+    # the dispatch below meant a typo cost the caller the entire
+    # computation before the error surfaced.
+    if return_type not in (
+            "numpy", "awkward", "geopandas", "spatialpandas", "geojson"):
+        raise ValueError(
+            f"Invalid return_type '{return_type}'. Allowed values are "
+            "'numpy', 'awkward', 'geopandas', 'spatialpandas' and "
+            "'geojson'.")
 
     # Check transform.  When the caller did not pass an explicit
     # transform, fall back to one carried on the raster (attrs[
@@ -2824,7 +2954,5 @@ def polygonize(
         return _to_geopandas(column, polygon_points, column_name, crs=crs)
     elif return_type == "spatialpandas":
         return _to_spatialpandas(column, polygon_points, column_name)
-    elif return_type == "geojson":
+    else:  # "geojson"; invalid values were rejected before the computation.
         return _to_geojson(column, polygon_points, column_name)
-    else:
-        raise ValueError(f"Invalid return_type '{return_type}'")

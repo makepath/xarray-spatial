@@ -337,6 +337,15 @@ SUPPORTED_FEATURES = {
     # branches gained round-trip coverage only recently (#3112 pack
     # crash fix, #3114 coverage), so no behavioural promise is made yet.
     'reader.unpack': 'experimental',
+    # ``coregister=True`` on the ``.xrs.open_geotiff`` accessor: an
+    # unpack-and-reproject read that resamples the file onto the
+    # caller's exact grid. Sits at ``experimental``: CPU-only (raises
+    # with ``gpu=True`` / ``.vrt`` sources), forces ``unpack=True``,
+    # and the surface (resampling heuristic, NaN fill outside the file
+    # footprint) can shift without a deprecation window. See the
+    # "Coregistered reads" section in
+    # ``docs/source/reference/geotiff.rst``.
+    'reader.coregister': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
     # ``writer.cog`` is ``stable``: the CPU writer emits a
@@ -1701,7 +1710,10 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
 
 def _pack_fill_nan(chunk, fill):
-    """NaN -> sentinel fill for ``_pack``, at the buffer level.
+    """NaN -> sentinel fill for ``_pack``'s float targets, at the buffer
+    level. Integer targets route through :func:`_pack_restore_int`
+    instead, which assigns the sentinel at the target dtype's native
+    width (issue #3264).
 
     ``DataArray.fillna`` routes through xarray's ``duck_array_ops.where``,
     which breaks on cupy-backed arrays (issue #3112): eager cupy hits
@@ -1719,6 +1731,83 @@ def _pack_fill_nan(chunk, fill):
     out = chunk.copy()
     out[np.isnan(out)] = float(fill)
     return out
+
+
+def _pack_restore_int(chunk, fill, tgt_name):
+    """NaN -> sentinel fill plus integer restore for ``_pack``, at the
+    target dtype's native width.
+
+    Filling the float64 buffer first and casting afterwards corrupts
+    64-bit sentinels above 2**53: ``float(INT64_MAX)`` rounds to 2**63,
+    the cast overflows, and the holes land on INT64_MIN (0 for
+    UINT64_MAX) while the GDAL_NODATA tag still declares the original
+    sentinel, so a masked re-read returns them as valid pixels (issue
+    #3264). Instead, park the holes at zero for the round + cast, then
+    assign the sentinel as a Python int -- exact at any width, the same
+    way the eager and GPU writers fill via ``dtype.type(nodata)``.
+    Works on numpy and cupy chunks alike: ``np.isnan`` dispatches on
+    the array type and the masked assignments take Python scalars.
+
+    Runs :func:`_pack_guard_int_range` between the round and the cast:
+    this is the only integer restore the sentinel path takes, and the
+    chunk is already integer-typed by the time ``_pack``'s body-level
+    guard block runs, so the range / finiteness check (issue #3260)
+    must happen here. ``+/-Inf`` is not NaN and therefore survives the
+    hole mask; the parked holes hold 0.0, in range for every integer
+    dtype, so they pass the guard.
+    """
+    tgt = np.dtype(tgt_name)
+    if chunk.dtype.kind != 'f':
+        # Integer buffers cannot hold NaN; nothing to fill.
+        return chunk.astype(tgt)
+    mask = np.isnan(chunk)
+    out = chunk.copy()
+    out[mask] = 0.0
+    out = out.round()
+    info = np.iinfo(tgt)
+    _pack_guard_int_range(out, tgt.name, float(info.min),
+                          float(int(info.max) + 1))
+    out = out.astype(tgt)
+    out[mask] = int(fill)
+    return out
+
+
+def _pack_guard_int_range(chunk, tgt_name, lo, hi_excl):
+    """Per-chunk range / finiteness guard for ``_pack``'s integer restore.
+
+    Runs after the round and before the ``astype``. Raises ``ValueError``
+    when the chunk holds non-finite values or values outside the target
+    integer dtype's range -- the cast would silently wrap them into
+    valid-looking integers (issue #3260). Returns the chunk unchanged
+    when clean.
+
+    ``lo`` is ``iinfo.min`` and ``hi_excl`` is ``iinfo.max + 1``, both as
+    floats. The exclusive upper bound matters for the 64-bit dtypes:
+    ``float(iinfo.max)`` rounds up to ``2**63`` / ``2**64``, so a
+    ``chunk > float(iinfo.max)`` test would pass a value that still wraps
+    in the cast. ``iinfo.max + 1`` is a power of two for every integer
+    dtype and therefore exact in float64. ``iinfo.min`` is likewise a
+    power of two (or zero) and exact.
+
+    Mapped over dask blocks so the scan fuses with the write's single
+    compute (same shape as :func:`_pack_guard_no_nan`); numpy and cupy
+    buffers are checked eagerly at ``_pack`` call time. ``np.isfinite``
+    and the comparisons dispatch on the array type, so the one function
+    covers all four backends.
+    """
+    if chunk.dtype.kind == 'f':
+        bad = ~np.isfinite(chunk)
+        bad |= chunk < lo
+        bad |= chunk >= hi_excl
+        if bool(bad.any()):
+            raise ValueError(
+                f"pack=True: data contains values that the packed "
+                f"integer dtype {tgt_name} cannot represent (valid "
+                f"range {int(lo)}..{int(hi_excl) - 1} after the "
+                f"scale/offset reversal) or that are not finite; the "
+                f"cast would silently wrap them. Clip the data to the "
+                f"packed range or rescale before writing.")
+    return chunk
 
 
 def _pack_guard_no_nan(chunk, tgt_name):
@@ -1776,12 +1865,16 @@ def _pack(data, nodata=None):
 
     Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, when an integer dtype must be restored but NaN pixels are
-    present with no declared sentinel to fill them, or when the ``nodata``
+    present with no declared sentinel to fill them, when the ``nodata``
     kwarg cannot be represented in the packed integer dtype (out of range
     or fractional) -- the cast would wrap or round the fill value away
-    from what the GDAL_NODATA tag declares.
+    from what the GDAL_NODATA tag declares -- or when any pixel's packed
+    value is non-finite or falls outside the packed integer dtype's
+    range, where the cast would silently wrap it into a valid-looking
+    integer (issue #3260).
 
-    Error timing for the NaN-with-no-sentinel case depends on the
+    Error timing for the NaN-with-no-sentinel and packed-range cases
+    depends on the
     backing: numpy-backed data raises here, at call time. dask-backed
     data defers the scan into the graph (one per-chunk check fused with
     the write's single compute) so the upstream graph is not executed a
@@ -1835,11 +1928,19 @@ def _pack(data, nodata=None):
         # The attrs sentinel fits the source dtype by construction (the
         # reader validated it against GDAL_NODATA). The kwarg has no such
         # guarantee: an out-of-range or fractional value would wrap /
-        # round in the ``astype`` below, silently recreating the
-        # fill-vs-tag disagreement this override exists to prevent.
+        # round in the fill below, silently recreating the fill-vs-tag
+        # disagreement this override exists to prevent. Compare as
+        # integers, not through float(): float64 cannot represent 64-bit
+        # values above 2**53, so a float round-trip rejected INT64_MAX
+        # even though it fits int64 exactly (issue #3264).
         info = np.iinfo(tgt)
-        fv = float(nodata_kwarg)
-        if not (info.min <= fv <= info.max) or fv != int(fv):
+        try:
+            iv = int(nodata_kwarg)
+            representable = (iv == nodata_kwarg
+                             and info.min <= iv <= info.max)
+        except (OverflowError, ValueError):
+            representable = False  # inf / nan
+        if not representable:
             raise ValueError(
                 f"pack=True: nodata={nodata_kwarg!r} cannot be represented "
                 f"in the packed integer dtype {tgt.name} (valid range "
@@ -1853,11 +1954,24 @@ def _pack(data, nodata=None):
         # GDAL_NODATA tag that still declares the sentinel, leaving an
         # inconsistent file that non-masking readers misread (#3078).
         # Not ``fillna``: that routes through xarray's where(), which
-        # crashes on cupy-backed arrays (#3112). ``_pack_fill_nan``
-        # fills at the buffer level on all four backends; dask backings
-        # keep the fill lazy via the same map_blocks shape as the
-        # no-sentinel guard below.
-        if hasattr(out.data, 'dask'):
+        # crashes on cupy-backed arrays (#3112). The helpers fill at the
+        # buffer level on all four backends; dask backings keep the fill
+        # lazy via the same map_blocks shape as the no-sentinel guard
+        # below.
+        if tgt.kind in ('i', 'u'):
+            # Integer restore: fill, round, and cast in one step so the
+            # sentinel is assigned at the target dtype's native width.
+            # Filling the float64 buffer first corrupts 64-bit sentinels
+            # above 2**53 -- INT64_MAX wrapped to INT64_MIN in the cast
+            # while GDAL_NODATA kept declaring INT64_MAX (issue #3264).
+            if hasattr(out.data, 'dask'):
+                out = out.copy(data=out.data.map_blocks(
+                    _pack_restore_int, nodata, tgt.name,
+                    dtype=tgt, meta=out.data._meta.astype(tgt)))
+            else:
+                out = out.copy(
+                    data=_pack_restore_int(out.data, nodata, tgt.name))
+        elif hasattr(out.data, 'dask'):
             out = out.copy(data=out.data.map_blocks(
                 _pack_fill_nan, nodata,
                 dtype=out.dtype, meta=out.data._meta))
@@ -1878,14 +1992,39 @@ def _pack(data, nodata=None):
             out = out.copy(data=out.data.map_blocks(
                 _pack_guard_no_nan, tgt.name,
                 dtype=out.dtype, meta=out.data._meta))
-        elif bool(out.isnull().any()):
-            raise ValueError(
-                f"pack=True: cannot restore integer dtype {tgt.name}: "
-                "NaN pixels are present but no nodata sentinel is "
-                "declared to fill them.")
+        else:
+            # Buffer-level scan, not ``bool(out.isnull().any())``: the
+            # xarray reduction materialises through ``np.asarray`` and
+            # raised TypeError on cupy-backed eager input, crashing
+            # every no-sentinel integer pack on the gpu backend before
+            # the scan could answer (#3260). ``_pack_guard_no_nan``
+            # dispatches ``np.isnan`` on the array type, so numpy and
+            # cupy take the same path here.
+            _pack_guard_no_nan(out.data, tgt.name)
 
-    if tgt.kind in ('i', 'u'):
+    # The integer-with-sentinel path above already rounded and cast at
+    # the chunk level; its ``out`` is integer-typed here, so the round
+    # is skipped and the astype is a no-op cast.
+    if tgt.kind in ('i', 'u') and out.dtype.kind == 'f':
         out = out.round()
+        # Out-of-range and non-finite packed values would silently wrap
+        # in the astype below, exactly the corruption the NaN guard
+        # above exists to prevent: a finite value whose packed form
+        # exceeds the dtype range wraps (40000 -> -25536 in int16), and
+        # +/-Inf casts to a platform-defined integer (issue #3260).
+        # Runs after the round so a value like 32767.4 that rounds back
+        # into range is not rejected. Same eager/lazy split as the NaN
+        # guard: numpy / cupy raise here, dask raises from the write's
+        # single compute.
+        info = np.iinfo(tgt)
+        lo = float(info.min)
+        hi_excl = float(int(info.max) + 1)
+        if hasattr(out.data, 'dask'):
+            out = out.copy(data=out.data.map_blocks(
+                _pack_guard_int_range, tgt.name, lo, hi_excl,
+                dtype=out.dtype, meta=out.data._meta))
+        else:
+            _pack_guard_int_range(out.data, tgt.name, lo, hi_excl)
 
     out = out.astype(tgt)
 

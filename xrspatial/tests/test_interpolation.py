@@ -123,14 +123,67 @@ class TestIDW:
         np.testing.assert_allclose(result.values, [[7.0]])
 
     def test_output_metadata(self):
-        """Output DataArray preserves template coords and dims."""
+        """Output DataArray preserves template coords, dims, and attrs."""
         template = _make_template([0.0, 1.0], [0.0, 1.0])
+        template.attrs['res'] = (1.0, 1.0)
+        template.attrs['crs'] = 'EPSG:4326'
         result = idw([0.0], [0.0], [1.0], template, name='my_idw')
         assert result.name == 'my_idw'
         assert result.dims == template.dims
         assert result.shape == template.shape
+        assert result.attrs == template.attrs
         np.testing.assert_array_equal(result.coords['x'].values,
                                       template.coords['x'].values)
+
+    def test_power_changes_weighting(self):
+        """Non-default power values change the distance weighting.
+
+        One grid pixel at x=1 between points at distance 1 (z=0) and
+        distance 2 (z=10): the IDW estimate is
+        10 * (1/2^p) / (1 + 1/2^p) = 10 / (2^p + 1).
+        """
+        x = np.array([0.0, 3.0])
+        y = np.array([0.0, 0.0])
+        z = np.array([0.0, 10.0])
+        template = _make_template([0.0], [1.0])
+        for power in (1.0, 2.0, 3.0):
+            result = idw(x, y, z, template, power=power)
+            expected = 10.0 / (2.0 ** power + 1.0)
+            np.testing.assert_allclose(
+                result.values, [[expected]],
+                err_msg=f"power={power}")
+
+    def test_fill_value_zero_weight(self):
+        """fill_value is returned when all weights underflow to zero.
+
+        A point at distance ~1e200 with power=4 makes 1/d^p underflow
+        to 0.0, so the pixel has zero total weight and must get
+        fill_value rather than a division result.
+        """
+        template = _make_template([0.0], [0.0])
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(result.values, [[-999.0]])
+
+    @dask_array_available
+    def test_dask_fill_value_zero_weight(self):
+        """Zero-total-weight pixels get fill_value on the dask backend."""
+        template = _make_template([0.0], [0.0], backend='dask')
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(_to_numpy(result), [[-999.0]])
+
+    @cuda_and_cupy_available
+    def test_cupy_fill_value_zero_weight(self):
+        """Zero-total-weight pixels get fill_value on the cupy backend.
+
+        Also covers dask+cupy transitively: _idw_dask_cupy delegates
+        each chunk to _idw_cupy, so this is the same code path.
+        """
+        template = _make_template([0.0], [0.0], backend='cupy')
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(_to_numpy(result), [[-999.0]])
 
     @dask_array_available
     def test_dask_matches_numpy(self):
@@ -197,6 +250,74 @@ class TestIDW:
         dc_result = idw(x, y, z, dc_template)
         np.testing.assert_allclose(
             np_result.values, _to_numpy(dc_result), rtol=1e-10)
+
+    @dask_array_available
+    def test_dask_knearest_builds_tree_once(self, monkeypatch):
+        """The dask k-nearest path builds the cKDTree once, not per chunk.
+
+        The tree depends only on the input points, so the number of
+        constructions must not scale with chunk count (issue #3298).
+        """
+        import scipy.spatial
+
+        orig_tree = scipy.spatial.cKDTree
+        constructions = {'n': 0}
+
+        class CountingTree(orig_tree):
+            def __init__(self, *args, **kwargs):
+                constructions['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(scipy.spatial, 'cKDTree', CountingTree)
+
+        x, y, z = _grid_points()
+        da_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask', chunks=(2, 2))
+        result = idw(x, y, z, da_template, k=3)
+        assert result.data.npartitions == 4
+        result.data.compute(scheduler='synchronous')
+
+        assert constructions['n'] == 1
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_uploads_points_once(self, monkeypatch):
+        """The dask+cupy path uploads the point arrays once.
+
+        The x/y/z arrays are the same for every chunk, so the number of
+        host-to-device transfers of them must not scale with chunk
+        count (issue #3298).
+        """
+        import cupy
+
+        from xrspatial.interpolate import _idw as idw_mod
+
+        n_points = 7
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 2, n_points)
+        y = rng.uniform(0, 2, n_points)
+        z = rng.uniform(0, 2, n_points)
+
+        coords = np.linspace(0.0, 2.0, 8)
+
+        orig_asarray = cupy.asarray
+        uploads = {'n': 0}
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.size == n_points:
+                uploads['n'] += 1
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(idw_mod.cupy, 'asarray', counting_asarray)
+
+        template = _make_template(coords, coords,
+                                  backend='dask_cupy', chunks=(2, 2))
+        result = idw(x, y, z, template)
+        result.data.compute()
+
+        # x_pts, y_pts and z_pts -> exactly three uploads, regardless
+        # of how many chunks the grid was split into.
+        assert uploads['n'] == 3
 
     @cuda_and_cupy_available
     @dask_array_available
@@ -277,6 +398,32 @@ class TestSpline:
         result = spline(x, y, z, template, smoothing=0.0)
         np.testing.assert_allclose(
             result.values, [[10.0, 15.0, 20.0]], atol=1e-6)
+
+    def test_collinear_points_lstsq_fallback(self):
+        """Collinear points fall back to the least-squares solve.
+
+        With all points on the x-axis the P block's y column is zero,
+        the augmented TPS system is exactly singular, and
+        _tps_build_and_solve must recover via lstsq instead of raising.
+        The fitted surface is the line z = 1 + x, constant along y.
+        """
+        x = np.array([0.0, 1.0, 2.0])
+        y = np.array([0.0, 0.0, 0.0])
+        z = np.array([1.0, 2.0, 3.0])
+        template = _make_template([0.0, 1.0], [0.0, 1.0, 2.0])
+        result = spline(x, y, z, template, smoothing=0.0)
+        np.testing.assert_allclose(
+            result.values, [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]], atol=1e-6)
+
+    def test_1x1_template(self):
+        """spline runs end-to-end on a single-pixel template."""
+        x = np.array([0.0, 1.0, 2.0, 0.5])
+        y = np.array([0.0, 0.0, 1.0, 1.5])
+        z = np.array([1.0, 2.0, 3.0, 4.0])
+        template = _make_template([0.5], [0.5])
+        result = spline(x, y, z, template)
+        assert result.shape == (1, 1)
+        assert np.isfinite(result.values[0, 0])
 
     def test_output_metadata(self):
         """Output DataArray preserves template coords, dims, and name."""
@@ -420,6 +567,31 @@ class TestKriging:
         assert isinstance(pred, xr.DataArray)
         assert isinstance(var, xr.DataArray)
         assert pred.shape == var.shape
+        assert pred.name == 'kriging'
+        assert var.name == 'kriging_variance'
+
+    def test_return_variance_name_on_singular_fallback(self, monkeypatch):
+        """Singular-matrix fallback names the variance '{name}_variance'.
+
+        Regression test for #3285: the fallback path returned
+        prediction.copy(), which kept the prediction's name, so both
+        arrays came back with the same name and anything keying on
+        .name (e.g. xr.merge) collapsed the pair.
+        """
+        monkeypatch.setattr(
+            'xrspatial.interpolate._kriging._build_kriging_matrix',
+            lambda *args, **kwargs: None,
+        )
+
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        pred, var = kriging(x, y, z, template, return_variance=True,
+                            name='krig')
+
+        assert pred.name == 'krig'
+        assert var.name == 'krig_variance'
+        assert np.all(np.isnan(pred.values))
+        assert np.all(np.isnan(var.values))
 
     def test_variogram_models(self):
         """All three variogram models should produce finite output."""
@@ -596,6 +768,91 @@ class TestKriging:
         np.testing.assert_allclose(
             np_var.values, _to_numpy(dc_var), atol=1e-12)
 
+    def test_prediction_same_with_and_without_variance(self):
+        """The no-variance fast path agrees with the weight-based path.
+
+        With return_variance=False the prediction comes from the dual
+        form k0 @ (K_inv @ z_aug) instead of the full weight matrix
+        (issue #3298); both must give the same surface up to round-off.
+        """
+        x, y, z = self._spatial_data()
+        template = _make_template(
+            [0.0, 2.0, 4.0], [0.0, 1.0, 2.0, 3.0, 4.0])
+        pred_only = kriging(x, y, z, template)
+        pred_with_var, _ = kriging(x, y, z, template,
+                                   return_variance=True)
+        np.testing.assert_allclose(
+            pred_only.values, pred_with_var.values,
+            rtol=1e-8, atol=1e-10)
+
+    @dask_array_available
+    def test_dask_variance_computed_in_one_pass(self, monkeypatch):
+        """Prediction and variance share one per-chunk pipeline on dask.
+
+        return_variance=True used to build two independent map_blocks
+        graphs, running the full prediction per chunk twice (issue
+        #3298).  Computing both outputs together must invoke
+        _kriging_predict exactly once per chunk.
+        """
+        import dask
+
+        from xrspatial.interpolate import _kriging as kr_mod
+
+        calls = {'n': 0}
+        orig_predict = kr_mod._kriging_predict
+
+        def counting_predict(*args, **kwargs):
+            calls['n'] += 1
+            return orig_predict(*args, **kwargs)
+
+        monkeypatch.setattr(kr_mod, '_kriging_predict', counting_predict)
+
+        x, y, z = self._spatial_data()
+        da_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='dask', chunks=(2, 2))
+        pred, var = kriging(x, y, z, da_template, return_variance=True)
+        n_chunks = pred.data.npartitions
+        assert n_chunks == 4
+        dask.compute(pred.data, var.data, scheduler='synchronous')
+
+        assert calls['n'] == n_chunks
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_uploads_invariants_once(self, monkeypatch):
+        """The dask+cupy path uploads x/y/z and K_inv once.
+
+        These arrays are the same for every chunk; K_inv in particular
+        is (N+1) x (N+1), so re-uploading it per chunk scales transfer
+        volume with N^2 times the chunk count (issue #3298).
+        """
+        import cupy
+
+        from xrspatial.interpolate import _kriging as kr_mod
+
+        x, y, z = self._spatial_data()
+        n = len(x)
+        invariant_sizes = (n, (n + 1) * (n + 1))  # x/y/z and K_inv
+
+        orig_asarray = cupy.asarray
+        uploads = {'n': 0}
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.size in invariant_sizes:
+                uploads['n'] += 1
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(kr_mod.cupy, 'asarray', counting_asarray)
+
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask_cupy', chunks=(2, 2))
+        result = kriging(x, y, z, template)
+        result.data.compute()
+
+        # x_pts, y_pts, z_pts and K_inv -> exactly four uploads,
+        # regardless of how many chunks the grid was split into.
+        assert uploads['n'] == 4
+
     @dask_array_available
     def test_dask_return_variance_matches_numpy(self):
         """Dask+numpy variance matches numpy (exercises _chunk_var)."""
@@ -626,6 +883,139 @@ class TestKriging:
         with pytest.warns(UserWarning, match='fewer than 3'):
             result = kriging(x, y, z, template)
         assert np.all(np.isfinite(result.values))
+
+    @staticmethod
+    def _force_singular(monkeypatch):
+        """Force the K_inv-is-None fallback path in kriging()."""
+        monkeypatch.setattr(
+            'xrspatial.interpolate._kriging._build_kriging_matrix',
+            lambda *args, **kwargs: None,
+        )
+
+    def test_singular_fallback_metadata(self, monkeypatch):
+        """Singular-matrix fallback keeps metadata and names the variance.
+
+        The variance raster must be named '<name>_variance' like the
+        normal path, not inherit the prediction's name (issue #3288).
+        """
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        template.attrs['res'] = (2.0, 2.0)
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert pred.name == 'kriging'
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, np.ndarray)
+            assert result.dims == template.dims
+            assert result.attrs == template.attrs
+            assert result.dtype == np.float64
+            assert np.all(np.isnan(result.values))
+
+    @dask_array_available
+    def test_singular_fallback_dask_stays_lazy(self, monkeypatch):
+        """Singular-matrix fallback returns a lazy dask result (#3288)."""
+        import dask.array as dask_array
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask', chunks=(2, 2))
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, dask_array.Array)
+            assert result.data.chunks == template.data.chunks
+            assert np.all(np.isnan(result.values))
+
+    @cuda_and_cupy_available
+    def test_singular_fallback_cupy_backend(self, monkeypatch):
+        """Singular-matrix fallback returns a cupy-backed result (#3288)."""
+        import cupy
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='cupy')
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, cupy.ndarray)
+            assert np.all(np.isnan(_to_numpy(result)))
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_singular_fallback_dask_cupy_backend(self, monkeypatch):
+        """Singular-matrix fallback keeps the dask+cupy backend (#3288)."""
+        import cupy
+        import dask.array as dask_array
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask_cupy', chunks=(2, 2))
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, dask_array.Array)
+            assert isinstance(result.data._meta, cupy.ndarray)
+            assert np.all(np.isnan(_to_numpy(result)))
+
+    def test_duplicate_points(self):
+        """Duplicate input points produce finite output.
+
+        A repeated point gives a zero pairwise distance in the
+        experimental variogram and two near-identical rows in the
+        kriging matrix; neither may crash or poison the prediction.
+        """
+        x, y, z = self._spatial_data()
+        x = np.append(x, x[0])
+        y = np.append(y, y[0])
+        z = np.append(z, z[0])
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        result = kriging(x, y, z, template)
+        assert np.all(np.isfinite(result.values))
+
+    def test_all_equal_z(self):
+        """All-equal z values (zero variance) predict that constant.
+
+        The experimental variogram is identically zero, which stresses
+        the curve_fit initialisation; the prediction must still come
+        out as the constant everywhere.
+        """
+        x, y, _ = self._spatial_data()
+        z = np.full_like(x, 5.0)
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        result = kriging(x, y, z, template)
+        np.testing.assert_allclose(result.values, 5.0)
+
+    def test_singular_matrix_regularisation_retry(self):
+        """An exactly singular kriging matrix is regularised and solved.
+
+        An all-zero variogram makes the first n rows of K identical
+        ([0, ..., 0, 1]), so the first inversion raises LinAlgError and
+        _build_kriging_matrix must retry with the 1e-10 jitter instead
+        of giving up.
+        """
+        from xrspatial.interpolate._kriging import _build_kriging_matrix
+
+        x = np.array([0.0, 1.0, 2.0])
+        y = np.zeros(3)
+        k_inv = _build_kriging_matrix(x, y, lambda h: np.zeros_like(h))
+        assert k_inv is not None
+        assert np.all(np.isfinite(k_inv))
+
+    def test_1x1_template(self):
+        """kriging runs end-to-end on a single-pixel template."""
+        x, y, z = self._spatial_data()
+        template = _make_template([0.5], [0.5])
+        result = kriging(x, y, z, template)
+        assert result.shape == (1, 1)
+        assert np.isfinite(result.values[0, 0])
 
     def test_output_metadata(self):
         """Output preserves template coords, dims, attrs, and name."""
@@ -703,6 +1093,48 @@ class TestValidation:
         template = _make_template([0.0], [0.5])
         result = idw(x, y, z, template)
         assert np.isfinite(result.values[0, 0])
+
+    def test_inf_points_are_dropped(self):
+        """Inf/-Inf points are removed just like NaN points.
+
+        Only the single finite point survives filtering, so the whole
+        grid takes its value.
+        """
+        x = np.array([0.0, np.inf, 1.0])
+        y = np.array([0.0, 0.0, -np.inf])
+        z = np.array([5.0, 99.0, 77.0])
+        template = _make_template([0.0], [0.5])
+        result = idw(x, y, z, template)
+        np.testing.assert_allclose(result.values, [[5.0]])
+
+    def test_spline_all_inf_points(self):
+        """All-Inf input leaves no valid points and raises."""
+        template = _make_template([0.0], [0.0])
+        with pytest.raises(ValueError, match='no valid'):
+            spline([np.inf], [np.inf], [-np.inf], template)
+
+    @pytest.mark.parametrize('func', [idw, spline, kriging],
+                             ids=['idw', 'spline', 'kriging'])
+    def test_nondefault_dim_names_propagate(self, func):
+        """Templates with lat/lon dims keep those dims in the output.
+
+        Uses the spread-out kriging point set rather than _grid_points
+        so the kriging case fills enough variogram lag bins to avoid
+        the fewer-than-3-bins UserWarning.
+        """
+        x, y, z = TestKriging._spatial_data()
+        data = np.zeros((2, 2))
+        template = xr.DataArray(data, dims=['lat', 'lon'])
+        template['lat'] = np.array([0.5, 1.5])
+        template['lon'] = np.array([0.5, 1.5])
+        result = func(x, y, z, template)
+        assert result.dims == ('lat', 'lon')
+
+    def test_idw_empty_template(self):
+        """A zero-column template yields an empty raster, not an error."""
+        template = _make_template([0.0], [])
+        result = idw([0.0], [0.0], [5.0], template)
+        assert result.shape == (1, 0)
 
 
 # ===================================================================

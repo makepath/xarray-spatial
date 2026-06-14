@@ -34,6 +34,7 @@ from xrspatial.utils import (
     ngjit,
 )
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import _dask_task_name_kwargs
 
 # Neighbor offsets: E, SE, S, SW, W, NW, N, NE
 _DY = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.int64)
@@ -991,6 +992,7 @@ def _assemble_result(fractions_da, boundaries, frac_bdry,
     return da.map_blocks(
         _tile, fractions_da, drop_axis=0,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_length_mfd'),
     )
 
 

@@ -71,9 +71,13 @@ from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDT
                       NonRepresentableEPSGCRSError, NonUniformCoordsError,
                       RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
                       UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
-                      VRTStableSourcesOnlyError)
+                      VRTStableSourcesOnlyError, VRTUnsupportedError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
-from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
+# ``PixelSafetyLimitError`` is defined in ``_layout`` and re-exported by
+# ``_reader`` (the historical import surface); bind it here so callers can
+# catch the ``max_pixels`` rejection without a private-module import.
+from ._reader import (_MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, PixelSafetyLimitError,
+                      UnsafeURLError)
 from ._reader import read_to_array as _read_to_array
 from ._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _GPU_DEPRECATED_SENTINEL,  # noqa: F401
                        _MASK_AND_SCALE_DEPRECATED_SENTINEL, _MASK_NODATA_DEPRECATED_SENTINEL,
@@ -103,6 +107,7 @@ from ._writers.vrt import _build_vrt  # noqa: F401
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'CloudSizeLimitError',
     'ConflictingCRSError',
     'ConflictingNodataError',
     'DuplicateIFDTagError',
@@ -121,6 +126,7 @@ __all__ = [
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
+    'PixelSafetyLimitError',
     'RemoteStableSourcesOnlyError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
@@ -129,6 +135,7 @@ __all__ = [
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
     'VRTStableSourcesOnlyError',
+    'VRTUnsupportedError',
     'open_geotiff',
     'to_geotiff',
 ]
@@ -635,7 +642,9 @@ def open_geotiff(source: str | BinaryIO, *,
         each chunk's decode buffer instead, so a small ``max_pixels``
         no longer rejects a large lazy raster up front. None uses the
         default (~1 billion). Raise it to read legitimately large
-        files.
+        files. Exceeding the cap raises
+        :class:`~xrspatial.geotiff.PixelSafetyLimitError` (a
+        ``ValueError`` subclass).
     max_cloud_bytes : int or None, optional
         [advanced] fsspec cloud reads can run up cost on large objects;
         the budget defends against accidental large downloads but the
@@ -643,7 +652,9 @@ def open_geotiff(source: str | BinaryIO, *,
         Byte ceiling for eager reads from fsspec sources (``s3://``,
         ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...). The
         compressed object size is checked against this budget before
-        any bytes are downloaded. Default is 256 MiB, overridable via
+        any bytes are downloaded; a breach raises
+        :class:`~xrspatial.geotiff.CloudSizeLimitError` (a
+        ``ValueError`` subclass). Default is 256 MiB, overridable via
         the ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var. Pass
         ``None`` to skip the check entirely. The HTTP path already
         reads only what it needs via range requests and is not subject
@@ -710,7 +721,12 @@ def open_geotiff(source: str | BinaryIO, *,
         inverse of the writer's ``pack`` option.
         The applied values are recorded on ``attrs['scale_factor']`` /
         ``attrs['add_offset']``. A source without scale / offset metadata
-        is a no-op. A dataset-level scale / offset, or per-band values that
+        skips the scaling step, but the sentinel-to-NaN mask still runs:
+        a declared nodata sentinel is replaced with NaN and an integer
+        source is promoted to ``float64`` (matching rioxarray's
+        ``mask_and_scale``). Only a source with neither scale / offset
+        metadata nor a nodata sentinel reads unchanged.
+        A dataset-level scale / offset, or per-band values that
         agree across bands, applies to the whole array. A source whose
         per-band scale / offset differ raises ``MixedBandMetadataError``
         unless ``band=`` selects a single band, in which case that band's

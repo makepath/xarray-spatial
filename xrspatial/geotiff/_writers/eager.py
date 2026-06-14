@@ -108,13 +108,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     chunk-rows at once (#3007). COG output (``cog=True``) still
     materialises because overviews need the full array.
 
-    Streaming does NOT apply to the GPU writer. CuPy-backed dask input
-    (dask+cupy) auto-dispatches to the GPU writer, which materialises
-    the entire array on device before encoding;
-    ``streaming_buffer_bytes`` is ignored there and a
-    ``GeoTIFFFallbackWarning`` is emitted when the materialisation
-    happens (issue #3166). The same applies when ``gpu=True`` is passed
-    with any dask-backed input.
+    Dask input routed to the GPU writer (auto-detected dask+cupy, or
+    ``gpu=True`` with any dask backing) also streams: each tile-row
+    band is computed onto the device, compressed, and released before
+    the next, with the per-compute budget capped by
+    ``streaming_buffer_bytes`` (issue #3166). The bound is on device
+    memory only: the GPU writer still assembles the compressed file
+    in host RAM before writing it out, unlike the CPU streaming path,
+    which writes incrementally to disk. The exception is ``cog=True``,
+    which materialises the full array on device because overview
+    generation needs it, and emits a ``GeoTIFFFallbackWarning`` when
+    it does.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
@@ -252,20 +256,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         acceleration; backend parity with the CPU writer is tested for
         the Tier 1 codec set only. Force GPU compression. None
         (default) auto-detects CuPy data, including CuPy-backed dask
-        arrays. Dask-backed input routed to the GPU writer is
-        materialised in full on device (no streaming; see
+        arrays. Dask-backed input routed to the GPU writer streams one
+        tile-row band at a time unless ``cog=True`` (see
         ``streaming_buffer_bytes``).
     streaming_buffer_bytes : int
         [stable] Soft cap on bytes materialised per dask compute call
         when streaming a dask-backed DataArray. Defaults to 256 MB.
         Wide rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Only applies to dask-backed inputs on the
-        CPU write path; the kwarg is a no-op for numpy / CuPy / COG
-        paths (the COG path materialises the full array because the
-        overview pyramid needs it) and for the GPU writer. dask+cupy
-        input auto-dispatches to the GPU writer, so it materialises in
-        full on device instead of streaming and emits a
-        ``GeoTIFFFallbackWarning`` (issue #3166).
+        horizontal segments on the CPU path. On the GPU path the cap
+        bounds the device bytes computed per tile-row band, with a
+        floor of one full-width tile-row (issue #3166). The kwarg is a
+        no-op for in-memory (numpy / CuPy) input and for COG output,
+        which materialises the full array because the overview pyramid
+        needs it; a dask-backed ``cog=True`` GPU write emits a
+        ``GeoTIFFFallbackWarning`` when it materialises.
     max_z_error : float
         [experimental] Per-pixel error budget for LERC compression.
         ``0.0`` (default) is lossless; larger values let the encoder
@@ -386,7 +390,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         integer dtype must be restored, the ``ValueError`` is raised at
         call time for numpy-backed data; for dask-backed data the check
         runs per chunk inside the write's compute (issue #3235), so the
-        error surfaces during the write. The write itself stays atomic
+        error surfaces during the write. The same timing applies to
+        pixels whose packed value is non-finite or falls outside the
+        packed integer dtype's range: the cast would silently wrap
+        them, so the write is refused with ``ValueError`` instead
+        (issue #3260). The write itself stays atomic
         (temp file plus rename), so no partial output is left at the
         destination path.
 
