@@ -375,6 +375,33 @@ def _validate_overview_level_arg(overview_level) -> None:
         )
 
 
+def _validate_compression_level_arg(compression_level) -> None:
+    """Validate the ``compression_level`` kwarg type.
+
+    Accepts ``None`` (default, codec picks its own level) and any
+    ``int`` / ``numpy.integer`` instance. ``bool`` is rejected
+    explicitly because Python treats it as a subclass of ``int``;
+    without the check, ``compression_level=True`` is coerced to ``1``
+    and silently used as level 1. Non-int types like ``str`` and
+    ``list`` would otherwise leak a raw ``TypeError`` from the
+    ``lo <= compression_level <= hi`` range comparison, or pass through
+    unchecked for codecs with no ``_LEVEL_RANGES`` entry.
+
+    Runs in ``to_geotiff`` before the codec-specific range check and
+    before backend dispatch, so every backend (numpy, cupy, dask) sees
+    the same rejection. The out-of-range ``ValueError`` for valid ints
+    is unchanged (#3321).
+    """
+    if compression_level is None:
+        return
+    if (not isinstance(compression_level, (int, np.integer))
+            or isinstance(compression_level, bool)):
+        raise TypeError(
+            f"compression_level must be an int or None, got "
+            f"{type(compression_level).__name__}: {compression_level!r}"
+        )
+
+
 def _validate_gpu_arg(gpu, *, allow_none: bool = False) -> None:
     """Validate the ``gpu`` dispatch flag type.
 

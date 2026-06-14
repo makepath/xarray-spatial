@@ -34,7 +34,8 @@ from .._geotags import RASTER_PIXEL_IS_AREA, GeoTransform
 from .._nodata import NodataLifecycle as _NL
 from .._runtime import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _gpu_fallback_warning_message,
                         _resolve_spatial_coords)
-from .._validation import (_validate_3d_writer_dims, _validate_gpu_arg, _validate_no_rotated_affine,
+from .._validation import (_validate_3d_writer_dims, _validate_compression_level_arg,
+                           _validate_gpu_arg, _validate_no_rotated_affine,
                            _validate_nodata_arg, _validate_tile_size_arg,
                            _validate_writer_spatial_shape, validate_write_metadata)
 from .._writer import _COG_REQUIRES_TILED_MSG, write
@@ -653,6 +654,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             or compression.lower() != 'lerc'):
         raise ValueError(
             "max_z_error is only valid with compression='lerc'")
+
+    # Reject non-int / bool compression_level before the range check so
+    # ``compression_level=True`` is not coerced to level 1 and non-int
+    # junk gets a clear, parameter-named TypeError instead of a raw
+    # comparison error or a silent pass for codecs without a level range
+    # (#3321). Runs for every codec, ahead of backend dispatch.
+    _validate_compression_level_arg(compression_level)
 
     # Validate compression_level against the codec-specific range before
     # any backend dispatch (GPU, VRT, streaming, eager) so every path
