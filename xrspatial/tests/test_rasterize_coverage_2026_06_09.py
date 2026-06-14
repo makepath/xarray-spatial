@@ -5,13 +5,11 @@ pass-2 (2026-05-21), pass-3 (2026-05-27), and pass-4 (2026-05-29) audits.
 Issue #3105.
 
 - ``all_touched=True`` with LineString input had no coverage on any
-  backend.  The flag currently changes polygon handling only: lines burn
-  through Bresenham whether the flag is set or not, so the output matches
-  rasterio's *default* mode rather than its all_touched mode.  Issue
-  #3102 tracks that divergence.  The tests here pin the current contract
-  (all_touched is a no-op for lines) on numpy / cupy / dask+numpy /
-  dask+cupy, plus a strict xfail for rasterio all_touched parity that
-  flips visibly when #3102 lands.
+  backend.  Issue #3102 fixed the flag to route lines through the same
+  supercover (Amanatides & Woo) traversal that polygon boundaries use,
+  so every cell a line crosses is burned.  The tests here pin that
+  behavior on numpy / cupy / dask+numpy / dask+cupy and check rasterio
+  all_touched parity for an off-corner line.
 
 - the non-iterable ``geometries`` TypeError in ``_parse_input``
   (``"geometries must be a GeoDataFrame or iterable of (geometry, value)
@@ -105,55 +103,60 @@ def _line():
 
 
 # ---------------------------------------------------------------------------
-# Cat 4 MEDIUM -- all_touched with line input (issue #3102 pins)
+# Cat 4 MEDIUM -- all_touched with line input (issue #3102)
 # ---------------------------------------------------------------------------
 
-class TestAllTouchedLineNoOp:
-    """Pin the current contract: ``all_touched`` does not affect lines.
+# Off-corner line: every endpoint and crossing lands inside a cell, so
+# the supercover walk and rasterio agree pixel-for-pixel (no exact
+# corner-crossing tie-break to disagree on).
+_OFF_CORNER = [(0.5, 0.7), (4.5, 3.3)]
 
-    ``_run_numpy`` applies the supercover burn to polygon boundary
-    segments only; lines always go through ``_burn_lines_cpu`` (and the
-    GPU / dask tile paths mirror that layout).  Issue #3102 tracks
-    whether lines should join the supercover path.  Until that is
-    decided, pin the no-op on every backend so any behavior change is
-    visible in CI rather than shipping silently.
+
+class TestAllTouchedLineSupercover:
+    """``all_touched`` routes lines through the supercover walk (#3102).
+
+    Before the fix lines always went through ``_burn_lines_cpu`` (and the
+    GPU / dask tile paths mirrored that layout), so ``all_touched=True``
+    returned the same pixels as ``all_touched=False``.  These pin the
+    fixed behavior on every backend.
     """
 
-    @pytest.mark.parametrize('coords', [_DIAG, _INTERIOR],
-                             ids=['corner_crossing', 'interior_crossing'])
     @pytest.mark.parametrize('backend_name,kw', _BACKENDS)
-    def test_line_all_touched_equals_default(self, backend_name, kw, coords):
-        line = LineString(coords)
-        flagged = rasterize([(line, 1.0)], **_GRID,
-                            all_touched=True, **kw)
-        default = rasterize([(line, 1.0)], **_GRID,
-                            all_touched=False, **kw)
-        np.testing.assert_array_equal(
-            _materialise(flagged), _materialise(default))
+    def test_line_all_touched_burns_more_than_default(self, backend_name, kw):
+        line = LineString(_OFF_CORNER)
+        flagged = _materialise(
+            rasterize([(line, 1.0)], **_GRID, all_touched=True, **kw))
+        default = _materialise(
+            rasterize([(line, 1.0)], **_GRID, all_touched=False, **kw))
+        assert int((flagged > 0).sum()) > int((default > 0).sum())
 
-    def test_line_all_touched_burns_bresenham_diagonal(self):
-        """The numpy result is the 5-pixel Bresenham anti-diagonal."""
-        r = rasterize([(_line(), 1.0)], **_GRID, all_touched=True)
-        expected = np.eye(5)[:, ::-1]
-        np.testing.assert_array_equal(r.data, expected)
+    @pytest.mark.parametrize('backend_name,kw', _BACKENDS[1:])
+    def test_line_all_touched_matches_numpy(self, backend_name, kw):
+        """Every backend agrees with the eager numpy supercover burn."""
+        line = LineString(_OFF_CORNER)
+        cpu = _materialise(
+            rasterize([(line, 1.0)], **_GRID, all_touched=True))
+        other = _materialise(
+            rasterize([(line, 1.0)], **_GRID, all_touched=True, **kw))
+        np.testing.assert_array_equal(other, cpu)
 
-    def test_multilinestring_all_touched_equals_default(self):
-        """The MultiLineString explode path is also unaffected."""
-        mls = MultiLineString([_DIAG, [(0.5, 4.5), (4.5, 4.5)]])
+    def test_multilinestring_all_touched_burns_more(self):
+        """The MultiLineString explode path also joins the supercover."""
+        mls = MultiLineString([_OFF_CORNER, [(0.5, 4.5), (4.5, 4.5)]])
         flagged = rasterize([(mls, 1.0)], **_GRID, all_touched=True)
         default = rasterize([(mls, 1.0)], **_GRID, all_touched=False)
-        np.testing.assert_array_equal(flagged.data, default.data)
+        assert int((flagged.data > 0).sum()) > int((default.data > 0).sum())
 
 
 @pytest.mark.skipif(not has_rasterio, reason="rasterio not installed")
 class TestAllTouchedLineRasterioParity:
-    """Where lines + all_touched stand relative to rasterio."""
+    """Lines + all_touched now match rasterio's all_touched burn."""
 
-    def _rio(self, all_touched):
+    def _rio(self, coords, all_touched):
         transform = from_bounds(*_GRID['bounds'],
                                 _GRID['width'], _GRID['height'])
         return rasterio.features.rasterize(
-            [(_line(), 1)],
+            [(LineString(coords), 1)],
             out_shape=(_GRID['height'], _GRID['width']),
             transform=transform,
             fill=0,
@@ -161,23 +164,19 @@ class TestAllTouchedLineRasterioParity:
             dtype='uint8',
         )
 
-    def test_line_all_touched_matches_rasterio_default_mode(self):
-        """Today's output equals rasterio's *default* (Bresenham-style)
-        burn, not its all_touched burn."""
-        r = rasterize([(_line(), 1.0)], **_GRID, all_touched=True)
+    def test_default_line_matches_rasterio_default_mode(self):
+        """all_touched=False still equals rasterio's default burn."""
+        r = rasterize([(_line(), 1.0)], **_GRID, all_touched=False)
         np.testing.assert_array_equal(
-            r.data.astype(np.uint8), self._rio(all_touched=False))
+            r.data.astype(np.uint8), self._rio(_DIAG, all_touched=False))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="all_touched=True is a no-op for lines; supercover burn "
-               "is applied to polygon boundaries only (issue #3102)")
     def test_line_all_touched_matches_rasterio_all_touched(self):
-        """Flips when #3102 plumbs line segments through the supercover
-        burn.  Strict, so the fix must update the no-op pins above."""
-        r = rasterize([(_line(), 1.0)], **_GRID, all_touched=True)
+        """Off-corner line: supercover matches rasterio's all_touched
+        burn pixel-for-pixel."""
+        r = rasterize([(LineString(_OFF_CORNER), 1.0)], **_GRID,
+                      all_touched=True)
         np.testing.assert_array_equal(
-            r.data.astype(np.uint8), self._rio(all_touched=True))
+            r.data.astype(np.uint8), self._rio(_OFF_CORNER, all_touched=True))
 
 
 # ---------------------------------------------------------------------------
