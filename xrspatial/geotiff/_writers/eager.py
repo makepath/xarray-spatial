@@ -1270,7 +1270,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         'no_georef_marker': _has_no_georef_marker(data),
     })
 
-    # Validate compression_level against codec-specific range
+    # Validate compression_level against codec-specific range. Reached
+    # only via to_geotiff, which already rejects non-int / bool
+    # compression_level upstream (#3321), so the range comparison here is
+    # safe on the type.
     if compression_level is not None:
         level_range = _LEVEL_RANGES.get(compression.lower())
         if level_range is not None:
