@@ -150,6 +150,44 @@ class RasterizeLines:
 
 
 # -------------------------------------------------------------------------
+# sum/count dedup path benchmarks (issue #3304)
+#
+# merge='sum' / 'count' take a separate code path that enumerates and
+# deduplicates line / all_touched-boundary cells host-side before
+# burning through the point kernels.  The default-merge benchmarks
+# above never touch it, so regressions there would otherwise be
+# invisible.
+# -------------------------------------------------------------------------
+
+class RasterizeMergeCountDedup:
+    params = ([100, 300, 1000, 3000], ["numpy", "cupy"])
+    param_names = ("nx", "backend")
+
+    def setup(self, nx, backend):
+        if backend == "cupy" and not _has_cupy:
+            raise NotImplementedError("CuPy not available")
+        ny = nx // 2
+        poly_geoms, poly_vals = _make_complex_polygons(n_polys=20,
+                                                       n_vertices=64)
+        self.poly_pairs = list(zip(poly_geoms, poly_vals))
+        line_geoms, line_vals = _make_line_network(n_lines=50, n_vertices=10)
+        self.line_pairs = list(zip(line_geoms, line_vals))
+        self.bounds = (-180, -90, 180, 90)
+        self.width = nx
+        self.height = ny
+        self.gpu = (backend == "cupy")
+
+    def time_count_all_touched_polygons(self, nx, backend):
+        rasterize(self.poly_pairs, width=self.width, height=self.height,
+                  bounds=self.bounds, fill=0, merge='count',
+                  all_touched=True, gpu=self.gpu)
+
+    def time_sum_lines(self, nx, backend):
+        rasterize(self.line_pairs, width=self.width, height=self.height,
+                  bounds=self.bounds, fill=0, merge='sum', gpu=self.gpu)
+
+
+# -------------------------------------------------------------------------
 # Point rasterization benchmarks
 # -------------------------------------------------------------------------
 
