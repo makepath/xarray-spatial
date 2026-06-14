@@ -48,13 +48,14 @@ _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 _MERGE_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
 # Byte budget above which reproject() auto-promotes an in-memory raster
-# to the lazy dask path. Compared against the input array size and one
-# float64 output array independently, not against total memory: the
-# eager numpy path holds ~7 output-sized float64 temporaries (coordinate
-# grids, pixel-index grids, result), so eager-path peak RSS can reach
-# ~7x this budget. That multiplier is why a small input upsampled to a
-# large output exhausted memory long before the _MAX_OUTPUT_PIXELS
-# guard tripped (#3267).
+# (numpy or cupy) to the chunked dask path. Compared against the input
+# array size and one float64 output array independently, not against
+# total memory: the eager numpy path holds ~7 output-sized float64
+# temporaries (coordinate grids, pixel-index grids, result), so
+# eager-path peak RSS can reach ~7x this budget. That multiplier is why a
+# small input upsampled to a large output exhausted memory long before
+# the _MAX_OUTPUT_PIXELS guard tripped (#3267). The same budget gates the
+# cupy promotion added in #3281.
 _REPROJECT_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
 # Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
@@ -1008,7 +1009,7 @@ def reproject(
     # blockwise layer) so graph metadata is no longer a concern -- the
     # streaming fallback is only needed when dask itself is unavailable.
     _use_streaming = False
-    if not is_dask and not is_cupy:
+    if not is_dask:
         nbytes = src_shape[0] * src_shape[1] * data.dtype.itemsize
         out_nbytes = out_shape[0] * out_shape[1] * 8  # float64 working set
         if data.ndim == 3:
@@ -1025,6 +1026,13 @@ def reproject(
                 cs = (cs[0], cs[1], data.shape[2])
             try:
                 import dask.array as _da
+                # Wrapping an in-memory cupy array keeps the blocks
+                # cupy-backed, so is_cupy stays True and the promoted
+                # raster routes through _reproject_dask_cupy -- which has
+                # its own GPU VRAM check and chunked map_blocks fallback.
+                # Above the threshold an in-memory cupy input therefore
+                # yields a dask-of-cupy output, matching merge()'s
+                # promotion contract (#3281).
                 data = _da.from_array(data, chunks=cs)
                 raster = xr.DataArray(
                     data, dims=raster.dims, coords=raster.coords,
@@ -1032,8 +1040,12 @@ def reproject(
                 )
                 is_dask = True
             except ImportError:
-                # dask not available -- fall back to streaming
-                _use_streaming = True
+                # dask not available. The streaming fallback is a numpy
+                # CPU path, so it only applies to numpy inputs; a cupy
+                # input keeps the eager GPU path rather than silently
+                # moving its data off the device (#3281).
+                if not is_cupy:
+                    _use_streaming = True
 
     # Re-apply the output-size guard for paths that materialize the whole
     # output (in-memory numpy/cupy and streaming). A lazy dask output
