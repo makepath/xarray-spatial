@@ -1272,6 +1272,9 @@ def test_dask_gpu_unmaskable_sentinel_plus_dtype_cast_masked_false(tmp_path):
         path, chunks=2, mask_nodata=True,
         allow_invalid_nodata=True, dtype='float32',
     )
+    computed = da.compute().data.get()
+    assert not np.isnan(computed).any()
+    np.testing.assert_array_equal(computed, [[10, 20], [30, 40]])
     assert da.attrs['masked_nodata'] is False
     assert da.attrs['nodata_dtype_cast'] == 'float32'
 
