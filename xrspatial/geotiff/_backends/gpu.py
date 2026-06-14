@@ -1631,6 +1631,11 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
             info = np.iinfo(file_dtype)
             if info.min <= int(nodata) <= info.max:
                 declared_dtype = np.dtype('float64')
+    # Pre-cast dtype: the masking-promotion result before the caller's
+    # ``dtype=`` cast. Drives ``masked_nodata`` so a caller ``dtype=<float>``
+    # cast does not flip the attr True on an unmasked int graph (issue
+    # #3323), matching the eager, dask+numpy, and VRT paths.
+    pre_cast_dtype = declared_dtype
     if dtype is not None:
         declared_dtype = np.dtype(dtype)
 
@@ -1705,9 +1710,11 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     # Share the validate-then-populate-then-stamp block with the
     # dask+numpy backend via ``_finalize_lazy_read_attrs``.
     #
-    # ``graph_dtype`` is the resolved graph dtype so ``masked_nodata``
-    # reflects whether per-chunk masking actually runs in the lazy
-    # graph. ``caller_dtype`` is the user's ``dtype=`` kwarg so
+    # ``graph_dtype`` is ``pre_cast_dtype`` -- the masking-promotion
+    # result before the caller's ``dtype=`` cast -- so ``masked_nodata``
+    # reflects whether per-chunk masking actually runs in the lazy graph,
+    # not whether the caller cast to float (issue #3323).
+    # ``caller_dtype`` is the user's ``dtype=`` kwarg so
     # ``nodata_dtype_cast`` surfaces caller intent, not the
     # masking-induced int->float64 auto-promotion.
     # ``nodata_pixels_present`` stays unset on this path for the same
@@ -1717,7 +1724,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         geo_info=geo_info,
         nodata=nodata,
         mask_nodata=mask_nodata,
-        graph_dtype=declared_dtype,
+        graph_dtype=pre_cast_dtype,
         caller_dtype=dtype,
         window=window,
         allow_rotated=allow_rotated,

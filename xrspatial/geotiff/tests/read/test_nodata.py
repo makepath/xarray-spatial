@@ -1170,6 +1170,116 @@ def test_apply_nodata_mask_gpu_int_fractional_noop():
 
 
 # ===========================================================================
+# masked_nodata reflects masking-promotion, not a caller dtype= cast (#3323)
+# ===========================================================================
+
+
+def test_eager_unmaskable_sentinel_plus_dtype_cast_masked_false(tmp_path):
+    """Eager numpy path: an unmaskable fractional sentinel masks nothing,
+    so an explicit ``dtype='float32'`` cast must not flip
+    ``masked_nodata`` to True (#3323).
+    """
+    path = _build_uint16_tiff_1774('30.5', tmp_path)
+    da = open_geotiff(
+        path, masked=True, allow_invalid_nodata=True, dtype='float32',
+    )
+    # The caller cast lands, but no pixel was converted to NaN.
+    assert da.dtype == np.float32
+    assert not np.isnan(da.values).any()
+    np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
+    assert da.attrs['masked_nodata'] is False
+    # The cast itself is still recorded as caller intent.
+    assert da.attrs['nodata_dtype_cast'] == 'float32'
+
+
+def test_eager_maskable_sentinel_plus_dtype_cast_masked_true(tmp_path):
+    """Eager numpy path positive case: an in-range integer sentinel
+    promotes to float and masks a pixel, so ``masked_nodata`` stays True
+    even though the caller also casts to float32 (#3323).
+    """
+    path = _build_uint16_tiff_1774('30', tmp_path)
+    da = open_geotiff(
+        path, masked=True, allow_invalid_nodata=True, dtype='float32',
+    )
+    assert da.dtype == np.float32
+    assert np.isnan(da.values[1, 0])
+    assert da.attrs['masked_nodata'] is True
+    assert da.attrs['nodata_dtype_cast'] == 'float32'
+
+
+def test_dask_unmaskable_sentinel_plus_dtype_cast_masked_false(tmp_path):
+    """Dask path: the unmaskable-sentinel + dtype-cast scenario must
+    mirror the eager path and keep ``masked_nodata=False`` (#3323).
+    """
+    path = _build_uint16_tiff_1774('30.5', tmp_path)
+    da = _read_geotiff_dask(
+        path, chunks=2, mask_nodata=True,
+        allow_invalid_nodata=True, dtype='float32',
+    )
+    assert da.dtype == np.float32
+    computed = da.compute().values
+    assert not np.isnan(computed).any()
+    np.testing.assert_array_equal(computed, [[10, 20], [30, 40]])
+    assert da.attrs['masked_nodata'] is False
+    assert da.attrs['nodata_dtype_cast'] == 'float32'
+
+
+def test_dask_maskable_sentinel_plus_dtype_cast_masked_true(tmp_path):
+    """Dask path positive case: a maskable sentinel keeps
+    ``masked_nodata=True`` through a caller dtype cast (#3323)."""
+    path = _build_uint16_tiff_1774('30', tmp_path)
+    da = _read_geotiff_dask(
+        path, chunks=2, mask_nodata=True,
+        allow_invalid_nodata=True, dtype='float32',
+    )
+    assert da.dtype == np.float32
+    assert np.isnan(da.compute().values[1, 0])
+    assert da.attrs['masked_nodata'] is True
+    assert da.attrs['nodata_dtype_cast'] == 'float32'
+
+
+def test_eager_float_source_masked_then_dtype_cast_masked_true(tmp_path):
+    """Eager numpy path: a genuinely-masked float source stays
+    ``masked_nodata=True`` when the caller casts to a wider float (#3323).
+    The cast is not the reason the buffer is float; masking is.
+    """
+    arr = np.array([[1.0, 2.0, -9999.0], [4.0, -9999.0, 6.0]],
+                   dtype=np.float32)
+    path = str(tmp_path / 'tmp_3323_float_src.tif')
+    da_in = xr.DataArray(
+        arr,
+        coords={'y': np.array([0.5, 1.5]),
+                'x': np.array([0.5, 1.5, 2.5])},
+        dims=('y', 'x'),
+        attrs={'nodata': -9999.0},
+    )
+    to_geotiff(da_in, path, nodata=-9999.0)
+    da = open_geotiff(path, masked=True, dtype='float64')
+    assert da.dtype == np.float64
+    assert np.isnan(da.values[0, 2])
+    assert da.attrs['masked_nodata'] is True
+    assert da.attrs['nodata_dtype_cast'] == 'float64'
+
+
+@_gpu_only
+def test_dask_gpu_unmaskable_sentinel_plus_dtype_cast_masked_false(tmp_path):
+    """Dask+GPU path: the unmaskable-sentinel + dtype-cast scenario keeps
+    ``masked_nodata=False`` like the eager and dask+numpy paths (#3323)."""
+    from xrspatial.geotiff import _read_geotiff_gpu
+
+    path = _build_uint16_tiff_1774('30.5', tmp_path)
+    da = _read_geotiff_gpu(
+        path, chunks=2, mask_nodata=True,
+        allow_invalid_nodata=True, dtype='float32',
+    )
+    computed = da.compute().data.get()
+    assert not np.isnan(computed).any()
+    np.testing.assert_array_equal(computed, [[10, 20], [30, 40]])
+    assert da.attrs['masked_nodata'] is False
+    assert da.attrs['nodata_dtype_cast'] == 'float32'
+
+
+# ===========================================================================
 # Dropped defensive copies on the read path do not alias buffers
 # ===========================================================================
 

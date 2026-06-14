@@ -521,10 +521,15 @@ def _read_geotiff_dask(source: str, *,
     # Share the validate-then-populate-then-stamp
     # block with the dask+GPU backend via ``_finalize_lazy_read_attrs``.
     #
-    # ``graph_dtype`` is the resolved dask graph dtype so
-    # ``masked_nodata`` reflects whether the per-chunk mask actually
-    # ran (masking on an int source auto-promotes to float64; an
-    # un-promoted int graph means masking didn't run).
+    # ``graph_dtype`` is ``effective_dtype`` -- the pre-cast graph dtype
+    # after the masking-induced int->float64 auto-promotion but BEFORE
+    # the caller's ``dtype=`` cast -- so ``masked_nodata`` reflects
+    # whether the per-chunk mask actually ran (masking on a maskable int
+    # source auto-promotes to float64; an un-promoted int graph means the
+    # sentinel was unmaskable and masking didn't run). Passing the
+    # post-cast ``target_dtype`` would let a caller ``dtype=<float>`` cast
+    # flip ``masked_nodata`` True on an unmasked int graph (issue #3323);
+    # the VRT path already threads its pre-cast dtype for the same reason.
     # ``caller_dtype`` is the caller's ``dtype=`` kwarg verbatim so
     # ``nodata_dtype_cast`` records caller intent rather than the
     # masking-induced auto-promotion.
@@ -538,7 +543,7 @@ def _read_geotiff_dask(source: str, *,
         geo_info=geo_info,
         nodata=nodata_attr,
         mask_nodata=(mask_nodata or mask_and_scale),
-        graph_dtype=target_dtype,
+        graph_dtype=effective_dtype,
         caller_dtype=dtype,
         window=window,
         allow_rotated=allow_rotated,
