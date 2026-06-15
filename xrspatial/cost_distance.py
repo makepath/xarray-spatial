@@ -1332,9 +1332,14 @@ def cost_distance(
     else:
         raise TypeError(f"Unsupported array type: {type(source_data)}")
 
-    return xr.DataArray(
+    result = xr.DataArray(
         result_data,
         coords=raster.coords,
         dims=raster.dims,
         attrs=raster.attrs,
     )
+    # Dask backends leak the internal graph name (e.g. "_trim-..." from
+    # map_overlap) as the DataArray name; force it to the input's name so
+    # all four backends agree.  ``.rename(None)`` is required because the
+    # constructor's ``name=None`` is treated as "infer from data".
+    return result.rename(raster.name)
