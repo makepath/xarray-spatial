@@ -1530,7 +1530,7 @@ class TestFlatAutoLevelsAndEmptyLevels:
         )
         result = contours(raster, levels=[], return_type='numpy')
         assert isinstance(result, list)
-        assert result == []
+        assert len(result) == 0
 
     def test_contours_empty_explicit_levels_geopandas(self):
         """Passing an empty list as levels with geopandas returns empty gdf."""
