@@ -1,2 +1,2 @@
 module,last_inspected,oom_verdict,bottleneck,high_count,issue,notes
-contour,2026-06-15,RISKY,memory-bound,1,3333,batched dask compute fix in PR #3334; cuda-unavailable; MEDIUM Python loops over chunk axes remain
+contour,2026-06-15,WILL OOM,memory-bound,1,,_deduplicate_by_level materializes all segments from all chunks (OOM at 30TB); _process_chunk_numpy unnecessary copy removed; double allocation in dedup fixed

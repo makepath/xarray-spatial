@@ -494,13 +494,11 @@ def _process_chunk_numpy(chunk_data, levels, r_offset, c_offset):
         return []
 
     local_results = _contours_numpy(chunk_data, levels)
-    # Offset coordinates to global raster space.
     offset_results = []
     for level, coords in local_results:
-        shifted = coords.copy()
-        shifted[:, 0] += r_offset
-        shifted[:, 1] += c_offset
-        offset_results.append((level, shifted))
+        coords[:, 0] += r_offset
+        coords[:, 1] += c_offset
+        offset_results.append((level, coords))
     return offset_results
 
 
@@ -528,21 +526,23 @@ def _deduplicate_by_level(results):
     merged = []
     for level in sorted(by_level.keys()):
         lines = by_level[level]
-        # Re-stitch all segments across chunk boundaries.
-        all_segs_r = []
-        all_segs_c = []
-        for line in lines:
-            for i in range(len(line) - 1):
-                all_segs_r.append([line[i, 0], line[i + 1, 0]])
-                all_segs_c.append([line[i, 1], line[i + 1, 1]])
-
-        if not all_segs_r:
+        # Count total segments first so we can pre-allocate.
+        n_segs = sum(len(line) - 1 for line in lines)
+        if n_segs == 0:
             continue
 
-        seg_rows = np.array(all_segs_r, dtype=np.float64)
-        seg_cols = np.array(all_segs_c, dtype=np.float64)
+        seg_rows = np.empty((n_segs, 2), dtype=np.float64)
+        seg_cols = np.empty((n_segs, 2), dtype=np.float64)
 
-        # Remove exact duplicate segments.
+        idx = 0
+        for line in lines:
+            for i in range(len(line) - 1):
+                seg_rows[idx, 0] = line[i, 0]
+                seg_rows[idx, 1] = line[i + 1, 0]
+                seg_cols[idx, 0] = line[i, 1]
+                seg_cols[idx, 1] = line[i + 1, 1]
+                idx += 1
+
         seg_rows, seg_cols = _remove_duplicate_segments(seg_rows, seg_cols)
 
         stitched = _stitch_segments(seg_rows, seg_cols, len(seg_rows))
