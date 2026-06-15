@@ -710,6 +710,40 @@ def test_iterative_no_rechunk_to_single():
         "cost_distance rechunked to a single chunk (OOM risk)"
 
 
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_bounded_large_radius_no_chunk_collapse():
+    """Finite max_cost with radius > chunk size must not collapse chunks.
+
+    Regression for the #880-class OOM on the bounded path: when the pad
+    radius exceeds the chunk size (but is below the full array dimension),
+    map_overlap would silently rechunk toward a single block. The branch
+    must instead route to the iterative tile Dijkstra.
+    """
+    source = np.zeros((100, 100))
+    source[50, 50] = 1.0
+
+    friction_data = np.ones((100, 100))
+
+    raster_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    result_np = cost_distance(raster_np, friction_np, max_cost=95.0)
+
+    raster = _make_raster(source, backend='dask+numpy', chunks=(10, 10))
+    friction = _make_raster(friction_data, backend='dask+numpy', chunks=(10, 10))
+
+    # pad = 96 > chunk size 10 but < full dim 100
+    with pytest.warns(UserWarning, match="iterative tile Dijkstra"):
+        result = cost_distance(raster, friction, max_cost=95.0)
+
+    # The result must keep more than one chunk per axis (no collapse).
+    assert result.data.npartitions > 1, \
+        "bounded large-radius path collapsed to a single chunk (OOM risk)"
+
+    np.testing.assert_allclose(
+        _compute(result), result_np.data, equal_nan=True, atol=1e-4,
+    )
+
+
 # -----------------------------------------------------------------------
 # Memory guard on numpy path (Issue #1252)
 # -----------------------------------------------------------------------

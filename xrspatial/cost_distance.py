@@ -1160,7 +1160,15 @@ def _cost_distance_dask(source_da, friction_da, cellsize_x, cellsize_y,
 
     pad = int(max_radius + 1) if np.isfinite(max_radius) else max_dim
 
-    if not np.isfinite(max_radius) or pad >= height or pad >= width:
+    # map_overlap's depth must not exceed the chunk size; a larger depth makes
+    # dask rechunk toward bigger (eventually single) blocks, defeating
+    # out-of-core processing.  Compare pad against the chunk size, not the full
+    # array dimensions (matches the dask+cupy guard).
+    max_chunk_y = max(source_da.chunks[0])
+    max_chunk_x = max(source_da.chunks[1])
+
+    if (not np.isfinite(max_radius)
+            or pad >= max_chunk_y or pad >= max_chunk_x):
         # Use iterative tile Dijkstra — bounded memory, no single-chunk rechunk
         import warnings
         warnings.warn(
