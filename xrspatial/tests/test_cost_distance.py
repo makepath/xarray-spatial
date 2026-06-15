@@ -759,6 +759,31 @@ def test_numpy_memory_guard_passes_for_small_raster():
     np.testing.assert_allclose(out[0, 1], 1.0, atol=1e-5)
 
 
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dask_map_overlap_chunk_memory_guard_raises():
+    """The numpy map_overlap chunk path also honours _check_memory (#3343)."""
+    from unittest.mock import patch
+
+    source = np.zeros((16, 16))
+    source[0, 0] = 1.0
+    friction = np.ones((16, 16))
+
+    # finite max_cost with friction=1, cellsize=1 -> pad=3, which is < the
+    # 8x8 chunk size, so the per-chunk map_overlap path is taken (not the
+    # iterative tile Dijkstra).
+    raster = _make_raster(source, backend='dask+numpy', chunks=(8, 8))
+    fric = _make_raster(friction, backend='dask+numpy', chunks=(8, 8))
+
+    result = cost_distance(raster, fric, max_cost=2.0)
+
+    # The guard runs inside the dask task, so it fires at compute time.
+    with patch(
+        'xrspatial.cost_distance._available_memory_bytes', return_value=1000
+    ):
+        with pytest.raises(MemoryError, match="max_cost"):
+            result.compute()
+
+
 # -----------------------------------------------------------------------
 # Memory guard on CuPy GPU path (Issue #1262)
 # -----------------------------------------------------------------------

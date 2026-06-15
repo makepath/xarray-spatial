@@ -1125,6 +1125,7 @@ def _make_chunk_func(cellsize_x, cellsize_y, max_cost, target_values,
 
     def _chunk(source_block, friction_block):
         h, w = source_block.shape
+        _check_memory(h, w)
         return _cost_distance_kernel(
             source_block, friction_block, h, w,
             cellsize_x, cellsize_y, max_cost,
