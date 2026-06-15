@@ -36,6 +36,12 @@ except ImportError:
     cuda = None
 
 
+# Maximum number of delayed chunk tasks to submit in a single dask.compute
+# call.  Batching bounds peak client memory and reduces scheduler pressure
+# when a large dask-backed raster has many chunks.
+_DASK_COMPUTE_BATCH_SIZE = 64
+
+
 def _available_memory_bytes():
     """Best-effort estimate of available memory in bytes."""
     try:
@@ -421,7 +427,20 @@ def _contours_dask(data, levels):
     Uses ``dask.array.overlap.overlap`` to give each chunk a 1-cell halo
     so that 2x2 quads at chunk boundaries are processed by both neighbors.
     Duplicate segments are removed during the merge/stitch step.
+
+    Chunk results are computed in batches so peak client memory scales
+    with a batch of chunks rather than the total number of chunks.
     """
+    return _contours_dask_generic(data, levels, _process_chunk_numpy)
+
+
+def _contours_dask_cupy(data, levels):
+    """Dask+CuPy backend: overlap chunks, transfer each to CPU."""
+    return _contours_dask_generic(data, levels, _process_chunk_cupy)
+
+
+def _contours_dask_generic(data, levels, process_chunk):
+    """Shared dask backend implementation with batched chunk execution."""
     if da is None:
         raise ImportError("Dask is required for chunked contour extraction")
 
@@ -439,50 +458,22 @@ def _contours_dask(data, levels):
             # Padded chunk has 1-cell halo on each side (NaN at edges).
             # Global coordinate of the padded chunk's (0,0) is
             # (r_off - 1, c_off - 1).
-            result = dask.delayed(_process_chunk_numpy)(
+            result = dask.delayed(process_chunk)(
                 chunk, levels, r_off - 1, c_off - 1
             )
             all_results.append(result)
             c_off += csize
         r_off += rsize
 
-    chunk_results = dask.compute(*all_results)
-
+    # Compute chunk results in batches to bound peak client memory and
+    # scheduler pressure on large rasters.
     merged = []
-    for chunk_lines in chunk_results:
-        merged.extend(chunk_lines)
-
-    return _deduplicate_by_level(merged)
-
-
-def _contours_dask_cupy(data, levels):
-    """Dask+CuPy backend: overlap chunks, transfer each to CPU."""
-    if da is None:
-        raise ImportError("Dask is required for chunked contour extraction")
-
-    padded = _overlap_for_contours(data)
-    orig_row_chunks = data.chunks[0]
-    orig_col_chunks = data.chunks[1]
-    padded_blocks = padded.to_delayed()
-
-    all_results = []
-    r_off = 0
-    for ri, rsize in enumerate(orig_row_chunks):
-        c_off = 0
-        for ci, csize in enumerate(orig_col_chunks):
-            chunk = padded_blocks[ri, ci]
-            result = dask.delayed(_process_chunk_cupy)(
-                chunk, levels, r_off - 1, c_off - 1
-            )
-            all_results.append(result)
-            c_off += csize
-        r_off += rsize
-
-    chunk_results = dask.compute(*all_results)
-
-    merged = []
-    for chunk_lines in chunk_results:
-        merged.extend(chunk_lines)
+    batch_size = _DASK_COMPUTE_BATCH_SIZE
+    for i in range(0, len(all_results), batch_size):
+        batch = all_results[i:i + batch_size]
+        batch_results = dask.compute(*batch)
+        for chunk_lines in batch_results:
+            merged.extend(chunk_lines)
 
     return _deduplicate_by_level(merged)
 
