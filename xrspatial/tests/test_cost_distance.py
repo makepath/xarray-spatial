@@ -304,6 +304,48 @@ def test_target_values(backend):
     np.testing.assert_allclose(out[0, 1], 2.0, atol=1e-5)
 
 
+def test_target_values_default_is_none_sentinel():
+    """target_values default is the None sentinel, not a shared mutable list.
+
+    Regression for issue #3340: a mutable default (``list = []``) shares one
+    list object across calls. cost_distance uses the ``None`` sentinel like
+    proximity()/allocation() do.
+    """
+    import inspect
+
+    default = inspect.signature(cost_distance).parameters['target_values'].default
+    assert default is None
+
+
+def test_target_values_none_matches_empty_list():
+    """Omitting target_values, passing None, and passing [] are equivalent.
+
+    All three mean "every non-zero finite pixel is a source".
+    """
+    source = np.array([
+        [7.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    friction_data = np.ones((3, 3))
+    raster = _make_raster(source)
+    friction = _make_raster(friction_data)
+
+    out_omitted = _compute(cost_distance(raster, friction))
+    out_none = _compute(cost_distance(raster, friction, target_values=None))
+    out_empty = _compute(cost_distance(raster, friction, target_values=[]))
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(out_omitted), np.nan_to_num(out_none)
+    )
+    np.testing.assert_array_equal(
+        np.nan_to_num(out_omitted), np.nan_to_num(out_empty)
+    )
+    # Both non-zero finite pixels are sources (cost 0).
+    assert out_omitted[0, 0] == 0.0
+    assert out_omitted[2, 2] == 0.0
+
+
 # -----------------------------------------------------------------------
 # Lazy coordinate arrays for dask input
 # -----------------------------------------------------------------------
