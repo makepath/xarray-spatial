@@ -1498,3 +1498,45 @@ class TestNaNBackendParity:
         for lvl in np_segs:
             assert np_segs[lvl] == dc_segs[lvl], (
                 f"NaN-input dask+cupy result diverges from numpy at level {lvl}")
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: all-equal auto-levels and empty explicit levels (#3352)
+# ---------------------------------------------------------------------------
+
+class TestIssue3352Coverage:
+
+    def test_contours_flat_auto_levels(self):
+        """An all-equal raster with auto-levels (levels=None) returns empty.
+
+        When vmin == vmax, np.linspace produces identical levels and no
+        contours are generated.  Regression guard for the auto-level branch.
+        """
+        raster = xr.DataArray(
+            np.ones((10, 10), dtype=np.float64), dims=["y", "x"]
+        )
+        result = contours(raster, levels=None, n_levels=10)
+        assert result == []
+
+    def test_contours_empty_explicit_levels_numpy(self):
+        """Passing an empty list as levels with numpy return_type returns [].
+
+        No crossing can exist with zero levels, so the function returns an
+        empty list without raising.
+        """
+        raster = xr.DataArray(
+            np.random.rand(10, 10), dims=["y", "x"]
+        )
+        result = contours(raster, levels=[], return_type="numpy")
+        assert result == []
+
+    def test_contours_empty_explicit_levels_geopandas(self):
+        """Passing an empty list as levels with geopandas returns empty gdf."""
+        pytest.importorskip("geopandas")
+        import geopandas as gpd
+        raster = xr.DataArray(
+            np.random.rand(10, 10), dims=["y", "x"]
+        )
+        result_gdf = contours(raster, levels=[], return_type="geopandas")
+        assert isinstance(result_gdf, gpd.GeoDataFrame)
+        assert len(result_gdf) == 0
