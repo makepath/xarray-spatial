@@ -1125,6 +1125,7 @@ def _make_chunk_func(cellsize_x, cellsize_y, max_cost, target_values,
 
     def _chunk(source_block, friction_block):
         h, w = source_block.shape
+        _check_memory(h, w)
         return _cost_distance_kernel(
             source_block, friction_block, h, w,
             cellsize_x, cellsize_y, max_cost,
@@ -1204,7 +1205,7 @@ def cost_distance(
     friction: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_cost: float = np.inf,
     connectivity: int = 8,
 ) -> xr.DataArray:
@@ -1229,7 +1230,7 @@ def cost_distance(
         Name of the y coordinate.
     target_values : list, optional
         Specific pixel values in *raster* to treat as sources.
-        If empty, all non-zero finite pixels are sources.
+        If not provided, all non-zero finite pixels are sources.
     max_cost : float, default=np.inf
         Maximum accumulated cost.  Pixels whose least-cost path exceeds
         this budget are set to NaN.  A finite value enables efficient
@@ -1254,6 +1255,9 @@ def cost_distance(
         )
     if connectivity not in (4, 8):
         raise ValueError("connectivity must be 4 or 8")
+
+    if target_values is None:
+        target_values = []
 
     cellsize_x, cellsize_y = get_dataarray_resolution(raster)
     cellsize_x = abs(float(cellsize_x))
