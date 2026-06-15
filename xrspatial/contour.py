@@ -789,10 +789,9 @@ def contours(
 
     transformed = []
     for level, coords in results:
-        out = np.empty_like(coords)
-        out[:, 0] = np.interp(coords[:, 0], y_idx, y_coords)
-        out[:, 1] = np.interp(coords[:, 1], x_idx, x_coords)
-        transformed.append((level, out))
+        coords[:, 0] = np.interp(coords[:, 0], y_idx, y_coords)
+        coords[:, 1] = np.interp(coords[:, 1], x_idx, x_coords)
+        transformed.append((level, coords))
     results = transformed
 
     if return_type == "numpy":
