@@ -2,12 +2,12 @@
 
 Pick one xrspatial module and dispatch every sweep-* command at it in
 parallel. Each sub-sweep follows the audit template embedded in its own
-`workflows/sweep-*.md` file, runs rockout for HIGH/MEDIUM findings
+`.kilo/command/sweep-*.md` file, runs rockout for HIGH/MEDIUM findings
 when the sweep specifies it, and updates its own
 `.kilo/worktrees/sweep-{type}-state.csv` row for the target module.
 
 New sweeps are picked up automatically. Drop a
-`workflows/sweep-XYZ.md` into the workflows directory and the next
+`.kilo/command/sweep-XYZ.md` into the workflows directory and the next
 deep-sweep run will dispatch it alongside the others.
 
 Required first argument: the module name (e.g. `geotiff`, `slope`, `hydro`).
@@ -64,9 +64,9 @@ per-module sweeps.
 
 ## Step 2 -- Discover sweep commands
 
-List all files matching `workflows/sweep-*.md`. For each, the sweep
+List all files matching `.kilo/command/sweep-*.md`. For each, the sweep
 name is the basename without `sweep-` prefix and `.md` suffix
-(e.g. `workflows/sweep-security.md` → `security`). Build the list
+(e.g. `.kilo/command/sweep-security.md` → `security`). Build the list
 in sorted order so the dispatch table is deterministic.
 
 Apply `--only-sweep` / `--exclude-sweep` filters. If the resulting list is
@@ -167,7 +167,7 @@ xrspatial module: "{module}".
 The parent command (deep-sweep) has already chosen this module and is
 dispatching every sweep against it in parallel. Your job is to behave
 exactly as the embedded subagent prompt in
-workflows/sweep-{sweep_name}.md would, but skip module discovery
+.kilo/command/sweep-{sweep_name}.md would, but skip module discovery
 and scoring -- the module is already chosen.
 
 ## WORKTREE ISOLATION CONTRACT (read first, enforce throughout)
