@@ -607,6 +607,92 @@ class TestBackendEquivalence:
 
 
 # ---------------------------------------------------------------------------
+# Batched dask compute (#3333)
+# ---------------------------------------------------------------------------
+
+class TestDaskBatchedCompute:
+
+    @dask_array_available
+    def test_dask_compute_called_in_batches(self, monkeypatch):
+        """_contours_dask computes chunk results in batches, not all at once."""
+        import math
+
+        import dask
+        import xrspatial.contour as contour_mod
+
+        data = _make_ramp(ny=8, nx=8)
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+
+        # 8x8 with 2x2 chunks -> 16 chunks.
+        num_chunks = 16
+        batch_size = 3
+        expected_batches = math.ceil(num_chunks / batch_size)
+
+        # Force a small batch size so many chunks require multiple compute calls.
+        monkeypatch.setattr(contour_mod, '_DASK_COMPUTE_BATCH_SIZE', batch_size)
+
+        original_compute = dask.compute
+
+        def counting_compute(*args, **kwargs):
+            compute_calls.append(len(args))
+            return original_compute(*args, **kwargs)
+
+        compute_calls = []
+
+        # Run the numpy path first (should not call dask.compute since
+        # levels are explicit, skipping the auto-level path).
+        np_result = contours(np_agg, levels=[2.5, 4.5])
+
+        # Reset the counter so only the dask path's calls are counted.
+        compute_calls.clear()
+        monkeypatch.setattr(dask, 'compute', counting_compute)
+
+        dk_result = contours(dk_agg, levels=[2.5, 4.5])
+
+        assert len(compute_calls) == expected_batches, (
+            f"expected {expected_batches} batched dask.compute calls "
+            f"(16 chunks / batch {batch_size}), "
+            f"got {len(compute_calls)}"
+        )
+
+        np_segs = _segments_by_level(np_result)
+        dk_segs = _segments_by_level(dk_result)
+        assert set(np_segs.keys()) == set(dk_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dk_segs[lvl], (
+                f"Batched dask result diverges from numpy at level {lvl}")
+
+    @dask_array_available
+    def test_single_batch_when_chunks_fit(self, monkeypatch):
+        """All chunks fit in one batch when batch size exceeds chunk count."""
+        import dask
+        import xrspatial.contour as contour_mod
+
+        data = _make_ramp(ny=4, nx=4)
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+
+        # 4 chunks, batch size 64 (default) -> single compute call.
+        monkeypatch.setattr(contour_mod, '_DASK_COMPUTE_BATCH_SIZE', 64)
+
+        compute_calls = []
+        original_compute = dask.compute
+
+        def counting_compute(*args, **kwargs):
+            compute_calls.append(len(args))
+            return original_compute(*args, **kwargs)
+
+        monkeypatch.setattr(dask, 'compute', counting_compute)
+
+        contours(dk_agg, levels=[1.5, 2.5])
+
+        assert len(compute_calls) == 1, (
+            f"expected 1 dask.compute call for 4 chunks with batch size 64, "
+            f"got {len(compute_calls)}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Integer dtype: NaN halo regression (issue #3020)
 # ---------------------------------------------------------------------------
 
