@@ -29,7 +29,6 @@ time, keeping memory usage bounded regardless of raster size.
 from __future__ import annotations
 
 import math as _math
-from functools import partial
 from math import sqrt
 
 import numpy as np
@@ -48,17 +47,15 @@ except ImportError:
     class cupy:  # type: ignore[no-redef]
         ndarray = False
 
-from xrspatial.utils import (
-    _dask_task_name_kwargs,
-    _validate_raster,
-    cuda_args, get_dataarray_resolution, ngjit,
-    has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
-)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             get_dataarray_resolution, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # ---------------------------------------------------------------------------
 # Numba binary min-heap (three parallel arrays: keys, rows, cols)
 # ---------------------------------------------------------------------------
+
 
 @ngjit
 def _heap_push(keys, rows, cols, size, key, row, col):
@@ -458,8 +455,8 @@ def _cost_distance_cupy(source_data, friction_data, cellsize_x, cellsize_y,
 
 
 def _cost_distance_dask_cupy(source_da, friction_da,
-                              cellsize_x, cellsize_y, max_cost,
-                              target_values, dy, dx, dd):
+                             cellsize_x, cellsize_y, max_cost,
+                             target_values, dy, dx, dd):
     """Dask+CuPy cost distance.
 
     Bounded max_cost: ``da.map_overlap`` with per-chunk GPU relaxation.
@@ -1002,9 +999,9 @@ def _process_tile(iy, ix, tile_cache,
 
 
 def _cost_distance_dask_iterative(source_da, friction_da,
-                                   cellsize_x, cellsize_y,
-                                   max_cost, target_values,
-                                   dy, dx, dd):
+                                  cellsize_x, cellsize_y,
+                                  max_cost, target_values,
+                                  dy, dx, dd):
     """Iterative boundary-only Dijkstra for arbitrarily large dask arrays.
 
     Memory usage is O(sqrt(N)) for inter-iteration storage.
