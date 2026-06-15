@@ -204,6 +204,11 @@ the ambiguous-metadata family at once.
      - The affine transform has non-zero rotation / shear terms.
      - ``allow_rotated=True`` (experimental). The opt-in returns the
        pixel grid without the geospatial assumption.
+   * - :class:`~xrspatial.geotiff.DegeneratePixelSizeError`
+     - The ``ModelPixelScale`` (or ``ModelTransformation`` diagonal)
+       declares a zero or non-finite pixel size, which would build a
+       constant or all-NaN coordinate axis.
+     - No opt-in. Re-export the file with a non-zero, finite pixel size.
    * - :class:`~xrspatial.geotiff.NonUniformCoordsError`
      - The DataArray coords on write imply a non-uniform pixel grid.
      - Regrid the array to uniform spacing first.

@@ -304,6 +304,48 @@ def test_target_values(backend):
     np.testing.assert_allclose(out[0, 1], 2.0, atol=1e-5)
 
 
+def test_target_values_default_is_none_sentinel():
+    """target_values default is the None sentinel, not a shared mutable list.
+
+    Regression for issue #3340: a mutable default (``list = []``) shares one
+    list object across calls. cost_distance uses the ``None`` sentinel like
+    proximity()/allocation() do.
+    """
+    import inspect
+
+    default = inspect.signature(cost_distance).parameters['target_values'].default
+    assert default is None
+
+
+def test_target_values_none_matches_empty_list():
+    """Omitting target_values, passing None, and passing [] are equivalent.
+
+    All three mean "every non-zero finite pixel is a source".
+    """
+    source = np.array([
+        [7.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    friction_data = np.ones((3, 3))
+    raster = _make_raster(source)
+    friction = _make_raster(friction_data)
+
+    out_omitted = _compute(cost_distance(raster, friction))
+    out_none = _compute(cost_distance(raster, friction, target_values=None))
+    out_empty = _compute(cost_distance(raster, friction, target_values=[]))
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(out_omitted), np.nan_to_num(out_none)
+    )
+    np.testing.assert_array_equal(
+        np.nan_to_num(out_omitted), np.nan_to_num(out_empty)
+    )
+    # Both non-zero finite pixels are sources (cost 0).
+    assert out_omitted[0, 0] == 0.0
+    assert out_omitted[2, 2] == 0.0
+
+
 # -----------------------------------------------------------------------
 # Lazy coordinate arrays for dask input
 # -----------------------------------------------------------------------
@@ -759,6 +801,31 @@ def test_numpy_memory_guard_passes_for_small_raster():
     np.testing.assert_allclose(out[0, 1], 1.0, atol=1e-5)
 
 
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dask_map_overlap_chunk_memory_guard_raises():
+    """The numpy map_overlap chunk path also honours _check_memory (#3343)."""
+    from unittest.mock import patch
+
+    source = np.zeros((16, 16))
+    source[0, 0] = 1.0
+    friction = np.ones((16, 16))
+
+    # finite max_cost with friction=1, cellsize=1 -> pad=3, which is < the
+    # 8x8 chunk size, so the per-chunk map_overlap path is taken (not the
+    # iterative tile Dijkstra).
+    raster = _make_raster(source, backend='dask+numpy', chunks=(8, 8))
+    fric = _make_raster(friction, backend='dask+numpy', chunks=(8, 8))
+
+    result = cost_distance(raster, fric, max_cost=2.0)
+
+    # The guard runs inside the dask task, so it fires at compute time.
+    with patch(
+        'xrspatial.cost_distance._available_memory_bytes', return_value=1000
+    ):
+        with pytest.raises(MemoryError, match="max_cost"):
+            result.compute()
+
+
 # -----------------------------------------------------------------------
 # Memory guard on CuPy GPU path (Issue #1262)
 # -----------------------------------------------------------------------
@@ -864,44 +931,124 @@ def test_cupy_memory_guard_passes_for_small_raster():
 
 
 # -----------------------------------------------------------------------
-# target_values default-argument handling
+# Single-pixel (1x1) raster — degenerate no-neighbour case (Issue #3341)
 # -----------------------------------------------------------------------
 
-def test_default_target_values_does_not_leak():
-    """The default target_values must not retain state across calls."""
-    source = np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0],
-    ])
-    friction = np.ones((3, 3))
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_single_pixel_source(backend):
+    """A 1x1 source raster has no neighbours; the source cost is 0."""
+    source = np.array([[1.0]])
+    friction_data = np.array([[1.0]])
 
-    raster = _make_raster(source)
-    fric = _make_raster(friction)
+    raster = _make_raster(source, backend=backend, chunks=(1, 1))
+    friction = _make_raster(friction_data, backend=backend, chunks=(1, 1))
 
-    first = _compute(cost_distance(raster, fric))
-    # A second call with the default must produce the identical result;
-    # a mutable default that got mutated would diverge here.
-    second = _compute(cost_distance(raster, fric))
-    np.testing.assert_array_equal(first, second)
-    assert first[0, 0] == 0.0
+    result = cost_distance(raster, friction)
+    out = _compute(result)
+
+    assert out.shape == (1, 1)
+    assert out[0, 0] == 0.0
 
 
-def test_target_values_none_matches_empty_default():
-    """Passing target_values=None behaves like the empty default."""
-    source = np.array([
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0],
-        [0.0, 2.0, 0.0],
-    ])
-    friction = np.ones((3, 3))
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_single_pixel_no_source(backend):
+    """A 1x1 raster with no source pixel is all-NaN (nothing reachable)."""
+    source = np.array([[0.0]])
+    friction_data = np.array([[1.0]])
 
-    raster = _make_raster(source)
-    fric = _make_raster(friction)
+    raster = _make_raster(source, backend=backend, chunks=(1, 1))
+    friction = _make_raster(friction_data, backend=backend, chunks=(1, 1))
 
-    default_out = _compute(cost_distance(raster, fric))
-    none_out = _compute(cost_distance(raster, fric, target_values=None))
-    np.testing.assert_array_equal(default_out, none_out)
-    # Both value=1 and value=2 pixels are sources under the empty default.
-    assert none_out[0, 1] == 0.0
-    assert none_out[2, 1] == 0.0
+    result = cost_distance(raster, friction)
+    out = _compute(result)
+
+    assert out.shape == (1, 1)
+    assert np.isnan(out[0, 0])
+
+
+# -----------------------------------------------------------------------
+# Inf friction is impassable, like NaN (Issue #3341)
+# -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_inf_friction_is_impassable(backend):
+    """An Inf-friction cell blocks paths just like NaN/zero friction."""
+    source = np.zeros((3, 3))
+    source[0, 0] = 1.0
+
+    friction_data = np.ones((3, 3))
+    friction_data[1, 1] = np.inf  # impassable barrier at the centre
+
+    raster = _make_raster(source, backend=backend, chunks=(3, 3))
+    friction = _make_raster(friction_data, backend=backend, chunks=(3, 3))
+
+    result = cost_distance(raster, friction)
+    out = _compute(result)
+
+    # The Inf cell itself is unreachable (cannot be traversed onto).
+    assert np.isnan(out[1, 1])
+    # Cells around the barrier are still reachable by routing around it.
+    assert np.isfinite(out[0, 1])
+    assert np.isfinite(out[1, 0])
+    assert np.isfinite(out[2, 2])
+
+
+# -----------------------------------------------------------------------
+# Metadata preservation: attrs / coords / dims survive the call (Issue #3341)
+# -----------------------------------------------------------------------
+
+def _make_meta_raster(data, backend='numpy', chunks=(3, 3)):
+    """Like _make_raster but with non-default attrs and named coords."""
+    h, w = data.shape
+    raster = xr.DataArray(
+        data.astype(np.float64),
+        dims=['y', 'x'],
+        attrs={'res': (2.0, 3.0), 'crs': 'EPSG:5070', 'units': 'm'},
+    )
+    raster['y'] = np.linspace((h - 1) * 2.0, 0, h)
+    raster['x'] = np.linspace(0, (w - 1) * 3.0, w)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=chunks)
+    if 'cupy' in backend and has_cuda_and_cupy():
+        import cupy
+        if isinstance(raster.data, da.Array):
+            raster.data = raster.data.map_blocks(cupy.asarray)
+        else:
+            raster.data = cupy.asarray(raster.data)
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_metadata_preserved(backend):
+    """Output must carry the input's attrs, coords, and dim names."""
+    source = np.zeros((6, 6))
+    source[0, 0] = 1.0
+    friction_data = np.ones((6, 6))
+
+    raster = _make_meta_raster(source, backend=backend, chunks=(3, 3))
+    friction = _make_meta_raster(friction_data, backend=backend, chunks=(3, 3))
+
+    result = cost_distance(raster, friction, max_cost=20.0)
+
+    assert result.dims == raster.dims
+    assert result.attrs == raster.attrs
+    np.testing.assert_array_equal(result['x'].data, raster['x'].data)
+    np.testing.assert_array_equal(result['y'].data, raster['y'].data)
+
+
+def test_custom_dim_names_preserved():
+    """lat/lon dim names must not be silently renamed to y/x."""
+    data = np.zeros((4, 4))
+    data[0, 0] = 1.0
+    raster = xr.DataArray(data, dims=['lat', 'lon'], attrs={'res': (1.0, 1.0)})
+    raster['lat'] = np.arange(4, dtype=np.float64)
+    raster['lon'] = np.arange(4, dtype=np.float64)
+    friction = xr.DataArray(np.ones((4, 4)), dims=['lat', 'lon'],
+                            attrs={'res': (1.0, 1.0)})
+    friction['lat'] = np.arange(4, dtype=np.float64)
+    friction['lon'] = np.arange(4, dtype=np.float64)
+
+    result = cost_distance(raster, friction, x='lon', y='lat')
+
+    assert result.dims == ('lat', 'lon')
+    assert 'lat' in result.coords and 'lon' in result.coords

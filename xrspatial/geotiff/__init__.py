@@ -65,10 +65,10 @@ from ._coords import transform_tuple as _transform_tuple  # noqa: F401
 from ._coords import \
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
-from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
-                      GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
-                      InvalidIntegerNodataError, MalformedScaleOffsetError, MixedBandMetadataError,
-                      NonRepresentableEPSGCRSError, NonUniformCoordsError,
+from ._errors import (ConflictingCRSError, ConflictingNodataError, DegeneratePixelSizeError,
+                      DuplicateIFDTagError, GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError,
+                      InvalidCRSCodeError, InvalidIntegerNodataError, MalformedScaleOffsetError,
+                      MixedBandMetadataError, NonRepresentableEPSGCRSError, NonUniformCoordsError,
                       RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
                       UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
                       VRTStableSourcesOnlyError, VRTUnsupportedError)
@@ -110,6 +110,7 @@ __all__ = [
     'CloudSizeLimitError',
     'ConflictingCRSError',
     'ConflictingNodataError',
+    'DegeneratePixelSizeError',
     'DuplicateIFDTagError',
     'GeoTIFFAmbiguousMetadataError',
     'GeoTIFFFallbackWarning',
