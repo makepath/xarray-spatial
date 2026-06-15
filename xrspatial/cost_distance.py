@@ -1229,7 +1229,7 @@ def cost_distance(
         Name of the y coordinate.
     target_values : list, optional
         Specific pixel values in *raster* to treat as sources.
-        If empty, all non-zero finite pixels are sources.
+        If not provided, all non-zero finite pixels are sources.
     max_cost : float, default=np.inf
         Maximum accumulated cost.  Pixels whose least-cost path exceeds
         this budget are set to NaN.  A finite value enables efficient
