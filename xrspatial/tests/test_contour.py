@@ -1504,7 +1504,7 @@ class TestNaNBackendParity:
 # Coverage gaps: all-equal auto-levels and empty explicit levels (#3352)
 # ---------------------------------------------------------------------------
 
-class TestIssue3352Coverage:
+class TestFlatAutoLevelsAndEmptyLevels:
 
     def test_contours_flat_auto_levels(self):
         """An all-equal raster with auto-levels (levels=None) returns empty.
@@ -1512,11 +1512,12 @@ class TestIssue3352Coverage:
         When vmin == vmax, np.linspace produces identical levels and no
         contours are generated.  Regression guard for the auto-level branch.
         """
-        raster = xr.DataArray(
-            np.ones((10, 10), dtype=np.float64), dims=["y", "x"]
+        raster = create_test_raster(
+            np.ones((10, 10), dtype=np.float64), backend='numpy'
         )
         result = contours(raster, levels=None, n_levels=10)
-        assert result == []
+        assert isinstance(result, list)
+        assert len(result) == 0
 
     def test_contours_empty_explicit_levels_numpy(self):
         """Passing an empty list as levels with numpy return_type returns [].
@@ -1524,19 +1525,22 @@ class TestIssue3352Coverage:
         No crossing can exist with zero levels, so the function returns an
         empty list without raising.
         """
-        raster = xr.DataArray(
-            np.random.rand(10, 10), dims=["y", "x"]
+        raster = create_test_raster(
+            np.random.rand(10, 10), backend='numpy'
         )
-        result = contours(raster, levels=[], return_type="numpy")
+        result = contours(raster, levels=[], return_type='numpy')
+        assert isinstance(result, list)
         assert result == []
 
     def test_contours_empty_explicit_levels_geopandas(self):
         """Passing an empty list as levels with geopandas returns empty gdf."""
-        pytest.importorskip("geopandas")
+        pytest.importorskip('geopandas')
         import geopandas as gpd
-        raster = xr.DataArray(
-            np.random.rand(10, 10), dims=["y", "x"]
+        raster = create_test_raster(
+            np.random.rand(10, 10), backend='numpy'
         )
-        result_gdf = contours(raster, levels=[], return_type="geopandas")
+        result_gdf = contours(raster, levels=[], return_type='geopandas')
         assert isinstance(result_gdf, gpd.GeoDataFrame)
         assert len(result_gdf) == 0
+        assert 'level' in result_gdf.columns
+        assert 'geometry' in result_gdf.columns
