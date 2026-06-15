@@ -35,9 +35,9 @@ from .._nodata import NodataLifecycle as _NL
 from .._runtime import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _gpu_fallback_warning_message,
                         _resolve_spatial_coords)
 from .._validation import (_validate_3d_writer_dims, _validate_compression_level_arg,
-                           _validate_gpu_arg, _validate_no_rotated_affine,
-                           _validate_nodata_arg, _validate_tile_size_arg,
-                           _validate_writer_spatial_shape, validate_write_metadata)
+                           _validate_gpu_arg, _validate_no_rotated_affine, _validate_nodata_arg,
+                           _validate_tile_size_arg, _validate_writer_spatial_shape,
+                           validate_write_metadata)
 from .._writer import _COG_REQUIRES_TILED_MSG, write
 from .gpu import _write_geotiff_gpu
 
