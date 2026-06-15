@@ -18,6 +18,7 @@ Hierarchy::
         ├── InvalidCRSCodeError
         ├── UnparseableCRSError
         ├── RotatedTransformError
+        ├── DegeneratePixelSizeError
         ├── NonUniformCoordsError
         ├── MixedBandMetadataError
         ├── ConflictingCRSError
@@ -63,6 +64,29 @@ class RotatedTransformError(GeoTIFFAmbiguousMetadataError):
     read entry points raise this by default; pass ``allow_rotated=True``
     to retain the existing attr-flag behaviour and read the pixel
     grid without the geospatial assumption.
+    """
+
+
+class DegeneratePixelSizeError(GeoTIFFAmbiguousMetadataError):
+    """A georeferenced transform declares a zero or non-finite pixel size.
+
+    Raised on read when the axis-aligned ``ModelPixelScale`` (or the
+    ``ModelTransformation`` diagonal) carries a zero, NaN, or +/-Inf
+    ``pixel_width`` / ``pixel_height``. The reader builds coordinate
+    arrays as ``arange(N) * pixel_width + origin``, so a zero pixel size
+    collapses the whole axis onto the origin (a constant, non-
+    georeferenced coordinate array) and a non-finite pixel size produces
+    an all-NaN / all-Inf axis. Either way a downstream spatial op would
+    silently run on coordinates that do not describe the data.
+
+    The VRT read path already rejects a zero ``res_x`` / ``res_y`` with
+    :class:`VRTUnsupportedError`, and the writer rejects a zero-step
+    coordinate axis with :class:`NonUniformCoordsError`; this extends the
+    same fail-closed contract to the direct-TIFF read path.
+
+    Subclasses :class:`GeoTIFFAmbiguousMetadataError` (and therefore
+    ``ValueError``) so existing ``except ValueError`` callers keep
+    catching the case.
     """
 
 
@@ -340,6 +364,7 @@ class UnsupportedGeoTIFFFeatureError(ValueError):
 __all__ = [
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "DegeneratePixelSizeError",
     "DuplicateIFDTagError",
     "GeoTIFFAmbiguousMetadataError",
     "InconsistentGeoKeysError",

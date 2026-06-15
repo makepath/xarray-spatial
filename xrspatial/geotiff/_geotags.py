@@ -1,10 +1,12 @@
 """GeoTIFF tag interpretation: CRS, affine transform, GeoKeys."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
-from ._errors import NonRepresentableEPSGCRSError, RotatedTransformError, UnknownCRSModelTypeError
+from ._errors import (DegeneratePixelSizeError, NonRepresentableEPSGCRSError, RotatedTransformError,
+                      UnknownCRSModelTypeError)
 from ._header import (IFD, TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES,
                       TAG_GDAL_METADATA, TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS,
                       TAG_GEO_DOUBLE_PARAMS, TAG_GEO_KEY_DIRECTORY, TAG_IMAGE_LENGTH,
@@ -631,6 +633,36 @@ def _validate_tiepoint_consistency(tiepoint: tuple,
             raise NotImplementedError(f"{primary}\n{cause}\n{hint}")
 
 
+def _check_finite_nonzero_pixel_size(pixel_width: float,
+                                     pixel_height: float,
+                                     source: str) -> None:
+    """Reject a zero or non-finite axis-aligned pixel size.
+
+    The reader builds coordinate arrays as ``arange(N) * pixel_width +
+    origin``, so a zero ``pixel_width`` / ``pixel_height`` collapses the
+    whole axis onto the origin and a NaN / +/-Inf one fills the axis with
+    NaN / Inf -- a degenerate raster the rest of the pipeline would
+    silently consume. The VRT read path already raises for this in
+    ``_vrt_validation`` and the writer raises ``NonUniformCoordsError``
+    for a zero-step axis; this brings the direct-TIFF read path in line.
+
+    ``source`` names the tag the pixel size came from so the message
+    points at the offending bytes.
+    """
+    for axis, value in (("pixel_width", pixel_width),
+                        ("pixel_height", pixel_height)):
+        if value == 0.0 or not math.isfinite(value):
+            raise DegeneratePixelSizeError(
+                f"{source} yields a degenerate {axis}={value!r}. The "
+                f"reader builds pixel-to-world coordinates as "
+                f"arange(N) * {axis} + origin, so a zero size collapses "
+                f"the axis onto the origin and a non-finite size fills "
+                f"it with NaN / Inf. Re-export the file with a non-zero, "
+                f"finite ModelPixelScale (or ModelTransformation "
+                f"diagonal)."
+            )
+
+
 def _extract_transform(ifd: IFD,
                        allow_rotated: bool = False
                        ) -> tuple[GeoTransform, bool]:
@@ -723,6 +755,8 @@ def _extract_transform(ifd: IFD,
                 return GeoTransform(
                     rotated_affine=(m[0], m[1], m[3], m[4], m[5], m[7]),
                 ), False
+            _check_finite_nonzero_pixel_size(
+                m[0], m[5], "ModelTransformationTag (34264) diagonal")
             return GeoTransform(
                 origin_x=m[3],
                 origin_y=m[7],
@@ -740,6 +774,11 @@ def _extract_transform(ifd: IFD,
 
         sx = scale[0] if len(scale) > 0 else 1.0
         sy = scale[1] if len(scale) > 1 else 1.0
+
+        # ``pixel_height`` is stored as ``-sy``; a zero / non-finite ``sy``
+        # is degenerate either way, so check the magnitudes here, before
+        # both the tiepoint+scale and the scale-only returns below.
+        _check_finite_nonzero_pixel_size(sx, sy, "ModelPixelScaleTag (33550)")
 
         if tiepoint is not None:
             if not isinstance(tiepoint, tuple):
