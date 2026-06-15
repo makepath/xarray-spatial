@@ -607,6 +607,50 @@ class TestBackendEquivalence:
 
 
 # ---------------------------------------------------------------------------
+# Batched dask compute (#3333)
+# ---------------------------------------------------------------------------
+
+class TestDaskBatchedCompute:
+
+    @dask_array_available
+    def test_dask_compute_called_in_batches(self, monkeypatch):
+        """_contours_dask computes chunk results in batches, not all at once."""
+        import dask
+        import xrspatial.contour as contour_mod
+
+        data = _make_ramp(ny=8, nx=8)
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+
+        # Force a small batch size so 16 chunks require multiple compute calls.
+        monkeypatch.setattr(contour_mod, '_DASK_COMPUTE_BATCH_SIZE', 3)
+
+        original_compute = dask.compute
+        compute_calls = []
+
+        def counting_compute(*args, **kwargs):
+            compute_calls.append(len(args))
+            return original_compute(*args, **kwargs)
+
+        monkeypatch.setattr(dask, 'compute', counting_compute)
+
+        np_result = contours(np_agg, levels=[2.5, 4.5])
+        dk_result = contours(dk_agg, levels=[2.5, 4.5])
+
+        # 16 chunks / batch size 3 -> 6 compute calls.
+        assert len(compute_calls) == 6, (
+            f"expected 6 batched dask.compute calls, got {len(compute_calls)}"
+        )
+
+        np_segs = _segments_by_level(np_result)
+        dk_segs = _segments_by_level(dk_result)
+        assert set(np_segs.keys()) == set(dk_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dk_segs[lvl], (
+                f"Batched dask result diverges from numpy at level {lvl}")
+
+
+# ---------------------------------------------------------------------------
 # Integer dtype: NaN halo regression (issue #3020)
 # ---------------------------------------------------------------------------
 
