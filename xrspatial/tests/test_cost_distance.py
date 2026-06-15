@@ -861,3 +861,47 @@ def test_cupy_memory_guard_passes_for_small_raster():
     out = _compute(result)
     assert out[0, 0] == 0.0
     np.testing.assert_allclose(out[0, 1], 1.0, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# target_values default-argument handling
+# -----------------------------------------------------------------------
+
+def test_default_target_values_does_not_leak():
+    """The default target_values must not retain state across calls."""
+    source = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ])
+    friction = np.ones((3, 3))
+
+    raster = _make_raster(source)
+    fric = _make_raster(friction)
+
+    first = _compute(cost_distance(raster, fric))
+    # A second call with the default must produce the identical result;
+    # a mutable default that got mutated would diverge here.
+    second = _compute(cost_distance(raster, fric))
+    np.testing.assert_array_equal(first, second)
+    assert first[0, 0] == 0.0
+
+
+def test_target_values_none_matches_empty_default():
+    """Passing target_values=None behaves like the empty default."""
+    source = np.array([
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 2.0, 0.0],
+    ])
+    friction = np.ones((3, 3))
+
+    raster = _make_raster(source)
+    fric = _make_raster(friction)
+
+    default_out = _compute(cost_distance(raster, fric))
+    none_out = _compute(cost_distance(raster, fric, target_values=None))
+    np.testing.assert_array_equal(default_out, none_out)
+    # Both value=1 and value=2 pixels are sources under the empty default.
+    assert none_out[0, 1] == 0.0
+    assert none_out[2, 1] == 0.0
