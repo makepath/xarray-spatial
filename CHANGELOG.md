@@ -2,6 +2,20 @@
 -----------
 
 
+### Version 0.10.8 - 2026-06-14
+
+#### Bug fixes and improvements
+- geotiff: gate dict gdal_metadata behind the experimental rich-tag opt-in (#3327)
+- name dask tasks for remaining xrspatial tool modules (#3326)
+- geotiff: don't flip masked_nodata True on a caller dtype= cast of an unmasked buffer (#3325)
+- to_geotiff: type-check compression_level (#3324)
+- rasterize: burn all_touched lines with the supercover walk (#3322)
+- focal: handle empty rasters consistently across backends (#3319)
+- reproject: promote large-output in-memory cupy inputs to dask (#3318)
+- reproject: serialize all parallel=True kernel launches behind one lock (#3317)
+- docs: add an examples-and-data getting-started page and landing index (#3316)
+
+
 ### Version 0.10.7 - 2026-06-13
 
 #### New features
