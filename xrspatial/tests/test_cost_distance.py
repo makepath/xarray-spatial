@@ -931,6 +931,40 @@ def test_cupy_memory_guard_passes_for_small_raster():
 
 
 # -----------------------------------------------------------------------
+# Result .name should match the input across all four backends (#3344)
+# -----------------------------------------------------------------------
+
+def _skip_if_backend_unavailable(backend):
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not installed")
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA + cupy")
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("name", [None, 'my_raster'])
+def test_result_name_matches_input(backend, name):
+    """Output .name equals the input raster .name on every backend.
+
+    Regression test for #3344: the dask backends used to leak the internal
+    dask graph name (e.g. "_trim-..." / "asarray-...") as the output .name
+    while numpy / cupy returned the input name, so .name differed by backend.
+    """
+    _skip_if_backend_unavailable(backend)
+
+    data = np.zeros((6, 6), dtype=np.float64)
+    data[2, 2] = 1.0
+
+    raster = _make_raster(data, backend=backend, chunks=(3, 3))
+    friction = _make_raster(np.ones((6, 6)), backend=backend, chunks=(3, 3))
+    raster.name = name
+
+    result = cost_distance(raster, friction, max_cost=3.0)
+
+    assert result.name == name
+
+
+# -----------------------------------------------------------------------
 # Single-pixel (1x1) raster — degenerate no-neighbour case (Issue #3341)
 # -----------------------------------------------------------------------
 
