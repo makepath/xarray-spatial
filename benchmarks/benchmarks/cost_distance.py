@@ -21,5 +21,16 @@ class CostDistance:
             friction.data = np.abs(friction.data) + 0.1
         self.friction = friction
 
+        # Pick a finite max_cost whose pixel radius stays well inside one
+        # chunk (chunks are ny//2 x nx//2), so the dask path exercises the
+        # bounded map_overlap branch rather than the unbounded iterative
+        # one. radius_px = max_cost / (f_min * cellsize); friction >= 0.1
+        # so using 0.1 keeps the true radius at or below the target.
+        cellsize = min(360.0 / (nx - 1), 180.0 / (ny - 1))
+        self.max_cost = 10 * 0.1 * cellsize
+
     def time_cost_distance(self, nx, type):
         cost_distance(self.agg, self.friction)
+
+    def time_cost_distance_bounded(self, nx, type):
+        cost_distance(self.agg, self.friction, max_cost=self.max_cost)
