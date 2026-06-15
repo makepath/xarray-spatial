@@ -2,6 +2,26 @@
 -----------
 
 
+### Version 0.10.9 - 2026-06-15
+
+#### Bug fixes and improvements
+- cost_distance: route bounded large-radius dask path to iterative Dijkstra (#3345)
+- cost_distance: guard the numpy dask chunk path with _check_memory (#3346)
+- cost_distance: fix leaking dask task name as output .name (#3349)
+- cost_distance: replace mutable default target_values=[] with a None sentinel (#3348)
+- cost_distance: add tests for 1x1 raster, Inf friction, and metadata (#3347)
+- cost_distance: fix flake8/isort findings (#3350)
+- contour: batch dask chunk compute to bound client memory (#3334)
+- contour: remove redundant np.empty_like allocation in the coordinate transform (#3354)
+- contour: add test coverage for all-equal auto-levels and empty explicit levels (#3353)
+- geotiff: reject a zero or non-finite ModelPixelScale on read (#3332)
+- geotiff: fix isort import ordering in _writers/eager.py (#3330)
+- docs: fix file paths in the deep-sweep documentation (#3336)
+
+#### Thanks
+Thanks to @Melissari1997 for code and test contributions to this release.
+
+
 ### Version 0.10.8 - 2026-06-14
 
 #### Bug fixes and improvements
