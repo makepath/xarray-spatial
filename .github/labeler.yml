@@ -1,6 +1,24 @@
+# Applying the `performance` label triggers the ASV benchmark job in
+# benchmarks.yml. The old `xrspatial/**/*.py` glob matched almost every
+# source file, so the benchmarks ran on nearly every PR. Limit the label to
+# the modules the PR-time benchmarks actually measure (the asv `continuous`
+# filter in benchmarks.yml: Slope, Proximity, Zonal, CostDistance, Focal,
+# Rescale/Standardize, Diffusion, Dasymetric), plus the hot compute kernels
+# those benchmarks run through (convolution.py drives Focal; geodesic.py
+# drives Slope). utils.py is deliberately left out: it is shared infra
+# touched by almost every PR, so including it would re-broaden the label
+# back toward the original problem. Add a module here when it gains a
+# benchmark in that filter or becomes a kernel the benchmarks exercise.
 performance:
   - changed-files:
     - any-glob-to-any-file:
-      - 'xrspatial/*.py'
-      - 'xrspatial/**/*.py'
-      - '!xrspatial/tests/**'
+      - 'xrspatial/slope.py'
+      - 'xrspatial/proximity.py'
+      - 'xrspatial/zonal.py'
+      - 'xrspatial/cost_distance.py'
+      - 'xrspatial/focal.py'
+      - 'xrspatial/normalize.py'
+      - 'xrspatial/diffusion.py'
+      - 'xrspatial/dasymetric.py'
+      - 'xrspatial/convolution.py'
+      - 'xrspatial/geodesic.py'
