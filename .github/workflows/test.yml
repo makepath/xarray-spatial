@@ -38,14 +38,6 @@ jobs:
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
-      # Force the GIL off on the free-threaded (3.14t) job so the tests
-      # exercise the real no-GIL path instead of letting CPython silently
-      # re-enable the GIL for a C extension that hasn't declared
-      # free-threaded support (which would hide thread-safety bugs behind
-      # a green run). Empty on the GIL builds, where it is ignored --
-      # PYTHON_GIL=0 there is a fatal error ("Disabling the GIL is not
-      # supported by this build").
-      PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup Python
@@ -62,7 +54,18 @@ jobs:
       # (today: the six compression fixtures). push-to-main and the
       # nightly schedule run the full set with no filter.
       if: github.event_name == 'pull_request'
+      # Force the GIL off only for the free-threaded (3.14t) test run so the
+      # suite exercises the real no-GIL path instead of letting CPython
+      # silently re-enable the GIL for a C extension that hasn't declared
+      # free-threaded support. Scoped to the pytest step (not the job) so it
+      # never reaches setup-python's bootstrap interpreter, where
+      # PYTHON_GIL=0 is a fatal error on a GIL build. Empty (ignored) on the
+      # GIL versions.
+      env:
+        PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
       run: pytest -m "not slow"
     - name: Run pytest (full)
       if: github.event_name != 'pull_request'
+      env:
+        PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
       run: pytest
