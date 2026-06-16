@@ -28,6 +28,9 @@ jobs:
     # thread-safety failure reports signal without turning the PR check red or
     # blocking a merge. Promote it to a required job once it stays green.
     continue-on-error: ${{ endsWith(matrix.python, 't') }}
+    # Cap the free-threaded job so a no-GIL deadlock can't sit on a runner for
+    # the 360-minute default; other versions keep that default.
+    timeout-minutes: ${{ endsWith(matrix.python, 't') && 30 || 360 }}
     strategy:
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
