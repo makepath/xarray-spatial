@@ -19,6 +19,7 @@ from __future__ import annotations
 import glob
 import os
 import tempfile
+import threading
 import uuid
 import warnings
 from pathlib import Path
@@ -872,10 +873,17 @@ def test_chunks_is_lazy_does_not_call_internal_reader(monkeypatch, lazy_chunks_t
     vrt_path, _ = lazy_chunks_two_by_two_vrt
     from xrspatial.geotiff import _vrt as vrt_module
     counter = {'calls': 0}
+    # ``compute()`` runs the 16 per-chunk reads through dask's threaded
+    # scheduler, so the counter is incremented from multiple worker threads
+    # concurrently. Guard the read-modify-write with a lock: a bare
+    # ``counter['calls'] += 1`` loses updates under the free-threaded
+    # interpreter (PYTHON_GIL=0), undercounting the decodes (issue #3363).
+    counter_lock = threading.Lock()
     real_read = vrt_module.read_vrt
 
     def counting_read(*args, **kwargs):
-        counter['calls'] += 1
+        with counter_lock:
+            counter['calls'] += 1
         return real_read(*args, **kwargs)
     monkeypatch.setattr(vrt_module, 'read_vrt', counting_read)
     result = _read_vrt(vrt_path, chunks=(64, 64))
