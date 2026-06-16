@@ -63,13 +63,18 @@ If AI-assisted code introduces a bug, security issue, regression, or incorrect b
 
 #### Review Expectations
 
-Before submitting a pull request, contributors should review and use the relevant commands in:
+Before submitting a pull request, contributors should review and use the relevant review commands. These live in a dedicated repository, [xarray-spatial-skills](https://github.com/brendancol/xarray-spatial-skills), which is the single source of truth for the project's AI-assisted commands and rules across Claude Code, Codex, Kilo, and Cursor.
 
-    .claude/commands/
+To use them locally, clone the skills repo and sync the commands into your xarray-spatial checkout:
 
-These command markdown files reflect current project expectations for performance, accuracy, security, testing, maintainability, deployment, and release readiness. New contributors should read through them to understand the project's quality standards.
+    git clone https://github.com/brendancol/xarray-spatial-skills.git
+    ./xarray-spatial-skills/sync.sh /path/to/xarray-spatial
 
-Contributors who do not use Claude Code can adapt the command markdown files into prompts or checklists for their preferred AI tools and review workflows. The important part is the quality review they represent, not the specific tool used to run them.
+This populates `.claude/commands/`, `.codex/commands/`, `.kilo/command/`, and `.cursor/rules/`. These paths are gitignored in this repo, so they stay sourced from the skills repo rather than being committed here. Re-run `sync.sh` to pick up updates.
+
+These command files reflect current project expectations for performance, accuracy, security, testing, maintainability, deployment, and release readiness. New contributors should read through them to understand the project's quality standards.
+
+Contributors who do not use Claude Code can adapt the command files into prompts or checklists for their preferred AI tools and review workflows. The important part is the quality review they represent, not the specific tool used to run them.
 
 Where applicable, run the relevant sweep or review commands before requesting maintainer review. If a command flags an issue, either address it or clearly explain why it is acceptable for the current change.
 

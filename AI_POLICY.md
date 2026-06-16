@@ -127,7 +127,7 @@ Reason:
 
 ## What counts as the xarray-spatial AI workflow?
 
-The approved workflow is the set of prompts, scripts, commands, or review instructions maintained in the xarray-spatial repository.
+The approved workflow is the set of prompts, scripts, commands, or review instructions maintained in the project’s dedicated tooling repository, [xarray-spatial-skills](https://github.com/brendancol/xarray-spatial-skills). These definitions are synced into a local xarray-spatial checkout using the `sync.sh` script in that repository; see [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
 
 The workflow may include checks for:
 
