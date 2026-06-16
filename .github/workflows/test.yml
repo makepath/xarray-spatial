@@ -23,10 +23,15 @@ on:
 jobs:
   run:
     runs-on: ${{ matrix.os }}
+    # The free-threaded build (3.14t) is allowed to fail while numba and the
+    # rest of the stack finish their no-GIL support, so a broken install or a
+    # thread-safety failure reports signal without turning the PR check red or
+    # blocking a merge. Promote it to a required job once it stays green.
+    continue-on-error: ${{ endsWith(matrix.python, 't') }}
     strategy:
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.13", "3.14"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14", "3.14t"]') || fromJson('["3.12", "3.13", "3.14", "3.14t"]') }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
