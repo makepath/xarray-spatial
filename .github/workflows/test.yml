@@ -23,10 +23,18 @@ on:
 jobs:
   run:
     runs-on: ${{ matrix.os }}
+    # The free-threaded build (3.14t) is allowed to fail while numba and the
+    # rest of the stack finish their no-GIL support, so a broken install or a
+    # thread-safety failure reports signal without turning the PR check red or
+    # blocking a merge. Promote it to a required job once it stays green.
+    continue-on-error: ${{ endsWith(matrix.python, 't') }}
+    # Cap the free-threaded job so a no-GIL deadlock can't sit on a runner for
+    # the 360-minute default; other versions keep that default.
+    timeout-minutes: ${{ endsWith(matrix.python, 't') && 30 || 360 }}
     strategy:
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.13", "3.14"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14", "3.14t"]') || fromJson('["3.12", "3.13", "3.14", "3.14t"]') }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
@@ -46,7 +54,18 @@ jobs:
       # (today: the six compression fixtures). push-to-main and the
       # nightly schedule run the full set with no filter.
       if: github.event_name == 'pull_request'
+      # Force the GIL off only for the free-threaded (3.14t) test run so the
+      # suite exercises the real no-GIL path instead of letting CPython
+      # silently re-enable the GIL for a C extension that hasn't declared
+      # free-threaded support. Scoped to the pytest step (not the job) so it
+      # never reaches setup-python's bootstrap interpreter, where
+      # PYTHON_GIL=0 is a fatal error on a GIL build. Empty (ignored) on the
+      # GIL versions.
+      env:
+        PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
       run: pytest -m "not slow"
     - name: Run pytest (full)
       if: github.event_name != 'pull_request'
+      env:
+        PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
       run: pytest
