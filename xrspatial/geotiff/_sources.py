@@ -1680,9 +1680,22 @@ class _CloudSource:
         self._size = self._fs.size(self._path)
 
     def read_range(self, start: int, length: int) -> bytes:
-        with self._fs.open(self._path, 'rb') as f:
-            f.seek(start)
-            return f.read(length)
+        # Use the stateless ``cat_file`` ranged-read API rather than
+        # ``open()`` + ``seek()`` + ``read()``. For some backends
+        # ``fs.open(path, 'rb')`` hands back a shared, process-global file
+        # object -- notably fsspec's ``MemoryFileSystem``, where every
+        # open of a path returns the same stored buffer. Concurrent
+        # windowed reads (e.g. dask chunk tasks under the free-threaded
+        # interpreter, or ``read_ranges``' own worker pool) then race on
+        # that single handle's cursor: one thread's ``seek`` lands under
+        # another's ``read``, corrupting the returned bytes (surfacing as
+        # ``zlib.error: incorrect header check`` when the bytes feed a
+        # tile decoder) or reading from a handle the context manager just
+        # closed. ``cat_file`` returns a fresh byte slice per call with no
+        # shared cursor, so it is safe under true parallelism. See issue
+        # #3361. ``end`` is exclusive and clamps at EOF, matching
+        # ``read(length)``.
+        return self._fs.cat_file(self._path, start=start, end=start + length)
 
     def read_ranges(
         self,
@@ -1740,8 +1753,11 @@ class _CloudSource:
         return split_coalesced_bytes(merged_bytes, mapping)
 
     def read_all(self) -> bytes:
-        with self._fs.open(self._path, 'rb') as f:
-            return f.read()
+        # ``cat_file`` with no range reads the whole object and, like
+        # ``read_range`` above, avoids the shared-handle seek/close race
+        # that ``open()`` exposes on backends such as fsspec's
+        # ``MemoryFileSystem`` under concurrent reads (issue #3361).
+        return self._fs.cat_file(self._path)
 
     @property
     def size(self) -> int:
