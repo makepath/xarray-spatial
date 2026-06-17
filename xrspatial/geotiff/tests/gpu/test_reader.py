@@ -1547,3 +1547,122 @@ def test_chunked_gpu_eager_paths_keep_source_dtype_1909(
 
     np_da = open_geotiff(uint16_no_sentinel_path_1909)
     assert np_da.dtype == np.uint16
+
+
+# ---------------------------------------------------------------------------
+# Section: _read_geotiff_gpu_chunked reads + parses a local file once (#3373)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tiled_cog_path_3373(tmp_path):
+    """Small deflate-tiled file for the chunked GPU read path."""
+    from xrspatial.geotiff import to_geotiff
+
+    arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      attrs={'crs': 4326,
+                             'transform': (1.0, 0, 0, 0, -1.0, 32.0)})
+    path = str(tmp_path / 'tiled_cog_3373.tif')
+    to_geotiff(da, path, compression='deflate', tile_size=16)
+    return path, arr
+
+
+@_gpu_only
+def test_chunked_gpu_reads_and_parses_local_file_once_3373(
+        tiled_cog_path_3373, monkeypatch):
+    """The local chunked GPU read parses header/IFDs exactly once.
+
+    The per-tile cap check and the GDS qualification probe used to read
+    the whole file and parse all IFDs twice at graph-build time. Count
+    ``read_all`` / ``parse_header`` / ``parse_all_ifds`` to pin the
+    single-parse behaviour so the redundant pass cannot creep back.
+    """
+    from xrspatial.geotiff import _header as header_mod
+    from xrspatial.geotiff import _read_geotiff_gpu
+    from xrspatial.geotiff import _sources as sources_mod
+
+    path, arr = tiled_cog_path_3373
+
+    counts = {'read_all': 0, 'parse_header': 0, 'parse_all_ifds': 0}
+
+    real_read_all = sources_mod._FileSource.read_all
+    real_parse_header = header_mod.parse_header
+    real_parse_all_ifds = header_mod.parse_all_ifds
+
+    def counting_read_all(self, *a, **k):
+        counts['read_all'] += 1
+        return real_read_all(self, *a, **k)
+
+    def counting_parse_header(*a, **k):
+        counts['parse_header'] += 1
+        return real_parse_header(*a, **k)
+
+    def counting_parse_all_ifds(*a, **k):
+        counts['parse_all_ifds'] += 1
+        return real_parse_all_ifds(*a, **k)
+
+    monkeypatch.setattr(sources_mod._FileSource, 'read_all', counting_read_all)
+    monkeypatch.setattr(header_mod, 'parse_header', counting_parse_header)
+    monkeypatch.setattr(header_mod, 'parse_all_ifds', counting_parse_all_ifds)
+
+    result = _read_geotiff_gpu(path, chunks=8)
+    # Force the graph to build but stay lazy -- the redundant work was at
+    # graph-build time, before any compute.
+    assert hasattr(result.data, 'dask')
+
+    assert counts['read_all'] == 1, counts
+    assert counts['parse_header'] == 1, counts
+    assert counts['parse_all_ifds'] == 1, counts
+
+
+@_gpu_only
+def test_chunked_gpu_per_tile_cap_still_raises_3373(
+        tiled_cog_path_3373, monkeypatch):
+    """The denial-of-service per-tile cap still raises at graph build."""
+    from xrspatial.geotiff import _read_geotiff_gpu
+
+    path, _ = tiled_cog_path_3373
+    # A 1-byte cap rejects any real tile; the merged single-parse path
+    # must still raise before any GDS qualification work runs.
+    monkeypatch.setenv('XRSPATIAL_COG_MAX_TILE_BYTES', '1')
+
+    with pytest.raises(ValueError, match='per-tile safety cap'):
+        _read_geotiff_gpu(path, chunks=8)
+
+
+@_gpu_only
+def test_chunked_gpu_malformed_metadata_falls_through_to_cpu_3373(
+        tiled_cog_path_3373, monkeypatch):
+    """A metadata-parse failure routes to the CPU path, never raises out.
+
+    The single read+parse is wrapped so a parse error leaves
+    raw/header/ifds as ``None`` and the GDS qualification probe is
+    skipped, exactly as the two-parse version fell through.
+    """
+    import cupy
+
+    from xrspatial.geotiff import _header as header_mod
+    from xrspatial.geotiff import _read_geotiff_gpu
+
+    path, arr = tiled_cog_path_3373
+
+    real_parse_all_ifds = header_mod.parse_all_ifds
+    calls = {'n': 0}
+
+    def failing_then_real_parse_all_ifds(*a, **k):
+        # Fail the in-function probe parse so the GDS qualification is
+        # skipped; the CPU fallback (_read_geotiff_dask) re-parses
+        # through its own code path, which must still succeed.
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise ValueError("synthetic metadata parse failure 3373")
+        return real_parse_all_ifds(*a, **k)
+
+    monkeypatch.setattr(header_mod, 'parse_all_ifds',
+                        failing_then_real_parse_all_ifds)
+
+    result = _read_geotiff_gpu(path, chunks=8)
+    assert isinstance(result.data._meta, cupy.ndarray)
+    host = cupy.asnumpy(result.compute().data)
+    np.testing.assert_array_equal(host, arr)
