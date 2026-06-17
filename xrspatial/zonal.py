@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # standard library
-import copy
 from math import sqrt
 from typing import Callable, Dict, List, Optional, Union
 
@@ -315,10 +314,13 @@ def _sort_and_stride(zones, values, unique_zones):
 
     values_shape = values.shape
     if len(values_shape) == 3:
-        values_by_zones = copy.deepcopy(values).reshape(
-            values_shape[0], values_shape[1] * values_shape[2])
-        for i in range(values_shape[0]):
-            values_by_zones[i] = values_by_zones[i][sorted_indices]
+        # Reindex every layer's flattened cells by the zone sort order in a
+        # single vectorized fancy-index. Fancy indexing returns a fresh
+        # array, so the input is never mutated and no explicit copy is
+        # needed (the old path deep-copied the whole array first, then
+        # reindexed row by row in a Python loop).
+        values_by_zones = values.reshape(
+            values_shape[0], values_shape[1] * values_shape[2])[:, sorted_indices]
     else:
         values_by_zones = values.ravel()[sorted_indices]
 
