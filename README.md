@@ -202,7 +202,8 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 # xarray backend engine
 import xarray as xr
 xr.open_dataset('dem.tif', engine='xrspatial_geotiff')   # open as a Dataset
-xr.open_mfdataset('*.tif', engine='xrspatial_geotiff')   # open many files
+xr.open_mfdataset('*.tif', engine='xrspatial_geotiff',   # share one var name
+                  backend_kwargs={'default_name': 'band_data'})
 ```
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow, internal-only: requires `allow_internal_only_jpeg=True` and is not readable by GDAL), JPEG 2000 (glymur, experimental: requires `allow_experimental_codecs=True`), uncompressed

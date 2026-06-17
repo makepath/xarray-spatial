@@ -112,13 +112,17 @@ def test_open_mfdataset(tmp_path):
         p.write_bytes(payload)
         paths.append(str(p))
 
-    # Each file opens as a one-variable Dataset, so concatenation along a
-    # new dimension works through the standard multi-file API.
+    # A shared default_name keeps every file's data variable identically
+    # named, so the files concatenate into one variable along the new
+    # dimension. Without it each file's variable takes its own stem and the
+    # result has one variable per file instead.
     ds = xr.open_mfdataset(
         paths, engine=GeoTIFFBackendEntrypoint,
         combine="nested", concat_dim="tile",
+        backend_kwargs={"default_name": "band_data"},
     )
     assert isinstance(ds, xr.Dataset)
+    assert list(ds.data_vars) == ["band_data"]
     assert ds.sizes["tile"] == 2
 
 
