@@ -276,14 +276,24 @@ The coregistered-read options (``coregister``, ``auto_reproject``,
 ``resampling``) reproject and resample onto a target array's grid, so
 they need that target. Pass it as a ``like=`` backend kwarg (a DataArray
 or Dataset); the engine then routes through ``like``'s
-``.xrs.open_geotiff`` accessor:
+``.xrs.open_geotiff`` accessor. Supplying ``like=`` is the signal to snap
+onto its grid, so ``coregister=True`` is assumed:
+
+.. code-block:: python
+
+    xr.open_dataset("scene.tif", engine="xrspatial",
+                    backend_kwargs={"like": target})
+
+Pass ``coregister=False`` for a plain windowed read against the target's
+extent, or ``auto_reproject=True`` for a lighter reproject that keeps the
+file's native resolution (no grid snap); an explicit ``coregister=`` or
+``auto_reproject=True`` overrides the default:
 
 .. code-block:: python
 
     xr.open_dataset(
         "scene.tif", engine="xrspatial",
-        backend_kwargs={"like": target, "coregister": True,
-                        "auto_reproject": True})
+        backend_kwargs={"like": target, "auto_reproject": True})
 
 When ``like`` is a Dataset, the ``var=`` backend kwarg picks the variable
 used for backend/CRS inference. ``open_mfdataset`` with a shared ``like=``
