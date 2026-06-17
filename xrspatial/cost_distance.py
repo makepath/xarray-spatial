@@ -152,10 +152,13 @@ def _cost_distance_kernel(
     # output: initialise to NaN (unreachable)
     dist = np.full((height, width), np.inf, dtype=np.float64)
 
-    # Heap arrays — worst-case each pixel is pushed once per neighbour
-    # but practically much less.  We allocate height*width which is
-    # sufficient for an exact Dijkstra (each pixel settled at most once).
-    max_heap = height * width
+    # Heap arrays.  A lazy-deletion min-heap enqueues a pixel every time its
+    # tentative distance improves, so a pixel can be pushed more than once
+    # before it is settled.  The number of improving relaxations is bounded
+    # by the directed edge count (n_neighbors per pixel) plus one initial
+    # seed per pixel.  The old height*width sizing underflows that bound and
+    # let _heap_push write past the end of the arrays, corrupting memory.
+    max_heap = height * width * (n_neighbors + 1)
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)
@@ -552,7 +555,10 @@ def _cost_distance_tile_kernel(
 
     dist = np.full((height, width), np.inf, dtype=np.float64)
 
-    max_heap = height * width
+    # See _cost_distance_kernel for the heap-sizing rationale.  This kernel
+    # additionally seeds boundary pixels in phase 2 (up to 2*width + 2*height
+    # + 4 extra pushes), so add that headroom on top of the relaxation bound.
+    max_heap = height * width * (n_neighbors + 1) + 2 * (width + height) + 4
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)

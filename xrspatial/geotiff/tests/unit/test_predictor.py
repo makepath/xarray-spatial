@@ -1234,3 +1234,92 @@ def test_normalize_predictor_table():
 
     with pytest.raises(ValueError, match="predictor must be"):
         normalize_predictor(99, f32, deflate)
+
+
+# ---------------------------------------------------------------------------
+# Predictor vs. codec compatibility (issue #3371). The TIFF PREDICTOR tag
+# only applies to byte-oriented entropy codecs. jpeg / jpeg2000 / lerc do
+# their own pixel modelling and ignore the tag, so differencing the bytes
+# first writes a file that no spec-compliant reader can recover.
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_predictor_rejects_predictor_codec_mismatch():
+    """predictor 2/3 + jpeg/jpeg2000/lerc raises; byte codecs are fine."""
+    from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_JPEG,
+                                                COMPRESSION_JPEG2000, COMPRESSION_LERC,
+                                                COMPRESSION_LZ4, COMPRESSION_LZW,
+                                                COMPRESSION_PACKBITS, COMPRESSION_ZSTD)
+    f32 = np.dtype("float32")
+    u16 = np.dtype("uint16")
+
+    incompatible = {
+        "jpeg": COMPRESSION_JPEG,
+        "jpeg2000": COMPRESSION_JPEG2000,
+        "lerc": COMPRESSION_LERC,
+    }
+    for name, tag in incompatible.items():
+        with pytest.raises(ValueError, match=f"compression={name!r}"):
+            normalize_predictor(2, u16, tag)
+        with pytest.raises(ValueError, match=f"compression={name!r}"):
+            normalize_predictor(3, f32, tag)
+
+    # predictor=1 (the default for these codecs) is always allowed.
+    for tag in incompatible.values():
+        assert normalize_predictor(1, u16, tag) == 1
+        assert normalize_predictor(False, u16, tag) == 1
+
+    # Byte-oriented codecs keep honouring the predictor.
+    for tag in (COMPRESSION_DEFLATE, COMPRESSION_LZW, COMPRESSION_ZSTD,
+                COMPRESSION_LZ4, COMPRESSION_PACKBITS):
+        assert normalize_predictor(2, u16, tag) == 2
+
+
+@pytest.mark.parametrize("codec", ["jpeg2000", "j2k", "lerc"])
+def test_to_geotiff_rejects_predictor2_with_codec(tmp_path, codec):
+    """Eager writer refuses predictor=2 with jpeg2000/lerc (issue #3371)."""
+    arr = (np.arange(64 * 64, dtype=np.uint16).reshape(64, 64) % 1000)
+    da = _da_xy(arr)
+    path = tmp_path / f"pred2_{codec}_3371.tif"
+    with pytest.raises(ValueError, match="PREDICTOR"):
+        to_geotiff(da, str(path), compression=codec, predictor=2,
+                   allow_experimental_codecs=True)
+
+
+@pytest.mark.parametrize("codec", ["jpeg2000", "lerc"])
+def test_to_geotiff_rejects_predictor3_with_codec(tmp_path, codec):
+    """Eager writer refuses predictor=3 (float) with jpeg2000/lerc."""
+    arr = _smooth_float((64, 64), np.float32)
+    da = _da_xy(arr)
+    path = tmp_path / f"pred3_{codec}_3371.tif"
+    with pytest.raises(ValueError, match="PREDICTOR"):
+        to_geotiff(da, str(path), compression=codec, predictor=3,
+                   allow_experimental_codecs=True)
+
+
+@pytest.mark.parametrize("codec", ["deflate", "lzw", "zstd"])
+def test_to_geotiff_predictor2_byte_codec_round_trips(tmp_path, codec):
+    """The gate is codec-scoped: byte-oriented codecs still round-trip."""
+    arr = (np.arange(64 * 64, dtype=np.uint16).reshape(64, 64) % 1000)
+    da = _da_xy(arr)
+    path = tmp_path / f"pred2_{codec}_3371.tif"
+    to_geotiff(da, str(path), compression=codec, predictor=2)
+    rt, _ = read_to_array(str(path))
+    np.testing.assert_array_equal(rt, arr)
+
+
+@_gpu_only
+@pytest.mark.parametrize("codec", ["jpeg2000", "lerc"])
+def test_gpu_writer_rejects_predictor2_with_codec(tmp_path, codec):
+    """GPU writer shares normalize_predictor, so the gate fires there too."""
+    import cupy
+
+    from xrspatial.geotiff import _write_geotiff_gpu
+
+    arr = (np.arange(64 * 64, dtype=np.uint16).reshape(64, 64) % 1000)
+    da = _da_xy(arr.copy())
+    da = da.copy(data=cupy.asarray(da.data))
+    path = tmp_path / f"gpu_pred2_{codec}_3371.tif"
+    with pytest.raises(ValueError, match="PREDICTOR"):
+        _write_geotiff_gpu(da, str(path), compression=codec, predictor=2,
+                           allow_experimental_codecs=True)

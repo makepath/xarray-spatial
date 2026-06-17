@@ -1352,56 +1352,71 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
 
     src_path = _coerce_path(source)
 
-    # Per-tile compressed-byte cap, mirroring the eager GPU path and
+    # Local files: read the bytes once and parse the header/IFDs once,
+    # then reuse that single parse for both the per-tile cap check and
+    # the GDS qualification probe below. Parsing the IFDs is
+    # O(tile_count), so a 10k+ tile COG paid that cost twice (plus a
+    # second full-file read) at graph-build time before issue #3373.
+    #
+    # The per-tile compressed-byte cap mirrors the eager GPU path and
     # the CPU readers. The chunked dask + GPU path either qualifies for
-    # the GDS fast
-    # path (handled in ``_read_geotiff_gpu_chunked_gds`` which runs
-    # the same cap on its own metadata parse) or falls through to
-    # ``_read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
-    # apply the cap inside the CPU reader. The check here closes the
-    # window between "qualification probe parses the IFDs" and "the
-    # dispatch decides which path to take" so a forged tile is
-    # rejected at graph-build time rather than at first ``.compute()``.
-    # Sparse tiles (``byte_count == 0``) pass under any positive cap
-    # by design.
+    # the GDS fast path (handled in ``_read_geotiff_gpu_chunked_gds``
+    # which runs the same cap on its own metadata parse) or falls
+    # through to ``_read_geotiff_dask`` whose per-chunk
+    # ``read_to_array`` calls apply the cap inside the CPU reader. The
+    # check here closes the window between "qualification probe parses
+    # the IFDs" and "the dispatch decides which path to take" so a
+    # forged tile is rejected at graph-build time rather than at first
+    # ``.compute()``. Sparse tiles (``byte_count == 0``) pass under any
+    # positive cap by design.
+    raw = header = ifds = None
     if isinstance(src_path, str) and not src_path.startswith(
             ('http://', 'https://')):
         try:
-            with _FileSource(src_path) as _cap_fs:
-                _cap_raw = _cap_fs.read_all()
-            _cap_header = parse_header(_cap_raw)
-            _cap_ifds = parse_all_ifds(_cap_raw, _cap_header)
-            _cap_ifd = select_overview_ifd(_cap_ifds, overview_level)
-            _cap_byte_counts = _cap_ifd.tile_byte_counts
-        except Exception:
-            # If metadata parse fails here, the downstream path will
-            # surface a clear error; do not double-report.
-            _cap_byte_counts = None
-        if _cap_byte_counts is not None:
-            _cap = _max_tile_bytes_from_env()
-            for _tile_idx, _bc in enumerate(_cap_byte_counts):
-                if _bc > _cap:
-                    raise ValueError(
-                        f"TIFF tile {_tile_idx} declares "
-                        f"TileByteCount={_bc:,} bytes, which exceeds "
-                        f"the per-tile safety cap of {_cap:,} bytes. "
-                        f"The file is malformed or attempting "
-                        f"denial-of-service. Override via "
-                        f"XRSPATIAL_COG_MAX_TILE_BYTES if this file "
-                        f"is legitimate."
-                    )
-
-    # Try the disk->GPU path. Parse metadata once; if the file does not
-    # qualify, fall through to the CPU-decode path. Any unexpected
-    # exception during the qualification probe also falls through so we
-    # never lose the ability to return a result.
-    try:
-        if isinstance(src_path, str) and not src_path.startswith(
-                ('http://', 'https://')):
             with _FileSource(src_path) as fs:
                 raw = fs.read_all()
             header = parse_header(raw)
             ifds = parse_all_ifds(raw, header)
+        except Exception:
+            # If metadata parse fails here, the downstream CPU path will
+            # surface a clear error; do not double-report. Leave
+            # raw/header/ifds as None so the qualification probe below
+            # is skipped and the read falls through to the CPU path.
+            raw = header = ifds = None
+
+        if ifds:
+            try:
+                _cap_byte_counts = select_overview_ifd(
+                    ifds, overview_level).tile_byte_counts
+            except Exception:
+                # A bad overview level or malformed IFD here is surfaced
+                # by the downstream CPU path; skip the cap rather than
+                # raise an error unrelated to a denial-of-service tile.
+                _cap_byte_counts = None
+            if _cap_byte_counts is not None:
+                _cap = _max_tile_bytes_from_env()
+                for _tile_idx, _bc in enumerate(_cap_byte_counts):
+                    if _bc > _cap:
+                        raise ValueError(
+                            f"TIFF tile {_tile_idx} declares "
+                            f"TileByteCount={_bc:,} bytes, which exceeds "
+                            f"the per-tile safety cap of {_cap:,} bytes. "
+                            f"The file is malformed or attempting "
+                            f"denial-of-service. Override via "
+                            f"XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                            f"is legitimate."
+                        )
+
+    # Try the disk->GPU path, reusing the single parse above. If the
+    # file does not qualify, fall through to the CPU-decode path. Any
+    # unexpected exception during the qualification probe also falls
+    # through so we never lose the ability to return a result.
+    try:
+        if ifds is not None:
+            # An empty IFD list (non-None, falsy) raises here and the
+            # broad ``except`` below routes it to the CPU path, the same
+            # as a parse failure -- the chunked GPU read never qualifies
+            # a file with no IFDs.
             if not ifds:
                 raise ValueError("No IFDs found in TIFF file")
             ifd = select_overview_ifd(ifds, overview_level)
