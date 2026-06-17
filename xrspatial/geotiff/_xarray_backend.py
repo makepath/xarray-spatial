@@ -35,12 +35,22 @@ reproject and resample a source onto an existing array's grid, so they
 need a target grid that the plain ``open_dataset`` path does not have.
 Pass that target as a ``like=`` backend kwarg (a DataArray or Dataset);
 the engine then routes to the ``.xrs.open_geotiff`` accessor on ``like``
-instead of the standalone reader::
+instead of the standalone reader. ``like=`` on its own coregisters onto
+the target grid -- supplying a target is the signal to snap to it, so
+``coregister=True`` is assumed::
 
     xr.open_dataset(
         "scene.tif", engine="xrspatial",
-        backend_kwargs={"like": target, "coregister": True,
-                        "auto_reproject": True},
+        backend_kwargs={"like": target},
+    )
+
+Pass ``coregister=False`` for a plain windowed read against the target's
+extent, or ``auto_reproject=True`` for a lighter reproject that keeps the
+file's native resolution (no grid snap)::
+
+    xr.open_dataset(
+        "scene.tif", engine="xrspatial",
+        backend_kwargs={"like": target, "auto_reproject": True},
     )
 
 ``coregister`` / ``auto_reproject`` / ``resampling`` / ``var`` without a
@@ -110,6 +120,14 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
             # may be a DataArray or a Dataset and the accessor dispatches
             # on its type (Datasets also honour the ``var=`` kwarg).
             from .. import accessor  # noqa: F401
+            # Supplying a target grid is the signal to coregister onto it,
+            # so default ``coregister=True`` here -- ``like=`` and
+            # ``coregister=True`` together are redundant for the common
+            # case. An explicit ``coregister=`` wins, and an explicit
+            # ``auto_reproject=True`` selects the lighter reproject (no
+            # grid snap), so only default it when neither is set.
+            if 'coregister' not in kwargs and not kwargs.get('auto_reproject'):
+                kwargs['coregister'] = True
             da = like.xrs.open_geotiff(filename_or_obj, **kwargs)
         else:
             offending = [k for k in _COREGISTER_ONLY_KWARGS if k in kwargs]
