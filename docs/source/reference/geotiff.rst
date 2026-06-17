@@ -226,6 +226,38 @@ the top level, so ``from xrspatial import open_geotiff`` and
 
     xrspatial.geotiff.open_geotiff
 
+xarray backend engine
+=====================
+``open_geotiff`` is also registered as an xarray backend under the
+engine name ``xrspatial_geotiff``, so a source can be opened through
+xarray's standard API:
+
+.. code-block:: python
+
+    import xarray as xr
+
+    ds = xr.open_dataset("dem.tif", engine="xrspatial_geotiff")
+    ds = xr.open_mfdataset("*.tif", engine="xrspatial_geotiff")
+
+``open_geotiff`` returns a ``DataArray``; the engine promotes it to a
+one-variable ``Dataset`` (the variable name is the source stem, or
+``band_data`` for an unnamed file-like source). GeoTIFF read options
+(``gpu``, ``masked``, ``band``, ``overview_level``, ``window``,
+``bbox``, ...) are forwarded through ``backend_kwargs``:
+
+.. code-block:: python
+
+    xr.open_dataset(
+        "dem.tif", engine="xrspatial_geotiff",
+        backend_kwargs={"masked": True, "overview_level": 1},
+    )
+
+``chunks`` is the exception: xarray reserves it as a top-level argument
+to ``open_dataset``, so pass it directly (``chunks={}``) rather than
+through ``backend_kwargs`` to get a dask-backed dataset. The ``.tif``,
+``.tiff``, and ``.vrt`` extensions are auto-detected, so ``engine=`` can
+be omitted for those sources.
+
 Coregistered reads (experimental)
 =================================
 
