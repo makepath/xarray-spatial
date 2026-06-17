@@ -1413,6 +1413,10 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     # through so we never lose the ability to return a result.
     try:
         if ifds is not None:
+            # An empty IFD list (non-None, falsy) raises here and the
+            # broad ``except`` below routes it to the CPU path, the same
+            # as a parse failure -- the chunked GPU read never qualifies
+            # a file with no IFDs.
             if not ifds:
                 raise ValueError("No IFDs found in TIFF file")
             ifd = select_overview_ifd(ifds, overview_level)
