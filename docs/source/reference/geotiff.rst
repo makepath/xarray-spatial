@@ -226,6 +226,59 @@ the top level, so ``from xrspatial import open_geotiff`` and
 
     xrspatial.geotiff.open_geotiff
 
+xarray backend engine
+=====================
+``open_geotiff`` is also registered as an xarray backend under the
+engine name ``xrspatial``, so a source can be opened through
+xarray's standard API:
+
+.. code-block:: python
+
+    import xarray as xr
+
+    ds = xr.open_dataset("dem.tif", engine="xrspatial")
+    ds = xr.open_mfdataset(
+        "*.tif", engine="xrspatial",
+        backend_kwargs={"default_name": "band_data"})
+
+``open_geotiff`` returns a ``DataArray``; the engine promotes it to a
+one-variable ``Dataset`` (the variable name is the source stem, or
+``band_data`` for an unnamed file-like source). GeoTIFF read options
+(``gpu``, ``masked``, ``band``, ``overview_level``, ``window``,
+``bbox``, ...) are forwarded through ``backend_kwargs``:
+
+.. code-block:: python
+
+    xr.open_dataset(
+        "dem.tif", engine="xrspatial",
+        backend_kwargs={"masked": True, "overview_level": 1},
+    )
+
+``chunks`` is the exception: xarray reserves it as a top-level argument
+to ``open_dataset``, so pass it directly (``chunks={}``) rather than
+through ``backend_kwargs`` to get a dask-backed dataset.
+
+For ``open_mfdataset``, pass a shared ``default_name`` through
+``backend_kwargs`` as shown above. Without it the variable in each file's
+Dataset takes the source stem, so files with different names concatenate
+into one variable per file (each NaN-filled outside its own slice) rather
+than a single combined variable.
+
+The ``.tif``, ``.tiff``, and ``.vrt`` extensions are auto-detected, so
+``engine=`` can be omitted for those sources. Bare auto-detection is
+ambiguous when another raster backend (e.g. rioxarray's ``rasterio``) is
+installed and also claims those extensions; xarray then raises and asks
+for an explicit ``engine=``.
+
+The engine forwards to the standalone ``open_geotiff`` function, so the
+coregistered-read options (``coregister``, ``auto_reproject``,
+``resampling``) are *not* available through it; they live on the
+``.xrs.open_geotiff`` accessor because they reproject and resample onto a
+target array's grid, and the engine opens a single source from scratch
+with no target. Passing them through ``backend_kwargs`` raises
+``TypeError``. Use the accessor on the target array instead, e.g.
+``target.xrs.open_geotiff("scene.tif", coregister=True)``.
+
 Coregistered reads (experimental)
 =================================
 

@@ -198,6 +198,12 @@ to_geotiff(dask_da, 'mosaic.vrt')                    # stream Dask to VRT
 # Accessor methods
 da.xrs.to_geotiff('out.tif', compression='lzw')     # write from DataArray
 ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset extent
+
+# xarray backend engine
+import xarray as xr
+xr.open_dataset('dem.tif', engine='xrspatial')   # open as a Dataset
+xr.open_mfdataset('*.tif', engine='xrspatial',   # share one var name
+                  backend_kwargs={'default_name': 'band_data'})
 ```
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow, internal-only: requires `allow_internal_only_jpeg=True` and is not readable by GDAL), JPEG 2000 (glymur, experimental: requires `allow_experimental_codecs=True`), uncompressed
