@@ -787,6 +787,38 @@ def test_bounded_large_radius_no_chunk_collapse():
 
 
 # -----------------------------------------------------------------------
+# All-impassable friction on the bounded dask path (Issue #3367)
+# -----------------------------------------------------------------------
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dask_all_impassable_friction_returns_nan():
+    """Finite max_cost with no passable cell returns an all-NaN dask array.
+
+    Covers the ``f_min <= 0`` early return in ``_cost_distance_dask``: when
+    the global minimum positive friction is non-finite or non-positive, the
+    bounded path short-circuits to ``da.full(..., nan)`` instead of running
+    map_overlap or the iterative tile Dijkstra. The result must stay dask-
+    backed and keep the input chunking.
+    """
+    source = np.zeros((6, 6))
+    source[0, 0] = 1.0
+    friction_data = np.zeros((6, 6))  # every cell impassable
+
+    raster = _make_raster(source, backend='dask+numpy', chunks=(3, 3))
+    friction = _make_raster(friction_data, backend='dask+numpy', chunks=(3, 3))
+
+    result = cost_distance(raster, friction, max_cost=5.0)
+
+    assert isinstance(result.data, da.Array)
+    # Chunking preserved: more than one partition, no collapse to a single block.
+    assert result.data.npartitions > 1
+
+    out = _compute(result)
+    assert out.shape == (6, 6)
+    assert np.all(np.isnan(out))
+
+
+# -----------------------------------------------------------------------
 # Memory guard on numpy path (Issue #1252)
 # -----------------------------------------------------------------------
 
@@ -1120,3 +1152,127 @@ def test_custom_dim_names_preserved():
 
     assert result.dims == ('lat', 'lon')
     assert 'lat' in result.coords and 'lon' in result.coords
+
+
+# -----------------------------------------------------------------------
+# Heap-overflow regression: highly variable friction re-enqueues pixels
+# more than once, so the heap must be sized above height*width.
+# -----------------------------------------------------------------------
+
+def _reference_dijkstra(source, friction, connectivity, max_cost=np.inf):
+    """Plain-Python multi-source Dijkstra with an unbounded heap.
+
+    Mirrors _cost_distance_kernel exactly but uses heapq, so its heap can
+    never overflow.  Used as ground truth for the bounded-heap kernels.
+    """
+    import heapq
+
+    h, w = source.shape
+    if connectivity == 8:
+        dy = [-1, -1, -1, 0, 0, 1, 1, 1]
+        dx = [-1, 0, 1, -1, 1, -1, 0, 1]
+        s2 = np.sqrt(2.0)
+        dd = [s2, 1.0, s2, 1.0, 1.0, s2, 1.0, s2]
+    else:
+        dy = [0, -1, 1, 0]
+        dx = [-1, 0, 0, 1]
+        dd = [1.0, 1.0, 1.0, 1.0]
+
+    dist = np.full((h, w), np.inf)
+    visited = np.zeros((h, w), dtype=bool)
+    heap = []
+    for r in range(h):
+        for c in range(w):
+            v = source[r, c]
+            if v != 0 and np.isfinite(v):
+                f = friction[r, c]
+                if np.isfinite(f) and f > 0:
+                    dist[r, c] = 0.0
+                    heapq.heappush(heap, (0.0, r, c))
+    while heap:
+        cu, ur, uc = heapq.heappop(heap)
+        if visited[ur, uc]:
+            continue
+        visited[ur, uc] = True
+        if cu > max_cost:
+            break
+        fu = friction[ur, uc]
+        for i in range(len(dy)):
+            vr, vc = ur + dy[i], uc + dx[i]
+            if vr < 0 or vr >= h or vc < 0 or vc >= w:
+                continue
+            if visited[vr, vc]:
+                continue
+            fv = friction[vr, vc]
+            if not (np.isfinite(fv) and fv > 0):
+                continue
+            nc = cu + dd[i] * (fu + fv) * 0.5
+            if nc < dist[vr, vc]:
+                dist[vr, vc] = nc
+                heapq.heappush(heap, (nc, vr, vc))
+    return np.where(np.isinf(dist) | (dist > max_cost), np.nan, dist).astype(
+        np.float32)
+
+
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_numpy_heap_no_overflow_variable_friction(connectivity):
+    """Highly variable friction must not overflow the bounded heap.
+
+    Regression for the height*width heap allocation: a lazy-deletion
+    Dijkstra re-enqueues pixels whenever their tentative cost improves, so
+    on a grid with strongly varying friction the number of pushes exceeds
+    height*width and _heap_push wrote past the array end (memory corruption
+    or a wrong result).  Compare against a reference heapq Dijkstra over
+    many adversarial grids.
+    """
+    rng = np.random.default_rng(20240616 + connectivity)
+    for _ in range(50):
+        h = int(rng.integers(4, 9))
+        w = int(rng.integers(4, 9))
+        friction_data = rng.uniform(0.05, 12.0, (h, w))
+        source = np.zeros((h, w))
+        for _ in range(int(rng.integers(1, 4))):
+            source[rng.integers(0, h), rng.integers(0, w)] = 1.0
+
+        out = _compute(cost_distance(
+            _make_raster(source, backend='numpy'),
+            _make_raster(friction_data, backend='numpy'),
+            connectivity=connectivity,
+        ))
+        expected = _reference_dijkstra(source, friction_data, connectivity)
+        np.testing.assert_allclose(out, expected, equal_nan=True, atol=1e-4)
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_iterative_heap_no_overflow_variable_friction(connectivity):
+    """Iterative tile Dijkstra must not overflow its bounded heap.
+
+    The tile kernel seeds boundary pixels on top of the relaxation pushes,
+    so its heap needs even more headroom.  Run the unbounded (max_cost=inf)
+    iterative path on variable friction with uneven chunks and compare to a
+    reference heapq Dijkstra.
+    """
+    import warnings
+
+    rng = np.random.default_rng(31415 + connectivity)
+    for _ in range(20):
+        h = int(rng.integers(12, 22))
+        w = int(rng.integers(12, 22))
+        friction_data = rng.uniform(0.05, 12.0, (h, w))
+        source = np.zeros((h, w))
+        for _ in range(int(rng.integers(1, 4))):
+            source[rng.integers(0, h), rng.integers(0, w)] = 1.0
+
+        cy = int(rng.integers(4, h // 2 + 1))
+        cx = int(rng.integers(4, w // 2 + 1))
+        raster = _make_raster(source, backend='dask+numpy', chunks=(cy, cx))
+        friction = _make_raster(
+            friction_data, backend='dask+numpy', chunks=(cy, cx))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = _compute(cost_distance(
+                raster, friction, connectivity=connectivity))
+        expected = _reference_dijkstra(source, friction_data, connectivity)
+        np.testing.assert_allclose(out, expected, equal_nan=True, atol=1e-3)
