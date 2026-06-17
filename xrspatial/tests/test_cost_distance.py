@@ -787,6 +787,38 @@ def test_bounded_large_radius_no_chunk_collapse():
 
 
 # -----------------------------------------------------------------------
+# All-impassable friction on the bounded dask path (Issue #3367)
+# -----------------------------------------------------------------------
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dask_all_impassable_friction_returns_nan():
+    """Finite max_cost with no passable cell returns an all-NaN dask array.
+
+    Covers the ``f_min <= 0`` early return in ``_cost_distance_dask``: when
+    the global minimum positive friction is non-finite or non-positive, the
+    bounded path short-circuits to ``da.full(..., nan)`` instead of running
+    map_overlap or the iterative tile Dijkstra. The result must stay dask-
+    backed and keep the input chunking.
+    """
+    source = np.zeros((6, 6))
+    source[0, 0] = 1.0
+    friction_data = np.zeros((6, 6))  # every cell impassable
+
+    raster = _make_raster(source, backend='dask+numpy', chunks=(3, 3))
+    friction = _make_raster(friction_data, backend='dask+numpy', chunks=(3, 3))
+
+    result = cost_distance(raster, friction, max_cost=5.0)
+
+    assert isinstance(result.data, da.Array)
+    # Chunking preserved: more than one partition, no collapse to a single block.
+    assert result.data.npartitions > 1
+
+    out = _compute(result)
+    assert out.shape == (6, 6)
+    assert np.all(np.isnan(out))
+
+
+# -----------------------------------------------------------------------
 # Memory guard on numpy path (Issue #1252)
 # -----------------------------------------------------------------------
 
