@@ -108,6 +108,24 @@ def test_auto_reproject_skips_default_coregister(tmp_path):
     assert var.shape != template.shape
 
 
+def test_dataset_like_alone_coregisters(tmp_path):
+    # A Dataset target dispatches to the Dataset accessor; the default
+    # coregister applies before that dispatch, so a bare Dataset like=
+    # snaps onto its grid too.
+    path = _file_4326(tmp_path, "lk_3379_ds.tif")
+    template = _template_4326(5).to_dataset(name="elev")
+    ds = xr.open_dataset(
+        path, engine=GeoTIFFBackendEntrypoint,
+        backend_kwargs={"like": template, "var": "elev"},
+    )
+    var = ds[list(ds.data_vars)[0]]
+    assert var.shape == template["elev"].shape
+    assert np.allclose(var.coords["x"].values,
+                       template.coords["x"].values)
+    assert np.allclose(var.coords["y"].values,
+                       template.coords["y"].values)
+
+
 def test_open_mfdataset_like_alone_shares_grid(tmp_path):
     pytest.importorskip("dask")
     template = _template_4326(5)
