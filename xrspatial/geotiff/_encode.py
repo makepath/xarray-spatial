@@ -249,27 +249,58 @@ def _reject_disagreeing_photometric_override(
 # Predictor helpers
 # ---------------------------------------------------------------------------
 
+# Compression codecs that do NOT honor the TIFF PREDICTOR tag. The
+# horizontal / floating-point predictor rearranges pixel bytes assuming
+# the downstream codec is a byte-oriented entropy coder (deflate, lzw,
+# zstd, lz4, packbits) that a spec-compliant reader will run the inverse
+# predictor over. JPEG, JPEG2000 and LERC do their own pixel modelling,
+# so GDAL never applies PREDICTOR for them. Differencing the bytes anyway
+# writes a file whose pixels are corrupted to every reader except one that
+# happens to invert the predictor symmetrically (see issue #3371).
+_PREDICTOR_INCOMPATIBLE_COMPRESSION = {
+    COMPRESSION_JPEG: 'jpeg',
+    COMPRESSION_JPEG2000: 'jpeg2000',
+    COMPRESSION_LERC: 'lerc',
+}
+
+
 def normalize_predictor(predictor, dtype, compression: int) -> int:
     """Normalize a user-supplied predictor value to a TIFF predictor int.
 
     Accepts ``False``/``True`` (legacy) and integers ``1``/``2``/``3``.
     Returns ``1`` (no predictor), ``2`` (horizontal differencing), or ``3``
     (floating-point predictor).
+
+    A predictor other than 1 combined with a codec that does not honor the
+    PREDICTOR tag (jpeg / jpeg2000 / lerc) is rejected with ``ValueError``.
     """
     if predictor is False or predictor == 0:
-        return 1
-    if predictor is True or predictor == 2:
-        return 2
-    if predictor == 1:
-        return 1
-    if predictor == 3:
+        resolved = 1
+    elif predictor is True or predictor == 2:
+        resolved = 2
+    elif predictor == 1:
+        resolved = 1
+    elif predictor == 3:
         if np.dtype(dtype).kind != 'f':
             raise ValueError(
                 "predictor=3 (floating-point) requires float data, "
                 f"got dtype={np.dtype(dtype)}")
-        return 3
-    raise ValueError(
-        f"predictor must be False/True or 1/2/3, got {predictor!r}")
+        resolved = 3
+    else:
+        raise ValueError(
+            f"predictor must be False/True or 1/2/3, got {predictor!r}")
+
+    if resolved != 1 and compression in _PREDICTOR_INCOMPATIBLE_COMPRESSION:
+        codec = _PREDICTOR_INCOMPATIBLE_COMPRESSION[compression]
+        raise ValueError(
+            f"predictor={resolved} is not supported with "
+            f"compression={codec!r}. The TIFF PREDICTOR tag only applies to "
+            f"byte-oriented codecs (deflate, lzw, zstd, lz4, packbits); "
+            f"{codec!r} does its own pixel modelling and GDAL ignores the "
+            f"tag, so differencing the bytes corrupts the pixels for "
+            f"spec-compliant readers. Drop predictor= (or set predictor=1) "
+            f"for this codec.")
+    return resolved
 
 
 def _apply_predictor_encode(buf: np.ndarray, predictor: int,
