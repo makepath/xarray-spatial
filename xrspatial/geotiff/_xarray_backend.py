@@ -29,6 +29,23 @@ argument to ``open_dataset``, so it cannot travel through
 a dask-backed dataset (xarray wraps the eager read)::
 
     xr.open_dataset("dem.tif", engine="xrspatial", chunks={})
+
+Coregistered reads (``coregister`` / ``auto_reproject`` / ``resampling``)
+reproject and resample a source onto an existing array's grid, so they
+need a target grid that the plain ``open_dataset`` path does not have.
+Pass that target as a ``like=`` backend kwarg (a DataArray or Dataset);
+the engine then routes to the ``.xrs.open_geotiff`` accessor on ``like``
+instead of the standalone reader::
+
+    xr.open_dataset(
+        "scene.tif", engine="xrspatial",
+        backend_kwargs={"like": target, "coregister": True,
+                        "auto_reproject": True},
+    )
+
+``coregister`` / ``auto_reproject`` / ``resampling`` / ``var`` without a
+``like=`` raise ``ValueError`` pointing at it, rather than the opaque
+``TypeError`` the standalone reader would emit for the unknown kwarg.
 """
 from __future__ import annotations
 
@@ -39,6 +56,12 @@ from xarray.backends import BackendEntrypoint
 # Name for the one data variable when ``open_geotiff`` cannot derive one
 # from the source (e.g. an in-memory file-like object with no path).
 _DEFAULT_VARIABLE_NAME = "band_data"
+
+# Backend kwargs only the coregistered-read path (``.xrs.open_geotiff`` on
+# ``like``) understands. Supplied without ``like=`` they would reach the
+# standalone reader and raise an opaque ``TypeError``; the engine raises a
+# pointed ``ValueError`` instead.
+_COREGISTER_ONLY_KWARGS = ("coregister", "auto_reproject", "resampling", "var")
 
 # Extensions ``guess_can_open`` claims so ``xr.open_dataset`` /
 # ``open_mfdataset`` can auto-select this engine without ``engine=``.
@@ -67,13 +90,30 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
     # ``backend_kwargs`` instead.
     open_dataset_parameters = ("filename_or_obj", "drop_variables")
 
-    def open_dataset(self, filename_or_obj, *, drop_variables=None, **kwargs):
+    def open_dataset(self, filename_or_obj, *, drop_variables=None,
+                     like=None, **kwargs):
         # Imported here rather than at module scope so importing this
         # backend module stays cheap; the heavy reader package only loads
         # when a source is actually opened.
         from . import open_geotiff
 
-        da = open_geotiff(filename_or_obj, **kwargs)
+        if like is not None:
+            # Importing the accessor module registers the ``.xrs``
+            # accessor that carries the coregistered-read path; ``like``
+            # may be a DataArray or a Dataset and the accessor dispatches
+            # on its type (Datasets also honour the ``var=`` kwarg).
+            from .. import accessor  # noqa: F401
+            da = like.xrs.open_geotiff(filename_or_obj, **kwargs)
+        else:
+            offending = [k for k in _COREGISTER_ONLY_KWARGS if k in kwargs]
+            if offending:
+                raise ValueError(
+                    f"{', '.join(offending)} reproject/resample a source "
+                    "onto a target grid, so they need a target. Pass it as "
+                    "a 'like=' backend kwarg (a DataArray or Dataset), e.g. "
+                    "backend_kwargs={'like': target, 'coregister': True}."
+                )
+            da = open_geotiff(filename_or_obj, **kwargs)
         name = da.name if da.name is not None else _DEFAULT_VARIABLE_NAME
         ds = da.to_dataset(name=name)
         if drop_variables is not None:
