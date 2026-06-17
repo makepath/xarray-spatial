@@ -270,6 +270,15 @@ ambiguous when another raster backend (e.g. rioxarray's ``rasterio``) is
 installed and also claims those extensions; xarray then raises and asks
 for an explicit ``engine=``.
 
+The engine forwards to the standalone ``open_geotiff`` function, so the
+coregistered-read options (``coregister``, ``auto_reproject``,
+``resampling``) are *not* available through it; they live on the
+``.xrs.open_geotiff`` accessor because they reproject and resample onto a
+target array's grid, and the engine opens a single source from scratch
+with no target. Passing them through ``backend_kwargs`` raises
+``TypeError``. Use the accessor on the target array instead, e.g.
+``target.xrs.open_geotiff("scene.tif", coregister=True)``.
+
 Coregistered reads (experimental)
 =================================
 
