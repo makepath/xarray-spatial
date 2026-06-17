@@ -2,6 +2,23 @@
 -----------
 
 
+### Version 0.10.10 - 2026-06-17
+
+#### New features
+- geotiff: expose the GeoTIFF loader as an xarray backend engine (#3365) (#3375)
+- geotiff: expose coregistered reads through the xarray engine via like= (#3376) (#3377)
+
+#### Bug fixes and improvements
+- geotiff: read and parse a local file once on the chunked GPU read path (#3373) (#3374)
+- geotiff: reject predictor with jpeg2000/lerc/jpeg compression (#3371) (#3372)
+- cost_distance: fix Dijkstra heap overflow on non-uniform friction (#3370)
+- cost_distance: add test for the dask all-impassable early return (#3367) (#3368)
+- ci: add free-threaded Python 3.14 (3.14t) to the test matrix (#3360)
+- ci: make test_chunks_is_lazy counter thread-safe for free-threaded CI (#3363) (#3364)
+- ci: scope the 'performance' labeler to benchmarked modules (#3357)
+- remove AI-assistant tooling definitions (#3362)
+
+
 ### Version 0.10.9 - 2026-06-15
 
 #### Bug fixes and improvements
