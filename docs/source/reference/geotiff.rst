@@ -270,13 +270,31 @@ ambiguous when another raster backend (e.g. rioxarray's ``rasterio``) is
 installed and also claims those extensions; xarray then raises and asks
 for an explicit ``engine=``.
 
-The engine forwards to the standalone ``open_geotiff`` function, so the
-coregistered-read options (``coregister``, ``auto_reproject``,
-``resampling``) are *not* available through it; they live on the
-``.xrs.open_geotiff`` accessor because they reproject and resample onto a
-target array's grid, and the engine opens a single source from scratch
-with no target. Passing them through ``backend_kwargs`` raises
-``TypeError``. Use the accessor on the target array instead, e.g.
+By default the engine forwards to the standalone ``open_geotiff``
+function, which opens a single source from scratch with no target grid.
+The coregistered-read options (``coregister``, ``auto_reproject``,
+``resampling``) reproject and resample onto a target array's grid, so
+they need that target. Pass it as a ``like=`` backend kwarg (a DataArray
+or Dataset); the engine then routes through ``like``'s
+``.xrs.open_geotiff`` accessor:
+
+.. code-block:: python
+
+    xr.open_dataset(
+        "scene.tif", engine="xrspatial",
+        backend_kwargs={"like": target, "coregister": True,
+                        "auto_reproject": True})
+
+When ``like`` is a Dataset, the ``var=`` backend kwarg picks the variable
+used for backend/CRS inference. ``open_mfdataset`` with a shared ``like=``
+coregisters every source onto the same grid in one call. The returned
+variable is named by the same ``default_name`` / source-stem rule as the
+plain engine path, and the accessor's GPU / ``.vrt`` / ``allow_rotated``
+rejections apply through the engine too.
+
+Passing ``coregister`` / ``auto_reproject`` / ``resampling`` / ``var``
+*without* a ``like=`` raises ``ValueError`` pointing at ``like=``. The
+accessor on the target array remains available directly, e.g.
 ``target.xrs.open_geotiff("scene.tif", coregister=True)``.
 
 Coregistered reads (experimental)
