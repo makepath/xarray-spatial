@@ -205,6 +205,16 @@ def test_coregister_kwarg_without_like_raises(tmp_path, kwargs):
                         backend_kwargs=kwargs)
 
 
+def test_non_array_like_raises_typeerror(tmp_path):
+    # A path or other non-array passed as like= would otherwise blow up on
+    # `.xrs` with an opaque AttributeError; the guard names the right type.
+    path = _file_4326(tmp_path, "cg_3376_badlike.tif")
+    with pytest.raises(TypeError, match="DataArray or Dataset"):
+        xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
+                        backend_kwargs={"like": "not_an_array",
+                                        "coregister": True})
+
+
 # ---------------------------------------------------------------------------
 # GPU / .vrt rejections are inherited from the accessor path
 # ---------------------------------------------------------------------------

@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import os
 
+import xarray as xr
 from xarray.backends import BackendEntrypoint
 
 # Name for the one data variable when ``open_geotiff`` cannot derive one
@@ -98,6 +99,12 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
         from . import open_geotiff
 
         if like is not None:
+            if not isinstance(like, (xr.DataArray, xr.Dataset)):
+                raise TypeError(
+                    "'like=' must be an xarray DataArray or Dataset whose "
+                    "grid the read coregisters onto, got "
+                    f"{type(like).__name__}."
+                )
             # Importing the accessor module registers the ``.xrs``
             # accessor that carries the coregistered-read path; ``like``
             # may be a DataArray or a Dataset and the accessor dispatches
@@ -108,9 +115,9 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
             offending = [k for k in _COREGISTER_ONLY_KWARGS if k in kwargs]
             if offending:
                 raise ValueError(
-                    f"{', '.join(offending)} reproject/resample a source "
-                    "onto a target grid, so they need a target. Pass it as "
-                    "a 'like=' backend kwarg (a DataArray or Dataset), e.g. "
+                    f"{', '.join(offending)} only apply when reading onto a "
+                    "target grid, so they need a target. Pass it as a "
+                    "'like=' backend kwarg (a DataArray or Dataset), e.g. "
                     "backend_kwargs={'like': target, 'coregister': True}."
                 )
             da = open_geotiff(filename_or_obj, **kwargs)
