@@ -4,7 +4,7 @@ Coverage for issue #3365: ``open_geotiff`` is exposed under xarray's
 pluggable backend API so a GeoTIFF / COG / VRT source opens through the
 standard entry point::
 
-    xr.open_dataset("dem.tif", engine="xrspatial_geotiff")
+    xr.open_dataset("dem.tif", engine="xrspatial")
 
 ``open_geotiff`` returns a ``DataArray``; the backend promotes it to a
 one-variable ``Dataset``. These tests drive the wrapper by passing the
@@ -160,9 +160,9 @@ def test_entry_point_registered():
     CI installs the branch fresh, so the assertion runs there.
     """
     eps = importlib.metadata.entry_points(group="xarray.backends")
-    matches = [ep for ep in eps if ep.name == "xrspatial_geotiff"]
+    matches = [ep for ep in eps if ep.name == "xrspatial"]
     if not matches:
         pytest.skip(
             "xrspatial installed without the xarray.backends entry point; "
-            "reinstall the package to register 'xrspatial_geotiff'.")
+            "reinstall the package to register the 'xrspatial' engine.")
     assert matches[0].load() is GeoTIFFBackendEntrypoint

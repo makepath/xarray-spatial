@@ -229,16 +229,16 @@ the top level, so ``from xrspatial import open_geotiff`` and
 xarray backend engine
 =====================
 ``open_geotiff`` is also registered as an xarray backend under the
-engine name ``xrspatial_geotiff``, so a source can be opened through
+engine name ``xrspatial``, so a source can be opened through
 xarray's standard API:
 
 .. code-block:: python
 
     import xarray as xr
 
-    ds = xr.open_dataset("dem.tif", engine="xrspatial_geotiff")
+    ds = xr.open_dataset("dem.tif", engine="xrspatial")
     ds = xr.open_mfdataset(
-        "*.tif", engine="xrspatial_geotiff",
+        "*.tif", engine="xrspatial",
         backend_kwargs={"default_name": "band_data"})
 
 ``open_geotiff`` returns a ``DataArray``; the engine promotes it to a
@@ -250,7 +250,7 @@ one-variable ``Dataset`` (the variable name is the source stem, or
 .. code-block:: python
 
     xr.open_dataset(
-        "dem.tif", engine="xrspatial_geotiff",
+        "dem.tif", engine="xrspatial",
         backend_kwargs={"masked": True, "overview_level": 1},
     )
 

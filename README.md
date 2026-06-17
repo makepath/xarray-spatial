@@ -201,8 +201,8 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 
 # xarray backend engine
 import xarray as xr
-xr.open_dataset('dem.tif', engine='xrspatial_geotiff')   # open as a Dataset
-xr.open_mfdataset('*.tif', engine='xrspatial_geotiff',   # share one var name
+xr.open_dataset('dem.tif', engine='xrspatial')   # open as a Dataset
+xr.open_mfdataset('*.tif', engine='xrspatial',   # share one var name
                   backend_kwargs={'default_name': 'band_data'})
 ```
 

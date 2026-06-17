@@ -5,8 +5,8 @@ GeoTIFF source can be opened through the standard entry point::
 
     import xarray as xr
 
-    xr.open_dataset("dem.tif", engine="xrspatial_geotiff")
-    xr.open_mfdataset("*.tif", engine="xrspatial_geotiff")
+    xr.open_dataset("dem.tif", engine="xrspatial")
+    xr.open_mfdataset("*.tif", engine="xrspatial")
 
 The entry point is declared in ``setup.cfg`` under
 ``[options.entry_points] xarray.backends``. ``open_geotiff`` returns a
@@ -19,7 +19,7 @@ GeoTIFF-specific read options (``gpu``, ``masked``, ``band``,
 forwarded to :func:`open_geotiff` through xarray's ``backend_kwargs``::
 
     xr.open_dataset(
-        "dem.tif", engine="xrspatial_geotiff",
+        "dem.tif", engine="xrspatial",
         backend_kwargs={"masked": True, "overview_level": 1},
     )
 
@@ -28,7 +28,7 @@ argument to ``open_dataset``, so it cannot travel through
 ``backend_kwargs``. Pass ``chunks=`` directly to ``open_dataset`` to get
 a dask-backed dataset (xarray wraps the eager read)::
 
-    xr.open_dataset("dem.tif", engine="xrspatial_geotiff", chunks={})
+    xr.open_dataset("dem.tif", engine="xrspatial", chunks={})
 """
 from __future__ import annotations
 
