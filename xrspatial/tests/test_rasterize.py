@@ -2529,3 +2529,168 @@ class TestLikeUniformGridValidation:
             [(box(0, 0, 1, 10), 1.0)],
             like=like_2168, fill=0,
         )
+
+
+# ---------------------------------------------------------------------------
+# Validation guards: fill / burn-value / non-finite geometry coords (#3383)
+#
+# These guards all run on the CPU path before backend dispatch, so the tests
+# need no GPU. They assert the documented raise/warn behavior and pair each
+# guard with a valid-input (or merge='count' exemption) negative case so the
+# guards stay narrow rather than rejecting legitimate input.
+# ---------------------------------------------------------------------------
+
+class TestFillRepresentableGuard:
+    """fill must be representable in an integer/bool output dtype (#2504/#3054).
+
+    A fill the dtype cannot hold exactly would land on a different value after
+    the final ``astype`` while the emitted nodata/_FillValue attrs still store
+    the original fill, so the array and its mask metadata disagree.
+    """
+
+    def test_nan_fill_into_integer_dtype_raises(self):
+        with pytest.raises(ValueError, match="cannot be represented"):
+            rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                      bounds=(0, 0, 5, 5), fill=np.nan, dtype='int32')
+
+    def test_out_of_range_integer_fill_raises(self):
+        # -9999 wraps to 241 in uint8.
+        with pytest.raises(ValueError, match="cannot be represented"):
+            rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                      bounds=(0, 0, 5, 5), fill=-9999, dtype='uint8')
+
+    def test_non_false_fill_into_bool_raises(self):
+        # Any non-False fill collapses to True under astype(bool).
+        with pytest.raises(ValueError, match="cannot be represented"):
+            rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                      bounds=(0, 0, 5, 5), fill=5, dtype=bool)
+
+    def test_valid_integer_fill_accepted(self):
+        result = rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=-9999, dtype='int32')
+        assert result.dtype == np.int32
+
+    def test_valid_bool_fill_accepted(self):
+        result = rasterize([(box(0, 0, 5, 5), True)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=False, dtype=bool)
+        assert result.dtype == np.bool_
+
+    def test_nan_fill_into_float_dtype_accepted(self):
+        # Float dtypes can hold NaN; the guard must not reject them. The
+        # small box leaves the grid corners unburned so they keep the fill.
+        result = rasterize([(box(2, 2, 3, 3), 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=np.nan, dtype='float32')
+        assert np.isnan(result.values[0, 0])
+
+
+class TestBurnValueSafeIntegerGuard:
+    """Integer burn values above the float64 safe-integer range (#3056).
+
+    rasterize computes in float64, so a value with |value| > 2**53 - 1 cannot
+    be cast back to an exact integer; it is rejected rather than silently
+    rounded.
+    """
+
+    def test_burn_value_above_safe_integer_range_raises(self):
+        with pytest.raises(ValueError, match="exceeds the range"):
+            rasterize([(box(0, 0, 5, 5), float(2 ** 53 + 1))],
+                      width=5, height=5, bounds=(0, 0, 5, 5),
+                      fill=0, dtype='int64')
+
+    def test_burn_value_at_safe_integer_boundary_accepted(self):
+        # 2**53 - 1 is exactly representable in float64.
+        safe = float(2 ** 53 - 1)
+        result = rasterize([(box(0, 0, 5, 5), safe)],
+                           width=5, height=5, bounds=(0, 0, 5, 5),
+                           fill=0, dtype='int64')
+        assert result.values[2, 2] == np.int64(2 ** 53 - 1)
+
+    def test_large_burn_value_accepted_for_float_dtype(self):
+        # Float output is exempt: the value is what the user asked to store.
+        big = float(2 ** 53 + 1)
+        result = rasterize([(box(0, 0, 5, 5), big)],
+                           width=5, height=5, bounds=(0, 0, 5, 5),
+                           fill=np.nan, dtype='float64')
+        assert result.values[2, 2] == big
+
+
+class TestNonFiniteBurnValueGuard:
+    """Non-finite burn values into integer/bool dtypes (#3085).
+
+    A NaN/inf burn value against an integer dtype lands on a platform sentinel
+    after the final cast (NaN -> -2147483648 for int32) and against bool
+    collapses to True. ``merge='count'`` never reads the property value, so it
+    is exempt.
+    """
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_nonfinite_burn_into_integer_raises(self, bad):
+        with pytest.raises(ValueError, match="is not finite"):
+            rasterize([(box(0, 0, 5, 5), bad)], width=5, height=5,
+                      bounds=(0, 0, 5, 5), fill=0, dtype='int32')
+
+    def test_nan_burn_into_bool_raises(self):
+        with pytest.raises(ValueError, match="is not finite"):
+            rasterize([(box(0, 0, 5, 5), np.nan)], width=5, height=5,
+                      bounds=(0, 0, 5, 5), fill=False, dtype=bool)
+
+    def test_nonfinite_burn_with_count_merge_accepted(self):
+        # count burns the overlap count, never the NaN property, so the
+        # non-finite attribute is allowed through.
+        result = rasterize([(box(0, 0, 5, 5), np.nan)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0, dtype='int32',
+                           merge='count')
+        assert result.dtype == np.int32
+        assert result.values[2, 2] == 1
+
+    def test_nonfinite_burn_into_float_dtype_accepted(self):
+        # NaN/inf are representable in float; no guard should fire.
+        result = rasterize([(box(0, 0, 5, 5), np.nan)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0.0, dtype='float64')
+        assert np.isnan(result.values[2, 2])
+
+
+class TestNonFiniteGeometryCoordsDropped:
+    """Geometries with non-finite coordinates are dropped with a warning.
+
+    A NaN/inf coordinate has no defined location on the raster grid (#3295).
+    The bad geometry is dropped and a UserWarning is emitted; the remaining
+    geometries still burn.
+    """
+
+    def test_nonfinite_point_dropped_with_warning(self):
+        from shapely.geometry import Point
+        pairs = [(box(0, 0, 5, 5), 1.0), (Point(float('nan'), 2.0), 9.0)]
+        with pytest.warns(UserWarning, match="non-finite coordinates"):
+            result = rasterize(pairs, width=5, height=5, bounds=(0, 0, 5, 5),
+                               fill=0)
+        # The good polygon still burned; the NaN point did not.
+        assert result.values[2, 2] == 1.0
+        assert not np.any(result.values == 9.0)
+
+    def test_inf_polygon_dropped_with_warning(self):
+        bad_poly = Polygon([(0, 0), (np.inf, 0), (np.inf, 5), (0, 5)])
+        good_poly = box(0, 0, 5, 5)
+        with pytest.warns(UserWarning, match="non-finite coordinates"):
+            result = rasterize([(good_poly, 1.0), (bad_poly, 9.0)],
+                               width=5, height=5, bounds=(0, 0, 5, 5), fill=0)
+        assert result.values[2, 2] == 1.0
+        assert not np.any(result.values == 9.0)
+
+    @skip_no_geopandas
+    @pytest.mark.filterwarnings(
+        "ignore:invalid value encountered in bounds:RuntimeWarning")
+    def test_nonfinite_geometry_in_gdf_dropped_with_warning(self):
+        # shapely emits a RuntimeWarning while computing bounds over the NaN
+        # point; that is incidental to what this test asserts, so it is
+        # filtered to keep the warnings summary clean.
+        from shapely.geometry import Point
+        gdf = gpd.GeoDataFrame(
+            {'value': [1.0, 9.0]},
+            geometry=[box(0, 0, 5, 5), Point(np.nan, 2.0)],
+        )
+        with pytest.warns(UserWarning, match="non-finite coordinates"):
+            result = rasterize(gdf, width=5, height=5, bounds=(0, 0, 5, 5),
+                               column='value', fill=0)
+        assert result.values[2, 2] == 1.0
+        assert not np.any(result.values == 9.0)
