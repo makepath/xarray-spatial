@@ -1063,6 +1063,126 @@ def _extract_polygon_boundary_segments_float(geometries, geom_ids, bounds,
     return (cx0[v], cy0[v], cx1[v], cy1[v], seg_ids[v])
 
 
+def _extract_polygon_boundary_segments_float_global(
+        geometries, geom_ids, full_bounds, full_height, full_width,
+        tile_bounds, row_off, col_off):
+    """Polygon ring edges as float pixel-space segments in tile-local space,
+    computed in the *global* grid frame so floor() ties match the eager path.
+
+    This is the dask counterpart of
+    :func:`_extract_polygon_boundary_segments_float`.  The eager backend
+    converts world coordinates to pixel coordinates against the full
+    raster origin; a dask tile that re-derives px/py and the origin from
+    its own ``tile_bounds`` reintroduces a different floating-point
+    rounding, so a boundary segment landing on an exact integer pixel
+    row in the full grid (e.g. ``(10.0 - 4.0)/0.4 == 15.0``) can land at
+    ``1.9999999999999996`` in tile-local space and ``floor`` to the wrong
+    cell.  The supercover walk then burns a different row/column than the
+    eager backend, breaking the documented pixel-for-pixel parity under
+    ``all_touched=True`` (issue #3384).
+
+    To match the eager backend bit-for-bit, the world->pixel conversion
+    uses the full raster's ``px`` / ``py`` and origin (so the float
+    pixel coordinates are identical to what the eager
+    :func:`_extract_polygon_boundary_segments_float` produces for the
+    same vertex), then subtracts the *integer* tile offset
+    (``row_off`` / ``col_off``).  Integer translation is exact, so the
+    fractional part -- and therefore ``floor`` -- is preserved.
+
+    Clipping is still done in world space against ``tile_bounds`` so only
+    the ring segments overlapping this tile are walked; the clipped
+    endpoints are then mapped through the full-grid conversion.
+
+    Returns ``(cx0, cy0, cx1, cy1, seg_ids)`` in tile-local float pixel
+    coordinates, matching the signature of
+    :func:`_extract_polygon_boundary_segments_float`.
+    """
+    fxmin, fymin, fxmax, fymax = full_bounds
+    px = (fxmax - fxmin) / full_width
+    py = (fymax - fymin) / full_height
+    txmin, tymin, txmax, tymax = tile_bounds
+
+    all_coords = []
+    all_ids = []
+    for geom, gid in zip(geometries, geom_ids):
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == 'Polygon':
+            parts = [geom]
+        elif geom.geom_type == 'MultiPolygon':
+            parts = list(geom.geoms)
+        else:
+            continue
+        for poly in parts:
+            coords = np.asarray(poly.exterior.coords)
+            n = len(coords) - 1
+            if n > 0:
+                all_coords.append(coords)
+                all_ids.append(np.full(n, gid, dtype=np.int32))
+            for interior in poly.interiors:
+                coords = np.asarray(interior.coords)
+                n = len(coords) - 1
+                if n > 0:
+                    all_coords.append(coords)
+                    all_ids.append(np.full(n, gid, dtype=np.int32))
+
+    if not all_coords:
+        return _EMPTY_LINES_FLOAT
+
+    seg_x0, seg_y0, seg_x1, seg_y1 = [], [], [], []
+    for coords in all_coords:
+        seg_x0.append(coords[:-1, 0])
+        seg_y0.append(coords[:-1, 1])
+        seg_x1.append(coords[1:, 0])
+        seg_y1.append(coords[1:, 1])
+
+    x0 = np.concatenate(seg_x0).astype(np.float64)
+    y0 = np.concatenate(seg_y0).astype(np.float64)
+    x1 = np.concatenate(seg_x1).astype(np.float64)
+    y1 = np.concatenate(seg_y1).astype(np.float64)
+    seg_ids = np.concatenate(all_ids)
+
+    # Vectorized Liang-Barsky clip to this tile's world-space bounds.
+    dx = x1 - x0
+    dy = y1 - y0
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - txmin, txmax - x0, y0 - tymin, tymax - y0])
+
+    t0 = np.zeros(len(x0))
+    t1 = np.ones(len(x0))
+    valid = np.ones(len(x0), dtype=bool)
+
+    for i in range(4):
+        parallel = p[i] == 0.0
+        valid &= ~(parallel & (q[i] < 0.0))
+        neg = (~parallel) & (p[i] < 0.0)
+        pos = (~parallel) & (p[i] > 0.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_neg = np.where(neg, q[i] / p[i], 0.0)
+            t_pos = np.where(pos, q[i] / p[i], 1.0)
+        t0 = np.where(neg, np.maximum(t0, t_neg), t0)
+        t1 = np.where(pos, np.minimum(t1, t_pos), t1)
+
+    valid &= (t0 <= t1)
+
+    cx0_w = x0 + t0 * dx
+    cy0_w = y0 + t0 * dy
+    cx1_w = x0 + t1 * dx
+    cy1_w = y0 + t1 * dy
+
+    # World -> float pixel coordinates in the FULL grid frame (identical
+    # to the eager path), then shift to tile-local space by the integer
+    # tile offset.  The integer subtraction does not perturb the
+    # fractional part, so floor() ties match the eager walk.
+    cx0 = (cx0_w - fxmin) / px - col_off
+    cy0 = (fymax - cy0_w) / py - row_off
+    cx1 = (cx1_w - fxmin) / px - col_off
+    cy1 = (fymax - cy1_w) / py - row_off
+
+    v = valid
+    return (cx0[v], cy0[v], cx1[v], cy1[v], seg_ids[v])
+
+
 # ---------------------------------------------------------------------------
 # CPU burn kernels (numba)
 # ---------------------------------------------------------------------------
@@ -1510,7 +1630,7 @@ def _cells_not_scanline_covered(rows, cols, gids, e_y_min, e_y_max,
 
 
 def _boundary_cells_sum_count(poly_geoms, poly_ids, bounds, height, width,
-                              edge_arrays):
+                              edge_arrays, boundary_segments=None):
     """all_touched boundary cells for sum/count, deduplicated per geometry.
 
     Enumerates the supercover cells of every ring segment, drops
@@ -1522,10 +1642,21 @@ def _boundary_cells_sum_count(poly_geoms, poly_ids, bounds, height, width,
     ``edge_arrays`` is the 5-tuple the scanline fill consumes; passing
     the same arrays keeps the coverage test in the same float
     arithmetic as the fill itself.
+
+    ``boundary_segments`` optionally supplies pre-computed tile-local
+    boundary float segments ``(bx0, by0, bx1, by1, bidx)``.  The dask
+    tile path passes segments derived in the global grid frame (see
+    :func:`_extract_polygon_boundary_segments_float_global`) so the
+    supercover walk lands on the same cells as the eager backend
+    (issue #3384); the eager path leaves it ``None`` and extracts from
+    ``bounds`` directly.
     """
     empty = np.empty(0, np.int32)
-    bx0, by0, bx1, by1, bidx = _extract_polygon_boundary_segments_float(
-        poly_geoms, poly_ids, bounds, height, width)
+    if boundary_segments is None:
+        bx0, by0, bx1, by1, bidx = _extract_polygon_boundary_segments_float(
+            poly_geoms, poly_ids, bounds, height, width)
+    else:
+        bx0, by0, bx1, by1, bidx = boundary_segments
     if len(bx0) == 0:
         return empty, empty.copy(), empty.copy()
 
@@ -3047,7 +3178,9 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                           line_props, line_global,
                           pt_rows, pt_cols, pt_geom_idx,
                           point_props, point_global,
-                          lseg_x0, lseg_y0, lseg_x1, lseg_y1):
+                          lseg_x0, lseg_y0, lseg_x1, lseg_y1,
+                          full_bounds, full_height, full_width,
+                          row_off, col_off):
     """Rasterize a single tile.
 
     Polygons are passed as WKB bytes (cheap to pickle) and deserialized
@@ -3091,18 +3224,26 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
         # sum/count burn the deduplicated cell list instead, exactly
         # like the eager path (issue #3304).
         if all_touched:
+            # Extract boundary float segments in the GLOBAL grid frame
+            # then shift to tile-local space by the integer tile offset,
+            # so the supercover walk lands on the same cells as the eager
+            # backend even when a boundary segment falls on a pixel-grid
+            # line (issue #3384).
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float_global(
+                    poly_geoms, poly_ids, full_bounds,
+                    full_height, full_width,
+                    tile_bounds, row_off, col_off))
             if dedup:
                 brows, bcols, bgids = _boundary_cells_sum_count(
                     poly_geoms, poly_ids, tile_bounds, tile_h, tile_w,
-                    edge_arrays)
+                    edge_arrays,
+                    boundary_segments=(bx0, by0, bx1, by1, bidx))
                 if len(brows) > 0:
                     _burn_points_cpu(out, written, brows, bcols, bgids,
                                      poly_props_2d, poly_global_2d,
                                      merge_fn, should_write, order)
             else:
-                bx0, by0, bx1, by1, bidx = (
-                    _extract_polygon_boundary_segments_float(
-                        poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
                 if len(bx0) > 0:
                     _burn_lines_supercover_cpu(
                         out, written, bx0, by0, bx1, by1, bidx,
@@ -3254,7 +3395,8 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
                 merge_fn, should_write,
                 *ts, tile_line_props, tile_line_global,
                 *tp, tile_point_props, tile_point_global,
-                *lts)
+                *lts,
+                bounds, height, width, r_start, c_start)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
             ri += 1
@@ -3277,6 +3419,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                          pt_rows, pt_cols, pt_geom_idx,
                          point_props, point_global,
                          lseg_x0, lseg_y0, lseg_x1, lseg_y1,
+                         full_bounds, full_height, full_width,
+                         row_off, col_off,
                          merge_name=None):
     """GPU tile rasterization: polygons as WKB, lines/points as segments.
 
@@ -3340,19 +3484,26 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
         # both pass-1 and pass-2 kernels.  sum/count stage the
         # deduplicated cell list as a point launch instead (#3304).
         if all_touched:
+            # Boundary float segments in the GLOBAL grid frame, shifted
+            # to tile-local space by the integer tile offset, so the
+            # supercover walk matches the eager backend on pixel-grid
+            # boundary lines (issue #3384).
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float_global(
+                    poly_geoms, poly_ids, full_bounds,
+                    full_height, full_width,
+                    tile_bounds, row_off, col_off))
             if dedup:
                 brows, bcols, bgids = _boundary_cells_sum_count(
                     poly_geoms, poly_ids, tile_bounds, tile_h, tile_w,
-                    edge_arrays)
+                    edge_arrays,
+                    boundary_segments=(bx0, by0, bx1, by1, bidx))
                 if len(brows) > 0:
                     extra_point_launches.append((
                         cupy.asarray(brows), cupy.asarray(bcols),
                         cupy.asarray(bgids), poly_props_2d_gpu,
                         poly_global_2d_gpu, len(brows)))
             else:
-                bx0, by0, bx1, by1, bidx = (
-                    _extract_polygon_boundary_segments_float(
-                        poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
                 if len(bx0) > 0:
                     boundary_launch = (
                         cupy.asarray(bx0), cupy.asarray(by0),
@@ -3578,7 +3729,9 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
                 merge_fn, should_write,
                 *ts, tile_line_props, tile_line_global,
                 *tp, tile_point_props, tile_point_global,
-                *lts, merge_name)
+                *lts,
+                bounds, height, width, r_start, c_start,
+                merge_name)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
                 meta=cupy.empty(()))
