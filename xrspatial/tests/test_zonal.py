@@ -1387,6 +1387,34 @@ def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_
     assert_input_data_unmodified(data_values_3d, copied_data_values_3d)
 
 
+def test_sort_and_stride_3d_no_mutation_and_parity():
+    # Regression for #3381: the 3D branch of _sort_and_stride used to
+    # copy.deepcopy the values array and reindex it row by row in a Python
+    # loop. It now reindexes in a single vectorized fancy-index. Pin both
+    # properties: the input must be left untouched, and the reordered output
+    # must match the layer-wise sort the loop produced.
+    from xrspatial.zonal import _sort_and_stride
+
+    rng = np.random.default_rng(3381)
+    n_layers, h, w = 4, 5, 6
+    values = rng.integers(0, 100, (n_layers, h, w)).astype(np.float64)
+    zones = rng.integers(0, 3, (h, w)).astype(np.float64)
+    unique_zones = np.unique(zones)
+
+    values_before = values.copy()
+    sorted_indices, values_by_zones, _ = _sort_and_stride(
+        zones, values, unique_zones
+    )
+
+    # input array is not mutated by the reindex
+    np.testing.assert_array_equal(values, values_before)
+
+    # each layer is reordered by the same flat zone-sort permutation
+    expected = values.reshape(n_layers, h * w)[:, sorted_indices]
+    assert values_by_zones.shape == (n_layers, h * w)
+    np.testing.assert_array_equal(values_by_zones, expected)
+
+
 @pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
 def test_crosstab_3d_mixed_backend_raises():
     # 3D crosstab() must reject mismatched backends up front with a clear
