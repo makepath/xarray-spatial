@@ -30,22 +30,29 @@ a dask-backed dataset (xarray wraps the eager read)::
 
     xr.open_dataset("dem.tif", engine="xrspatial", chunks={})
 
-Coregistered reads (``coregister`` / ``auto_reproject`` / ``resampling``)
-reproject and resample a source onto an existing array's grid, so they
-need a target grid that the plain ``open_dataset`` path does not have.
-Pass that target as a ``like=`` backend kwarg (a DataArray or Dataset);
-the engine then routes to the ``.xrs.open_geotiff`` accessor on ``like``
-instead of the standalone reader::
+Reprojecting reads need a target grid that the plain ``open_dataset``
+path does not have, so pass the target as the *value* of the mode you
+want -- a DataArray or Dataset. ``coregister=target`` reprojects and
+resamples the source onto ``target``'s exact grid; ``auto_reproject=
+target`` reprojects onto ``target``'s CRS but keeps the file's native
+resolution. The engine routes the read through the target's
+``.xrs.open_geotiff`` accessor::
 
     xr.open_dataset(
         "scene.tif", engine="xrspatial",
-        backend_kwargs={"like": target, "coregister": True,
-                        "auto_reproject": True},
+        backend_kwargs={"coregister": target},
     )
 
-``coregister`` / ``auto_reproject`` / ``resampling`` / ``var`` without a
-``like=`` raise ``ValueError`` pointing at it, rather than the opaque
-``TypeError`` the standalone reader would emit for the unknown kwarg.
+    xr.open_dataset(
+        "scene.tif", engine="xrspatial",
+        backend_kwargs={"auto_reproject": target},
+    )
+
+``resampling`` / ``var`` are modifiers of those reads, so they need a
+target too. A bare ``coregister=True`` / ``auto_reproject=True`` (no
+grid), a lone ``resampling`` / ``var``, passing a target on both
+``coregister`` and ``auto_reproject``, or the removed ``like=`` kwarg
+each raise a pointed ``ValueError``.
 """
 from __future__ import annotations
 
@@ -58,10 +65,10 @@ from xarray.backends import BackendEntrypoint
 # from the source (e.g. an in-memory file-like object with no path).
 _DEFAULT_VARIABLE_NAME = "band_data"
 
-# Backend kwargs only the coregistered-read path (``.xrs.open_geotiff`` on
-# ``like``) understands. Supplied without ``like=`` they would reach the
-# standalone reader and raise an opaque ``TypeError``; the engine raises a
-# pointed ``ValueError`` instead.
+# Backend kwargs only the reprojecting-read path (``.xrs.open_geotiff`` on
+# the target) understands. Supplied without a target grid they would reach
+# the standalone reader and raise an opaque ``TypeError``; the engine
+# raises a pointed ``ValueError`` instead.
 _COREGISTER_ONLY_KWARGS = ("coregister", "auto_reproject", "resampling", "var")
 
 # Extensions ``guess_can_open`` claims so ``xr.open_dataset`` /
@@ -91,35 +98,59 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
     # ``backend_kwargs`` instead.
     open_dataset_parameters = ("filename_or_obj", "drop_variables")
 
-    def open_dataset(self, filename_or_obj, *, drop_variables=None,
-                     like=None, **kwargs):
+    def open_dataset(self, filename_or_obj, *, drop_variables=None, **kwargs):
         # Imported here rather than at module scope so importing this
         # backend module stays cheap; the heavy reader package only loads
         # when a source is actually opened.
         from . import open_geotiff
 
-        if like is not None:
-            if not isinstance(like, (xr.DataArray, xr.Dataset)):
-                raise TypeError(
-                    "'like=' must be an xarray DataArray or Dataset whose "
-                    "grid the read coregisters onto, got "
-                    f"{type(like).__name__}."
-                )
-            # Importing the accessor module registers the ``.xrs``
-            # accessor that carries the coregistered-read path; ``like``
-            # may be a DataArray or a Dataset and the accessor dispatches
-            # on its type (Datasets also honour the ``var=`` kwarg).
+        if 'like' in kwargs:
+            raise ValueError(
+                "the 'like=' backend kwarg was removed; pass the target grid "
+                "as the value of 'coregister' or 'auto_reproject', e.g. "
+                "backend_kwargs={'coregister': target}."
+            )
+
+        # The target grid rides on the mode parameter's value: a DataArray
+        # or Dataset on ``coregister`` / ``auto_reproject`` is the grid to
+        # read onto. An xarray object is ambiguous in a boolean context, so
+        # detect the array form here and hand the accessor a plain ``True``;
+        # the accessor's bool-based logic stays untouched.
+        cg = kwargs.get('coregister')
+        ar = kwargs.get('auto_reproject')
+        cg_target = cg if isinstance(cg, (xr.DataArray, xr.Dataset)) else None
+        ar_target = ar if isinstance(ar, (xr.DataArray, xr.Dataset)) else None
+        if cg_target is not None and ar_target is not None:
+            raise ValueError(
+                "pass the target grid on exactly one of 'coregister' or "
+                "'auto_reproject', not both."
+            )
+        target = cg_target if cg_target is not None else ar_target
+
+        if target is not None:
+            # Importing the accessor module registers the ``.xrs`` accessor
+            # that carries the reprojecting-read path; the target may be a
+            # DataArray or a Dataset and the accessor dispatches on its type
+            # (Datasets also honour the ``var=`` kwarg).
             from .. import accessor  # noqa: F401
-            da = like.xrs.open_geotiff(filename_or_obj, **kwargs)
+            kwargs['coregister' if cg_target is not None
+                   else 'auto_reproject'] = True
+            da = target.xrs.open_geotiff(filename_or_obj, **kwargs)
         else:
-            offending = [k for k in _COREGISTER_ONLY_KWARGS if k in kwargs]
+            # No target grid: a truthy ``coregister`` / ``auto_reproject`` or
+            # a lone ``resampling`` / ``var`` cannot run.
+            offending = [k for k in _COREGISTER_ONLY_KWARGS if kwargs.get(k)]
             if offending:
                 raise ValueError(
-                    f"{', '.join(offending)} only apply when reading onto a "
-                    "target grid, so they need a target. Pass it as a "
-                    "'like=' backend kwarg (a DataArray or Dataset), e.g. "
-                    "backend_kwargs={'like': target, 'coregister': True}."
+                    f"{', '.join(offending)} need a target grid. Pass it as "
+                    "the value of 'coregister' or 'auto_reproject', e.g. "
+                    "backend_kwargs={'coregister': target}."
                 )
+            # A falsy mode flag (e.g. ``coregister=False``) just means a plain
+            # read; the standalone reader does not take these kwargs, so drop
+            # them rather than leak an opaque ``TypeError``.
+            for k in _COREGISTER_ONLY_KWARGS:
+                kwargs.pop(k, None)
             da = open_geotiff(filename_or_obj, **kwargs)
         name = da.name if da.name is not None else _DEFAULT_VARIABLE_NAME
         ds = da.to_dataset(name=name)

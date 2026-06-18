@@ -1,14 +1,14 @@
-"""Coregistered reads through the xarray backend engine (issue #3376).
+"""Reprojecting reads through the xarray backend engine (issue #3376).
 
 The ``xrspatial`` engine forwards to the standalone ``open_geotiff`` by
-default, which has no target grid. Passing ``like=`` (a DataArray or
-Dataset) routes the read through that object's ``.xrs.open_geotiff``
-accessor instead, so ``coregister`` / ``auto_reproject`` / ``resampling``
-become available through the standard ``xr.open_dataset`` API. These
-tests pin that routing, the parity with the accessor, the variable
-naming, the ``open_mfdataset`` composition, and the guard that turns the
-opaque ``TypeError`` (from the standalone reader) into a pointed
-``ValueError`` when a coregister kwarg arrives without ``like=``.
+default, which has no target grid. Passing the target as the value of
+``coregister`` or ``auto_reproject`` (a DataArray or Dataset) routes the
+read through that object's ``.xrs.open_geotiff`` accessor instead, so the
+reprojecting reads become available through the standard
+``xr.open_dataset`` API. These tests pin that routing, the parity with
+the accessor, the variable naming, the ``open_mfdataset`` composition,
+and the guards that turn an opaque error into a pointed ``ValueError``
+when a reprojecting kwarg arrives without a target.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def _template_3857(n=6):
 
 
 # ---------------------------------------------------------------------------
-# like= routes to the coregister path
+# a target on coregister=/auto_reproject= routes to the reprojecting path
 # ---------------------------------------------------------------------------
 
 def test_coregister_via_engine_matches_template_grid(tmp_path):
@@ -72,7 +72,7 @@ def test_coregister_via_engine_matches_template_grid(tmp_path):
     template = _template_4326(5)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True},
+        backend_kwargs={"coregister": template},
     )
     assert isinstance(ds, xr.Dataset)
     var = ds[list(ds.data_vars)[0]]
@@ -88,7 +88,7 @@ def test_coregister_via_engine_matches_accessor(tmp_path):
     template = _template_4326(5)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True},
+        backend_kwargs={"coregister": template},
     )
     accessor_da = template.xrs.open_geotiff(path, coregister=True)
     engine_da = ds[list(ds.data_vars)[0]]
@@ -103,7 +103,7 @@ def test_coregister_via_engine_crs_mismatch(tmp_path):
     template = _template_3857(6)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True},
+        backend_kwargs={"coregister": template},
     )
     var = ds[list(ds.data_vars)[0]]
     assert var.shape == template.shape
@@ -112,27 +112,27 @@ def test_coregister_via_engine_crs_mismatch(tmp_path):
 
 
 def test_auto_reproject_via_engine(tmp_path):
-    # auto_reproject (no coregister) keeps the file resolution but still
-    # needs the target's bbox/CRS, so it routes through like= too.
+    # auto_reproject keeps the file resolution but still needs the target's
+    # bbox/CRS, so the target rides on auto_reproject= itself.
     path = _file_4326(tmp_path, "ar_3376.tif")
     template = _template_3857(6)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "auto_reproject": True},
+        backend_kwargs={"auto_reproject": template},
     )
     accessor_da = template.xrs.open_geotiff(path, auto_reproject=True)
     engine_da = ds[list(ds.data_vars)[0]]
     np.testing.assert_array_equal(engine_da.values, accessor_da.values)
 
 
-def test_dataset_like_with_var(tmp_path):
+def test_dataset_target_with_var(tmp_path):
     # A Dataset target dispatches to the Dataset accessor, which honours
     # the var= kwarg for backend/CRS inference.
     path = _file_4326(tmp_path, "cg_3376_dsvar.tif")
     template = _template_4326(5).to_dataset(name="elev")
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True, "var": "elev"},
+        backend_kwargs={"coregister": template, "var": "elev"},
     )
     accessor_da = template.xrs.open_geotiff(path, coregister=True, var="elev")
     engine_da = ds[list(ds.data_vars)[0]]
@@ -148,7 +148,7 @@ def test_coregister_variable_name_follows_stem(tmp_path):
     template = _template_4326(5)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True},
+        backend_kwargs={"coregister": template},
     )
     assert "cg_3376_stem" in ds.data_vars
 
@@ -158,7 +158,7 @@ def test_coregister_default_name_renames_variable(tmp_path):
     template = _template_4326(5)
     ds = xr.open_dataset(
         path, engine=GeoTIFFBackendEntrypoint,
-        backend_kwargs={"like": template, "coregister": True,
+        backend_kwargs={"coregister": template,
                         "default_name": "elevation"},
     )
     assert "elevation" in ds.data_vars
@@ -178,7 +178,7 @@ def test_open_mfdataset_coregisters_onto_shared_grid(tmp_path):
     ds = xr.open_mfdataset(
         paths, engine=GeoTIFFBackendEntrypoint,
         combine="nested", concat_dim="tile",
-        backend_kwargs={"like": template, "coregister": True,
+        backend_kwargs={"coregister": template,
                         "default_name": "band_data"},
     )
     assert list(ds.data_vars) == ["band_data"]
@@ -189,7 +189,7 @@ def test_open_mfdataset_coregisters_onto_shared_grid(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Guard: coregister kwargs without like= raise a pointed ValueError
+# Guard: reprojecting kwargs without a target raise a pointed ValueError
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kwargs", [
@@ -198,21 +198,55 @@ def test_open_mfdataset_coregisters_onto_shared_grid(tmp_path):
     {"resampling": "bilinear"},
     {"var": "elev"},
 ])
-def test_coregister_kwarg_without_like_raises(tmp_path, kwargs):
-    path = _file_4326(tmp_path, "cg_3376_nolike.tif")
-    with pytest.raises(ValueError, match="like="):
+def test_reprojecting_kwarg_without_target_raises(tmp_path, kwargs):
+    # A bare bool mode or a lone modifier has no grid to read onto.
+    path = _file_4326(tmp_path, "cg_3376_notarget.tif")
+    with pytest.raises(ValueError, match="target grid"):
         xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
                         backend_kwargs=kwargs)
 
 
-def test_non_array_like_raises_typeerror(tmp_path):
-    # A path or other non-array passed as like= would otherwise blow up on
-    # `.xrs` with an opaque AttributeError; the guard names the right type.
-    path = _file_4326(tmp_path, "cg_3376_badlike.tif")
-    with pytest.raises(TypeError, match="DataArray or Dataset"):
+def test_like_kwarg_removed_raises(tmp_path):
+    # like= was removed; the engine names the replacement instead of letting
+    # the standalone reader raise an opaque TypeError.
+    path = _file_4326(tmp_path, "cg_3376_like.tif")
+    template = _template_4326(5)
+    with pytest.raises(ValueError, match="'like='.*removed"):
         xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
-                        backend_kwargs={"like": "not_an_array",
-                                        "coregister": True})
+                        backend_kwargs={"like": template})
+
+
+@pytest.mark.parametrize("flag", ["coregister", "auto_reproject"])
+def test_falsy_mode_flag_alone_reads_plain(tmp_path, flag):
+    # A falsy mode flag means "no reprojecting read"; it must not leak into
+    # the standalone reader (which has no such kwarg) as an opaque TypeError.
+    path = _file_4326(tmp_path, f"cg_3376_falsy_{flag}.tif")
+    ds = xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
+                         backend_kwargs={flag: False})
+    plain = xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint)
+    a = ds[list(ds.data_vars)[0]]
+    b = plain[list(plain.data_vars)[0]]
+    assert a.shape == b.shape
+    np.testing.assert_array_equal(a.values, b.values)
+
+
+def test_target_on_both_modes_raises(tmp_path):
+    # A grid on both coregister= and auto_reproject= is ambiguous.
+    path = _file_4326(tmp_path, "cg_3376_both.tif")
+    template = _template_4326(5)
+    with pytest.raises(ValueError, match="exactly one"):
+        xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
+                        backend_kwargs={"coregister": template,
+                                        "auto_reproject": template})
+
+
+def test_non_array_target_raises(tmp_path):
+    # A truthy non-array on coregister= is not a grid, so it falls through to
+    # the no-target guard rather than blowing up on `.xrs`.
+    path = _file_4326(tmp_path, "cg_3376_badtarget.tif")
+    with pytest.raises(ValueError, match="target grid"):
+        xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
+                        backend_kwargs={"coregister": "not_an_array"})
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +261,5 @@ def test_coregister_gpu_rejected_through_engine(tmp_path):
     with pytest.raises(ValueError, match="CPU only"):
         xr.open_dataset(
             path, engine=GeoTIFFBackendEntrypoint,
-            backend_kwargs={"like": template, "coregister": True,
-                            "gpu": True},
+            backend_kwargs={"coregister": template, "gpu": True},
         )
