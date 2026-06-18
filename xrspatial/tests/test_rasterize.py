@@ -2678,7 +2678,12 @@ class TestNonFiniteGeometryCoordsDropped:
         assert not np.any(result.values == 9.0)
 
     @skip_no_geopandas
+    @pytest.mark.filterwarnings(
+        "ignore:invalid value encountered in bounds:RuntimeWarning")
     def test_nonfinite_geometry_in_gdf_dropped_with_warning(self):
+        # shapely emits a RuntimeWarning while computing bounds over the NaN
+        # point; that is incidental to what this test asserts, so it is
+        # filtered to keep the warnings summary clean.
         from shapely.geometry import Point
         gdf = gpd.GeoDataFrame(
             {'value': [1.0, 9.0]},
