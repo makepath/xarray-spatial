@@ -137,8 +137,8 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
                    else 'auto_reproject'] = True
             da = target.xrs.open_geotiff(filename_or_obj, **kwargs)
         else:
-            # No target grid: a bare ``coregister=True`` / ``auto_reproject=
-            # True`` or a lone ``resampling`` / ``var`` cannot run.
+            # No target grid: a truthy ``coregister`` / ``auto_reproject`` or
+            # a lone ``resampling`` / ``var`` cannot run.
             offending = [k for k in _COREGISTER_ONLY_KWARGS if kwargs.get(k)]
             if offending:
                 raise ValueError(
@@ -146,6 +146,11 @@ class GeoTIFFBackendEntrypoint(BackendEntrypoint):
                     "the value of 'coregister' or 'auto_reproject', e.g. "
                     "backend_kwargs={'coregister': target}."
                 )
+            # A falsy mode flag (e.g. ``coregister=False``) just means a plain
+            # read; the standalone reader does not take these kwargs, so drop
+            # them rather than leak an opaque ``TypeError``.
+            for k in _COREGISTER_ONLY_KWARGS:
+                kwargs.pop(k, None)
             da = open_geotiff(filename_or_obj, **kwargs)
         name = da.name if da.name is not None else _DEFAULT_VARIABLE_NAME
         ds = da.to_dataset(name=name)

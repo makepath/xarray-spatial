@@ -216,6 +216,20 @@ def test_like_kwarg_removed_raises(tmp_path):
                         backend_kwargs={"like": template})
 
 
+@pytest.mark.parametrize("flag", ["coregister", "auto_reproject"])
+def test_falsy_mode_flag_alone_reads_plain(tmp_path, flag):
+    # A falsy mode flag means "no reprojecting read"; it must not leak into
+    # the standalone reader (which has no such kwarg) as an opaque TypeError.
+    path = _file_4326(tmp_path, f"cg_3376_falsy_{flag}.tif")
+    ds = xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint,
+                         backend_kwargs={flag: False})
+    plain = xr.open_dataset(path, engine=GeoTIFFBackendEntrypoint)
+    a = ds[list(ds.data_vars)[0]]
+    b = plain[list(plain.data_vars)[0]]
+    assert a.shape == b.shape
+    np.testing.assert_array_equal(a.values, b.values)
+
+
 def test_target_on_both_modes_raises(tmp_path):
     # A grid on both coregister= and auto_reproject= is ambiguous.
     path = _file_4326(tmp_path, "cg_3376_both.tif")
