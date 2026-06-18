@@ -1059,6 +1059,19 @@ def _extract_polygon_boundary_segments_float(geometries, geom_ids, bounds,
     cx1 = (cx1_w - xmin) / px
     cy1 = (ymax - cy1_w) / py
 
+    # Snap to nearest integer when within a tiny relative tolerance.
+    # The dask tile workers re-extract boundary segments per tile with
+    # a slightly different world-to-pixel transform, which can nudge
+    # on-grid coordinates (e.g. 15.0 -> 14.999999999999996).  Snapping
+    # here makes the tile path match the eager path pixel-for-pixel
+    # under all_touched=True.
+    snap_tol = np.finfo(np.float64).eps * 8
+    for arr in (cx0, cy0, cx1, cy1):
+        scale = np.maximum(np.abs(arr), 1.0)
+        rounded = np.round(arr)
+        mask = np.abs(arr - rounded) <= scale * snap_tol
+        np.copyto(arr, rounded, where=mask)
+
     v = valid
     return (cx0[v], cy0[v], cx1[v], cy1[v], seg_ids[v])
 
