@@ -17,22 +17,15 @@ Fire danger
 """
 from __future__ import annotations
 
-from math import exp, log, sqrt, tan
+from math import exp, sqrt, tan
 
 import numpy as np
 import xarray as xr
 from numba import cuda
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    _validate_raster,
-    _validate_scalar,
-    cuda_args,
-    ngjit,
-    validate_arrays,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             _validate_scalar, cuda_args, ngjit, validate_arrays)
 
 # 3rd-party (optional)
 try:
@@ -102,7 +95,6 @@ def _rothermel_fuel_constants(fuel_model: int):
     delta = row[2]      # bed depth, m
     M_x = row[3]        # moisture of extinction, fraction
     h = row[4]          # heat content, kJ/kg
-    S_T = row[5]        # total mineral content
     S_e = row[6]        # effective mineral content
     rho_p = row[7]      # oven-dry particle density, kg/m^3
 
