@@ -2499,3 +2499,66 @@ def test_proximity_numpy_no_scipy_fallback_is_exact():
     expected = _exact_planar_proximity(
         raster.data, raster['x'].data, raster['y'].data, 'EUCLIDEAN')
     np.testing.assert_allclose(result.data, expected, rtol=1e-5, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# @supports_dataset: proximity / allocation / direction accept an xr.Dataset
+# and process each data variable independently (test-only; no source change).
+#
+# All three functions are decorated with @supports_dataset and their
+# docstrings document the Dataset-in / Dataset-out contract, but every other
+# test in this file passes a DataArray. The shared decorator is exercised
+# generically in test_dataset_support.py, but that file never lists
+# proximity/allocation/direction, so the way these functions interact with it
+# (per-variable _process dispatch, attrs/coords round-trip, and the
+# result.name = None reset each function applies) is otherwise unpinned.
+# Behaviour was verified correct on numpy and dask before these were added.
+# ---------------------------------------------------------------------------
+
+def _dataset_two_vars(backend):
+    """Two-variable Dataset on the requested backend, shared lat/lon coords."""
+    data_a = np.zeros((6, 6), dtype=np.float64)
+    data_a[1, 1] = 1.0
+    data_a[4, 4] = 2.0
+    data_b = np.zeros((6, 6), dtype=np.float64)
+    data_b[0, 0] = 3.0
+    data_b[5, 2] = 4.0
+
+    da_a = _backend_raster(data_a, backend)
+    da_b = _backend_raster(data_b, backend)
+    ds = xr.Dataset({'a': da_a, 'b': da_b}, attrs={'source': 'test'})
+    return ds
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_dataset_input_processes_each_variable(backend, func):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    # Build per-variable expected results from the numpy backend so the
+    # comparison array stays a plain ndarray (a cupy expected would force an
+    # implicit host conversion in general_output_checks).
+    numpy_ds = _dataset_two_vars('numpy')
+    expected = {name: func(numpy_ds[name], x='lon', y='lat').data
+                for name in ('a', 'b')}
+
+    ds = _dataset_two_vars(backend)
+    result = func(ds, x='lon', y='lat')
+
+    # Dataset in -> Dataset out, same variables, attrs preserved.
+    assert isinstance(result, xr.Dataset)
+    assert set(result.data_vars) == {'a', 'b'}
+    assert result.attrs == ds.attrs
+
+    # Each variable must equal the standalone DataArray call on that variable.
+    for name in ('a', 'b'):
+        general_output_checks(ds[name], result[name], expected[name],
+                              verify_dtype=True)
+        # Coordinates round-trip on every variable.
+        np.testing.assert_array_equal(
+            result[name]['lon'].data, ds[name]['lon'].data)
+        np.testing.assert_array_equal(
+            result[name]['lat'].data, ds[name]['lat'].data)
