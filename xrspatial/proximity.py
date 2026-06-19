@@ -634,6 +634,12 @@ def _proximity_cuda_kernel(target_xs, target_ys, target_vals, n_targets,
             best_dist = d
             best_idx = k
 
+    # Round the winning distance to float32 before the range test so the
+    # in-range decision matches the CPU brute-force path, where _distance
+    # returns np.float32(d). Comparing the float64 distance here let a target
+    # whose distance rounds down across a float32 ulp pass on the CPU but fail
+    # on the GPU (or the reverse) when max_distance sits in that ulp gap.
+    best_dist = np.float32(best_dist)
     if best_idx >= 0 and best_dist <= max_distance:
         if process_mode == PROXIMITY:
             out[iy, ix] = best_dist
