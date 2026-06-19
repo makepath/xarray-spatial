@@ -166,7 +166,8 @@ def _dnbr_gpu(pre_data, post_data, out):
 
 
 def _dnbr_dask(pre_data, post_data):
-    return da.map_blocks(_dnbr_cpu, pre_data, post_data, meta=np.array(()),
+    return da.map_blocks(_dnbr_cpu, pre_data, post_data,
+                         dtype=np.float32, meta=np.array(()),
                          **_dask_task_name_kwargs('xrspatial.dnbr'))
 
 
@@ -259,7 +260,8 @@ def _rdnbr_gpu(dnbr_data, pre_data, out):
 
 
 def _rdnbr_dask(dnbr_data, pre_data):
-    return da.map_blocks(_rdnbr_cpu, dnbr_data, pre_data, meta=np.array(()),
+    return da.map_blocks(_rdnbr_cpu, dnbr_data, pre_data,
+                         dtype=np.float32, meta=np.array(()),
                          **_dask_task_name_kwargs('xrspatial.rdnbr'))
 
 
@@ -471,7 +473,7 @@ def _fli_gpu(fuel_data, spread_data, heat_content, out):
 
 def _fli_dask(fuel_data, spread_data, heat_content):
     return da.map_blocks(_fli_cpu, fuel_data, spread_data, heat_content,
-                         meta=np.array(()),
+                         dtype=np.float32, meta=np.array(()),
                          **_dask_task_name_kwargs('xrspatial.fireline_intensity'))
 
 
@@ -571,7 +573,8 @@ def _fl_gpu(intensity_data, out):
 
 
 def _fl_dask(intensity_data):
-    return da.map_blocks(_fl_cpu, intensity_data, meta=np.array(()),
+    return da.map_blocks(_fl_cpu, intensity_data,
+                         dtype=np.float32, meta=np.array(()),
                          **_dask_task_name_kwargs('xrspatial.flame_length'))
 
 
@@ -743,7 +746,7 @@ def _ros_dask(slope_data, wind_data, moisture_data,
         _ros_cpu, slope_data, wind_data, moisture_data,
         w_0, h, M_x, beta, rho_b, Gamma, eta_s, xi, epsilon,
         C_w, B_w, E_w,
-        meta=np.array(()),
+        dtype=np.float32, meta=np.array(()),
         **_dask_task_name_kwargs('xrspatial.rate_of_spread'),
     )
 
@@ -919,7 +922,7 @@ def _kbdi_gpu(kbdi_prev_data, max_temp_data, precip_data, annual_precip, out):
 def _kbdi_dask(kbdi_prev_data, max_temp_data, precip_data, annual_precip):
     return da.map_blocks(
         _kbdi_cpu, kbdi_prev_data, max_temp_data, precip_data, annual_precip,
-        meta=np.array(()),
+        dtype=np.float32, meta=np.array(()),
         **_dask_task_name_kwargs('xrspatial.kbdi'),
     )
 

@@ -664,3 +664,66 @@ class TestAccessors:
         })
         result = ds.xrs.flame_length()
         assert isinstance(result, xr.Dataset)
+
+
+# ---------------------------------------------------------------------------
+# Backend dtype parity (regression for #3394)
+# ---------------------------------------------------------------------------
+# Each entry builds the function's call for a given backend so the dask path's
+# declared dtype can be compared against the numpy path. The dask map_blocks
+# wrappers used to omit dtype=, defaulting the declared dtype to float64 while
+# the kernels actually return float32.
+def _dnbr_call(backend):
+    a = create_test_raster(np.array([[0.5, 0.6]], dtype='f4'), backend)
+    b = create_test_raster(np.array([[0.1, 0.3]], dtype='f4'), backend)
+    return dnbr(a, b)
+
+
+def _rdnbr_call(backend):
+    a = create_test_raster(np.array([[0.4, 0.3]], dtype='f4'), backend)
+    b = create_test_raster(np.array([[500.0, 200.0]], dtype='f4'), backend)
+    return rdnbr(a, b)
+
+
+def _bsc_call(backend):
+    a = create_test_raster(np.array([[0.5, -0.3]], dtype='f4'), backend)
+    return burn_severity_class(a)
+
+
+def _fli_call(backend):
+    a = create_test_raster(np.array([[2.0, 0.5]], dtype='f4'), backend)
+    b = create_test_raster(np.array([[0.1, 0.2]], dtype='f4'), backend)
+    return fireline_intensity(a, b)
+
+
+def _fl_call(backend):
+    a = create_test_raster(np.array([[100.0, 500.0]], dtype='f4'), backend)
+    return flame_length(a)
+
+
+def _ros_call(backend):
+    slope = create_test_raster(np.full((2, 2), 10.0, dtype='f4'), backend)
+    wind = create_test_raster(np.full((2, 2), 10.0, dtype='f4'), backend)
+    moist = create_test_raster(np.full((2, 2), 0.06, dtype='f4'), backend)
+    return rate_of_spread(slope, wind, moist)
+
+
+def _kbdi_call(backend):
+    prev = create_test_raster(np.full((2, 2), 100.0, dtype='f4'), backend)
+    temp = create_test_raster(np.full((2, 2), 30.0, dtype='f4'), backend)
+    precip = create_test_raster(np.zeros((2, 2), dtype='f4'), backend)
+    return kbdi(prev, temp, precip, annual_precip=1500.0)
+
+
+@dask_array_available
+@pytest.mark.parametrize("call", [
+    _dnbr_call, _rdnbr_call, _bsc_call, _fli_call, _fl_call, _ros_call,
+    _kbdi_call,
+])
+def test_dask_numpy_dtype_matches_numpy(call):
+    np_r = call('numpy')
+    dk_r = call('dask+numpy')
+    # declared dtype on the lazy dask array must match numpy backend
+    assert dk_r.dtype == np_r.dtype
+    # and must match what the graph actually computes
+    assert dk_r.data.compute().dtype == np_r.dtype
