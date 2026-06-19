@@ -2499,3 +2499,75 @@ def test_proximity_numpy_no_scipy_fallback_is_exact():
     expected = _exact_planar_proximity(
         raster.data, raster['x'].data, raster['y'].data, 'EUCLIDEAN')
     np.testing.assert_allclose(result.data, expected, rtol=1e-5, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# Issue #3389: the max_distance comparison must use the same precision on the
+# CPU brute-force and the CUDA kernel. _distance casts to float32 before the
+# CPU compares best_dist <= max_distance, while the kernel used to compare the
+# float64 distance. A max_distance landing inside the float32 ulp gap of a
+# target's distance then qualified the target on numpy but rejected it on cupy
+# (or the reverse).
+# ---------------------------------------------------------------------------
+
+
+def test_max_distance_float32_boundary_gpu_matches_cpu():
+    """GREAT_CIRCLE proximity at a float32-ulp max_distance agrees CPU/GPU."""
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    import cupy
+
+    lon = np.linspace(0, 39, 40)
+    lat = np.array([0.0])
+    data = np.zeros((1, 40), dtype=np.float64)
+    data[0, 0] = 1.0
+    j = 20
+    d64 = great_circle_distance(lon[0], lon[j], lat[0], lat[0])
+    # max_distance between the float32-rounded and the true float64 distance.
+    md = (float(np.float32(d64)) + d64) / 2.0
+    assert float(np.float32(d64)) < md < d64, "needs a real float32 ulp gap"
+
+    kwargs = dict(x='lon', y='lat', distance_metric='GREAT_CIRCLE',
+                  max_distance=md)
+    numpy_raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    numpy_val = proximity(numpy_raster, **kwargs).data[0, j]
+
+    cupy_raster = xr.DataArray(
+        cupy.asarray(data), dims=['lat', 'lon'],
+        coords={'lon': lon, 'lat': lat})
+    cupy_val = proximity(cupy_raster, **kwargs).data.get()[0, j]
+
+    # Both keep the target: its float32 distance is <= max_distance.
+    assert np.isnan(numpy_val) == np.isnan(cupy_val)
+    np.testing.assert_allclose(numpy_val, cupy_val, rtol=1e-6)
+
+
+def test_max_distance_float32_boundary_allocation_gpu_matches_cpu():
+    """EUCLIDEAN allocation (brute-force on both CPU and GPU) agrees at the
+    float32 ulp boundary."""
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    import cupy
+
+    lon = np.array([0.0, 0.1, 0.7])
+    lat = np.array([0.0])
+    data = np.zeros((1, 3), dtype=np.float64)
+    data[0, 0] = 9.0
+    j = 2
+    d64 = euclidean_distance(lon[0], lon[j], lat[0], lat[0])
+    md = (float(np.float32(d64)) + d64) / 2.0
+    assert float(np.float32(d64)) < md < d64, "needs a real float32 ulp gap"
+
+    kwargs = dict(x='lon', y='lat', max_distance=md)
+    numpy_raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    numpy_val = allocation(numpy_raster, **kwargs).data[0, j]
+
+    cupy_raster = xr.DataArray(
+        cupy.asarray(data), dims=['lat', 'lon'],
+        coords={'lon': lon, 'lat': lat})
+    cupy_val = allocation(cupy_raster, **kwargs).data.get()[0, j]
+
+    assert np.isnan(numpy_val) == np.isnan(cupy_val)
+    np.testing.assert_allclose(numpy_val, cupy_val, rtol=1e-6)
