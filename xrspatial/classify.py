@@ -745,17 +745,21 @@ def _generate_sample_indices(num_data, num_sample, seed=1234567890):
 
     For small datasets (<=10M elements), uses the same linspace+shuffle
     approach as the numpy backend for exact reproducibility.
-    For large datasets, uses memory-efficient RandomState.choice()
-    which is O(num_sample) rather than O(num_data).
+    For large datasets, draws the sample with ``Generator.choice`` (Floyd's
+    algorithm) so peak host memory is O(num_sample) rather than O(num_data).
+    The legacy ``RandomState.choice`` builds a full ``arange(num_data)``
+    permutation internally, which materialises the whole index space on the
+    driver host and OOMs on very large dask arrays.
     """
-    generator = np.random.RandomState(seed)
     if num_data <= 10_000_000:
+        generator = np.random.RandomState(seed)
         idx = np.linspace(
             0, num_data, num_data, endpoint=False, dtype=np.uint32
         )
         generator.shuffle(idx)
         sample_idx = idx[:num_sample]
     else:
+        generator = np.random.default_rng(seed)
         sample_idx = generator.choice(
             num_data, size=num_sample, replace=False
         )
