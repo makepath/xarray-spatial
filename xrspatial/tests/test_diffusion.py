@@ -585,5 +585,7 @@ def test_inf_input_propagates_like_nan():
     result = diffuse(agg, diffusivity=1.0, steps=1, boundary='nearest')
     # The Inf cell itself: lap = (1+1+1+1) - 4*inf = -inf, so 4 cells away.
     out = result.values
-    # Direct neighbours of the Inf cell see Inf in their stencil and become NaN.
+    # Direct neighbours of the Inf cell see Inf in their stencil. Whether the
+    # neighbour lands on inf or nan depends on the exact stencil arithmetic, so
+    # this loose check is intentional -- it asserts contamination, not a value.
     assert np.isnan(out[1, 2]) or np.isinf(out[1, 2])
