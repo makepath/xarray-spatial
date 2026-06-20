@@ -483,6 +483,152 @@ def test_dilate_centre_zero_cupy_matches_numpy():
 
 
 # ---------------------------------------------------------------------------
+# Infinite inputs (issue #3404)
+# ---------------------------------------------------------------------------
+
+def test_erode_dilate_with_inf():
+    """+Inf and -Inf must flow through min/max without becoming NaN."""
+    data = np.array([
+        [1., 5., 3.],
+        [4., np.inf, 6.],
+        [2., 9., 7.],
+    ], dtype=np.float64)
+    agg = create_test_raster(data)
+
+    eroded = morph_erode(agg, kernel=_KERNEL_3x3, boundary='nearest')
+    dilated = morph_dilate(agg, kernel=_KERNEL_3x3, boundary='nearest')
+    # +Inf is the local max, never the local min.
+    assert eroded.data[1, 1] == 1.0
+    assert np.isinf(dilated.data[1, 1])
+    # A neighbour of +Inf takes it as its dilation max but not its erosion min.
+    assert np.isinf(dilated.data[0, 1])
+    assert not np.isinf(eroded.data[0, 1])
+
+    data_neg = data.copy()
+    data_neg[1, 1] = -np.inf
+    agg_neg = create_test_raster(data_neg)
+    eroded_neg = morph_erode(agg_neg, kernel=_KERNEL_3x3, boundary='nearest')
+    # -Inf is the local min.
+    assert eroded_neg.data[1, 1] == -np.inf
+
+
+@dask_array_available
+def test_erode_dilate_inf_dask_matches_numpy():
+    """Inf handling must match between numpy and dask backends."""
+    data = np.array([
+        [1., 5., 3., 2.],
+        [4., np.inf, 6., 1.],
+        [2., 9., 7., 5.],
+        [3., 1., 4., -np.inf],
+    ], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask')
+    for fn in (morph_erode, morph_dilate):
+        np_res = fn(numpy_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        dk_res = fn(dask_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        np.testing.assert_allclose(
+            np_res.data, dk_res.data.compute(), equal_nan=True,
+        )
+
+
+@cuda_and_cupy_available
+def test_erode_dilate_inf_cupy_matches_numpy():
+    data = np.array([
+        [1., 5., 3., 2.],
+        [4., np.inf, 6., 1.],
+        [2., 9., 7., 5.],
+        [3., 1., 4., -np.inf],
+    ], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    for fn in (morph_erode, morph_dilate):
+        np_res = fn(numpy_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        cp_res = fn(cupy_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        np.testing.assert_allclose(
+            np_res.data, cp_res.data.get(), equal_nan=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# All-NaN raster (issue #3404)
+# ---------------------------------------------------------------------------
+
+def test_all_nan_raster_stays_nan():
+    """Every cell sees only NaN neighbours, so output is all NaN."""
+    data = np.full((4, 4), np.nan, dtype=np.float64)
+    agg = create_test_raster(data)
+    for fn in (morph_erode, morph_dilate, morph_opening, morph_closing):
+        result = fn(agg, kernel=_KERNEL_3x3, boundary='nearest')
+        assert np.all(np.isnan(result.data))
+
+
+@dask_array_available
+def test_all_nan_raster_dask_matches_numpy():
+    data = np.full((6, 6), np.nan, dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask')
+    for fn in (morph_erode, morph_dilate):
+        np_res = fn(numpy_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        dk_res = fn(dask_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        np.testing.assert_allclose(
+            np_res.data, dk_res.data.compute(), equal_nan=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Degenerate strip rasters (issue #3404)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("data", [
+    np.array([[1.], [5.], [3.], [2.], [7.]], dtype=np.float64),   # Nx1 column
+    np.array([[1., 5., 3., 2., 7.]], dtype=np.float64),           # 1xN row
+])
+def test_strip_raster_numpy(data):
+    """Single-column / single-row rasters keep their shape and stay finite."""
+    agg = create_test_raster(data)
+    for fn in (morph_erode, morph_dilate):
+        result = fn(agg, kernel=_KERNEL_3x3, boundary='nearest')
+        assert result.shape == data.shape
+        assert not np.any(np.isnan(result.data))
+
+
+@dask_array_available
+@pytest.mark.parametrize("data", [
+    np.array([[1.], [5.], [3.], [2.], [7.]], dtype=np.float64),   # Nx1 column
+    np.array([[1., 5., 3., 2., 7.]], dtype=np.float64),           # 1xN row
+])
+def test_strip_raster_dask_matches_numpy(data):
+    """Strip rasters exercise the map_overlap path with a degenerate axis."""
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask')
+    for fn in (morph_erode, morph_dilate):
+        np_res = fn(numpy_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        dk_res = fn(dask_agg, kernel=_KERNEL_3x3, boundary='nearest')
+        np.testing.assert_allclose(
+            np_res.data, dk_res.data.compute(), equal_nan=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Integer-dtype input (issue #3404)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dtype", [np.int32, np.int64, np.uint8])
+def test_integer_input_promoted(dtype):
+    """Integer rasters are accepted and promoted to float64."""
+    data = np.array([
+        [1, 5, 3],
+        [4, 8, 6],
+        [2, 9, 7],
+    ], dtype=dtype)
+    agg = create_test_raster(data)
+    result = morph_erode(agg, kernel=_KERNEL_3x3, boundary='nearest')
+    assert result.dtype == np.float64
+    # Interior min of the 3x3 neighbourhood is 1.
+    assert result.data[1, 1] == 1.0
+
+
+# ---------------------------------------------------------------------------
 # Dataset support
 # ---------------------------------------------------------------------------
 
@@ -529,6 +675,29 @@ def test_kernel_memory_guard_allows_normal_use(monkeypatch):
     # Default 3x3 kernel on a 5x5 raster fits comfortably.
     result = morph_erode(agg, kernel=_KERNEL_3x3)
     general_output_checks(agg, result, verify_attrs=True)
+
+
+@dask_array_available
+def test_memory_guard_skipped_for_lazy_dask(monkeypatch):
+    """The full-shape guard must not fire on a lazy dask array.
+
+    Dask processes the raster chunk-by-chunk via map_overlap, so peak
+    memory scales with chunk size, not the full logical shape. A guard
+    sized against the full array would reject workloads that run fine.
+    """
+    import dask.array as da
+
+    # Tiny memory budget: the full-shape guard would trip immediately, but
+    # the dask path never allocates a full padded copy.
+    monkeypatch.setattr(
+        morphology_mod, "_available_memory_bytes", lambda: 1 * 1024 * 1024,
+    )
+    arr = da.zeros((4096, 4096), chunks=(512, 512), dtype=np.float64)
+    agg = xr.DataArray(arr, dims=['y', 'x'])
+    # Graph construction only -- no .compute().
+    result = morph_erode(agg, kernel=_KERNEL_3x3, boundary='reflect')
+    assert isinstance(result.data, da.Array)
+    assert result.shape == (4096, 4096)
 
 
 def test_kernel_memory_guard_runs_for_all_public_apis(monkeypatch):
