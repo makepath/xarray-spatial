@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -1171,12 +1173,20 @@ def test_osavi_approaches_ndvi_for_large_dn(nir_data, red_data, qgis_ndvi):
 def _true_color_to_numpy(result):
     # Pull a true_color result back to a host numpy array regardless of
     # backend (numpy / cupy / dask+numpy / dask+cupy).
-    data = result.data
-    if hasattr(data, 'compute'):
-        data = data.compute()
-    if hasattr(data, 'get'):
-        data = data.get()
-    return np.asarray(data)
+    #
+    # The dask path casts the normalized float buffer (which holds NaN for
+    # nodata/zero-range cells) to uint8 lazily, so the "invalid value
+    # encountered in cast" RuntimeWarning surfaces here at compute time
+    # rather than inside true_color's own catch_warnings block. That NaN->0
+    # cast is the documented behaviour these tests assert on, so silence it.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        data = result.data
+        if hasattr(data, 'compute'):
+            data = data.compute()
+        if hasattr(data, 'get'):
+            data = data.get()
+        return np.asarray(data)
 
 
 @pytest.fixture
