@@ -9,9 +9,9 @@ import xarray as xr
 from numba import cuda
 from xarray import DataArray
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
-                             cuda_args, ngjit, not_implemented_func, validate_arrays)
 from xrspatial.dataset_support import supports_dataset_bands
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             cuda_args, ngjit, validate_arrays)
 
 # 3rd-party
 try:
