@@ -16,10 +16,8 @@ from __future__ import annotations
 from functools import partial
 
 import numpy as np
-import xarray as xr
-from xarray import DataArray
-
 from numba import cuda, prange
+from xarray import DataArray
 
 try:
     import cupy
@@ -32,24 +30,15 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _boundary_to_dask,
-    _dask_task_name_kwargs,
-    _pad_array,
-    _validate_boundary,
-    _validate_raster,
-    calc_cuda_dims,
-    has_cuda_and_cupy,
-    ngjit,
-    not_implemented_func,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, calc_cuda_dims,
+                             ngjit)
 
 # ---------------------------------------------------------------------------
 # Memory guard
 # ---------------------------------------------------------------------------
+
 
 def _available_memory_bytes():
     """Best-effort estimate of available memory in bytes."""
@@ -103,7 +92,6 @@ def _circle_kernel(radius):
     The kernel has shape ``(2*radius+1, 2*radius+1)`` with ``True``
     for cells whose centre is within *radius* cells of the centre.
     """
-    size = 2 * radius + 1
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     return (x * x + y * y <= radius * radius).astype(np.uint8)
 
