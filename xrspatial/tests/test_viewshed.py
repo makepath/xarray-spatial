@@ -945,6 +945,91 @@ def test_viewshed_nan_input_across_backends(backend):
     assert vals[1, 1] == INVISIBLE
 
 
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_all_nan_input(backend):
+    """An all-NaN raster is the degenerate boundary of the algorithm.
+
+    Every cell is NODATA, so no sweep events are generated. The observer
+    cell is still marked 180 (the viewpoint is always visible to itself)
+    and every other cell stays at its INVISIBLE fill value. Pins the
+    current behaviour on the CPU-backed backends; the cupy/RTX path is a
+    separate implementation and is not covered here.
+    """
+    arr = np.full((5, 5), np.nan)
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+
+    if backend == "numpy":
+        data = arr
+    else:
+        data = da.from_array(arr, chunks=(3, 2))
+    raster = xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+    vals = v.values
+
+    assert vals[2, 2] == 180.0
+    # Only the observer cell is non-INVISIBLE; everything else is NODATA.
+    others = np.delete(vals.ravel(), 2 * 5 + 2)
+    assert (others == INVISIBLE).all()
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_inf_terrain_cell(backend):
+    """An infinite terrain elevation value must not crash or poison output.
+
+    Tests pass inf only as observer_elev / target_elev / max_distance
+    parameters, never as an actual elevation cell. An infinitely tall cell
+    comes back visible (180) and does not leak NaN into the rest of the
+    grid. Covers the CPU-backed backends (numpy, dask Tier B).
+    """
+    arr = np.full((5, 5), 2.0)
+    arr[1, 1] = np.inf
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+
+    if backend == "numpy":
+        data = arr
+    else:
+        data = da.from_array(arr, chunks=(3, 2))
+    raster = xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+    vals = v.values
+
+    assert vals[2, 2] == 180.0
+    # An infinitely tall cell is visible, not INVISIBLE.
+    assert vals[1, 1] > INVISIBLE
+    # The inf value must not poison any cell with NaN.
+    assert not np.isnan(vals).any()
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_single_pixel(backend):
+    """A 1x1 single-pixel raster returns just the observer cell at 180.
+
+    Both axes are degenerate, so the resolution guard (#2744) falls back to
+    unit spacing on each axis. The lone cell is the viewpoint and reads 180
+    without dividing by zero. Single-pixel rasters are a classic spot for
+    kernel-boundary bugs, so pin the result on numpy and dask Tier B.
+    """
+    arr = np.zeros((1, 1))
+    xs = np.array([0.0])
+    ys = np.array([0.0])
+
+    if backend == "numpy":
+        data = arr
+    else:
+        data = da.from_array(arr, chunks=(1, 1))
+    raster = xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=0.0, y=0.0, observer_elev=5)
+
+    assert v.shape == (1, 1)
+    assert v.values[0, 0] == 180.0
+    assert not np.isnan(v.values).any()
+
+
 @pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
 @pytest.mark.parametrize("fine_axis", ["x", "y"])
 def test_viewshed_gpu_anisotropic_matches_cpu(fine_axis):

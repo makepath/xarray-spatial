@@ -882,6 +882,18 @@ class XrsSpatialDataArrayAccessor:
         from .morphology import morph_closing
         return morph_closing(self._obj, **kwargs)
 
+    def morph_gradient(self, **kwargs):
+        from .morphology import morph_gradient
+        return morph_gradient(self._obj, **kwargs)
+
+    def morph_white_tophat(self, **kwargs):
+        from .morphology import morph_white_tophat
+        return morph_white_tophat(self._obj, **kwargs)
+
+    def morph_black_tophat(self, **kwargs):
+        from .morphology import morph_black_tophat
+        return morph_black_tophat(self._obj, **kwargs)
+
     # ---- Proximity / Distance ----
 
     def proximity(self, **kwargs):
@@ -1522,6 +1534,18 @@ class XrsSpatialDatasetAccessor:
     def morph_closing(self, **kwargs):
         from .morphology import morph_closing
         return morph_closing(self._obj, **kwargs)
+
+    def morph_gradient(self, **kwargs):
+        from .morphology import morph_gradient
+        return morph_gradient(self._obj, **kwargs)
+
+    def morph_white_tophat(self, **kwargs):
+        from .morphology import morph_white_tophat
+        return morph_white_tophat(self._obj, **kwargs)
+
+    def morph_black_tophat(self, **kwargs):
+        from .morphology import morph_black_tophat
+        return morph_black_tophat(self._obj, **kwargs)
 
     # ---- Diffusion ----
 

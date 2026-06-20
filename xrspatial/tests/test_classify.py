@@ -1078,3 +1078,48 @@ def test_percentiles_dask_no_unknown_chunks():
         dask_result.data.compute(),
         equal_nan=True,
     )
+
+
+# ===================================================================
+# Regression test: large-array sampler must be O(num_sample) in memory
+# ===================================================================
+
+def test_generate_sample_indices_large_is_sublinear_memory():
+    """The >10M-element branch of _generate_sample_indices must not
+    allocate an O(num_data) index permutation on the driver host.
+
+    The legacy RandomState.choice(replace=False) builds a full
+    arange(num_data) internally, so peak host memory scaled with the
+    whole array and OOM'd on very large dask arrays. The Generator.choice
+    (Floyd) path keeps peak memory proportional to num_sample.
+    """
+    import tracemalloc
+    from xrspatial.classify import _generate_sample_indices
+
+    num_data = 20_000_000  # exceeds the 10M small-branch threshold
+    num_sample = 20_000
+
+    tracemalloc.start()
+    idx = _generate_sample_indices(num_data, num_sample)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert idx.size == num_sample
+    # sorted ascending for efficient dask chunk access
+    assert np.all(np.diff(idx) >= 0)
+    assert idx.max() < num_data
+    # A full int64 permutation of num_data would be ~160 MB. The Floyd
+    # sampler stays far below that; allow generous head-room.
+    assert peak < 20 * 1024 ** 2, (
+        f"peak host memory {peak / 1024 ** 2:.1f} MB scales with num_data, "
+        "not num_sample"
+    )
+
+
+def test_generate_sample_indices_large_is_deterministic():
+    """The large-array sampler is seeded and reproducible across calls."""
+    from xrspatial.classify import _generate_sample_indices
+
+    a = _generate_sample_indices(20_000_000, 20_000)
+    b = _generate_sample_indices(20_000_000, 20_000)
+    np.testing.assert_array_equal(a, b)
