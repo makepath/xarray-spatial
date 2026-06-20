@@ -1821,11 +1821,11 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
         warnings.simplefilter('ignore')
         out = mapper(r)(r, g, b, nodata, c, th)
 
-    # TODO: output metadata: coords, dims, attrs
-    _dims = ['y', 'x', 'band']
-    _attrs = r.attrs
-    _coords = {'y': r['y'],
-               'x': r['x'],
+    # Preserve the input's spatial dims/coords instead of hardcoding y/x,
+    # then append the band dim.  Hardcoding raised KeyError on lat/lon
+    # rasters and dropped extra coords like spatial_ref (issue #3429).
+    _dims = [*r.dims, 'band']
+    _coords = {**{name: r[name] for name in r.coords},
                'band': [0, 1, 2, 3]}
 
     return DataArray(
@@ -1833,7 +1833,7 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
         name=name,
         dims=_dims,
         coords=_coords,
-        attrs=_attrs,
+        attrs=r.attrs,
     )
 
 
