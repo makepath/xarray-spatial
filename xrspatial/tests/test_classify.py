@@ -1078,3 +1078,115 @@ def test_percentiles_dask_no_unknown_chunks():
         dask_result.data.compute(),
         equal_nan=True,
     )
+
+
+# ===================================================================
+# Geometric edge cases: 1x1 single pixel and Nx1 strip
+# ===================================================================
+# These classifiers are kernel-free, but the per-pixel bin search and the
+# bin-edge computation both have degenerate behaviour on a one-cell or
+# one-column raster (zero-width interval, a single unique value triggering
+# the "not enough unique values" fallback). These shapes were previously
+# untested for every classifier.
+
+def _single_finite_class_zero(fn, agg, **kwargs):
+    """Run fn and assert the lone finite pixel maps to class 0."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        result = fn(agg, **kwargs)
+    assert result.shape == agg.shape
+    finite = result.data[np.isfinite(result.data)]
+    assert np.all(finite == 0)
+
+
+def test_classify_single_pixel():
+    agg = xr.DataArray(np.array([[5.0]]))
+    _single_finite_class_zero(equal_interval, agg, k=3)
+    _single_finite_class_zero(std_mean, agg)
+    _single_finite_class_zero(head_tail_breaks, agg)
+    _single_finite_class_zero(percentiles, agg)
+    _single_finite_class_zero(box_plot, agg)
+    # k>=2 classifiers fall back to a single bin on one unique value
+    _single_finite_class_zero(quantile, agg, k=2)
+    _single_finite_class_zero(natural_breaks, agg, k=2)
+    _single_finite_class_zero(maximum_breaks, agg, k=2)
+
+
+def test_binary_single_pixel():
+    # A pixel that matches a target value maps to class 1; a non-match to 0.
+    match = binary(xr.DataArray(np.array([[5.0]])), [5])
+    assert match.shape == (1, 1)
+    assert match.data[0, 0] == 1
+    no_match = binary(xr.DataArray(np.array([[5.0]])), [9])
+    assert no_match.data[0, 0] == 0
+
+
+def test_reclassify_single_pixel():
+    # The lone pixel falls in the first bin and takes that bin's new value.
+    result = reclassify(xr.DataArray(np.array([[5.0]])), bins=[10], new_values=[7])
+    assert result.shape == (1, 1)
+    assert result.data[0, 0] == 7
+
+
+def test_classify_nx1_strip():
+    # 4x1 column strip with increasing values.
+    strip = xr.DataArray(np.array([[1.], [2.], [3.], [4.]]))
+    for fn, kwargs in [
+        (equal_interval, dict(k=3)),
+        (std_mean, {}),
+        (head_tail_breaks, {}),
+        (percentiles, {}),
+        (box_plot, {}),
+        (quantile, dict(k=3)),
+        (natural_breaks, dict(k=3)),
+        (maximum_breaks, dict(k=3)),
+    ]:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            result = fn(strip, **kwargs)
+        assert result.shape == strip.shape
+        finite = result.data[np.isfinite(result.data)]
+        # Monotonic input -> classes are non-decreasing down the column.
+        assert np.all(np.diff(finite) >= 0)
+
+
+def test_classify_1xn_strip():
+    # 1x4 row strip; mirror of the column case to catch axis-specific bugs.
+    strip = xr.DataArray(np.array([[1., 2., 3., 4.]]))
+    result = equal_interval(strip, k=3)
+    assert result.shape == strip.shape
+    finite = result.data[np.isfinite(result.data)]
+    assert np.all(np.diff(finite) >= 0)
+
+
+# ===================================================================
+# Error paths: k below the validated minimum
+# ===================================================================
+# _validate_scalar enforces a minimum k for the parametric classifiers.
+# Only reclassify's length-mismatch guard and the "not enough unique
+# values" path were previously exercised; these min_val guards were not.
+
+def test_quantile_k_below_min_raises():
+    agg = input_data()
+    with pytest.raises(ValueError, match='must be >= 2'):
+        quantile(agg, k=1)
+
+
+def test_natural_breaks_k_below_min_raises():
+    agg = input_data()
+    with pytest.raises(ValueError, match='must be >= 2'):
+        natural_breaks(agg, k=1)
+
+
+def test_maximum_breaks_k_below_min_raises():
+    agg = input_data()
+    with pytest.raises(ValueError, match='must be >= 2'):
+        maximum_breaks(agg, k=1)
+
+
+def test_equal_interval_k_below_min_raises():
+    agg = input_data()
+    with pytest.raises(ValueError, match='must be >= 1'):
+        equal_interval(agg, k=0)
