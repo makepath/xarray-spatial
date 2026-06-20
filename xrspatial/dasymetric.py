@@ -50,14 +50,8 @@ except ImportError:
     class cupy:
         ndarray = False
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    has_cuda_and_cupy,
-    has_dask_array,
-    is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, has_cuda_and_cupy,
+                             has_dask_array, is_cupy_array)
 
 VALID_METHODS = ('binary', 'weighted', 'limiting_variable')
 
@@ -320,7 +314,7 @@ def _disaggregate_dask_cupy(zones_da, weight_da, values_dict, method,
                               dtype=weight_da.dtype,
                               meta=np.array((), dtype=weight_da.dtype))
     return _disaggregate_dask_numpy(zones_np, weight_np, values_dict,
-                                   method, nodata_zone)
+                                    method, nodata_zone)
 
 
 # ---------------------------------------------------------------------------
