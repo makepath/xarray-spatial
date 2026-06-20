@@ -15,9 +15,8 @@ from functools import partial
 
 import numpy as np
 import xarray as xr
-from xarray import DataArray
-
 from numba import cuda, prange
+from xarray import DataArray
 
 try:
     import cupy
@@ -30,21 +29,9 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _boundary_to_dask,
-    _dask_task_name_kwargs,
-    _pad_array,
-    _validate_boundary,
-    _validate_raster,
-    _validate_scalar,
-    calc_cuda_dims,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    ngjit,
-    not_implemented_func,
-)
-
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, _validate_scalar,
+                             calc_cuda_dims, has_cuda_and_cupy, is_cupy_array, ngjit)
 
 # ---------------------------------------------------------------------------
 # Memory guard
