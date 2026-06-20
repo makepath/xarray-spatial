@@ -25,8 +25,8 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
-                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
