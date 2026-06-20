@@ -867,3 +867,218 @@ class TestMemoryGuard:
         values = {i: 1.0 for i in range(1, 51)}
         with pytest.raises(MemoryError, match="n_zones=50"):
             pycnophylactic(zones, values)
+
+
+# ---------------------------------------------------------------------------
+# TestMetadataPreservation (#3407)
+# ---------------------------------------------------------------------------
+
+class TestMetadataPreservation:
+    """Output must carry the input zones' attrs and coords (#3407).
+
+    The existing metadata test only checks dims/name/shape. These pin the
+    res/crs attrs and the y/x coordinate arrays so a silent drop is caught.
+    """
+
+    def test_disaggregate_preserves_attrs_and_coords(
+        self, simple_zones, simple_weight, simple_values
+    ):
+        result = disaggregate(simple_zones, simple_values, simple_weight)
+        assert result.attrs == simple_zones.attrs
+        assert result.attrs.get('res') == simple_zones.attrs.get('res')
+        assert result.attrs.get('crs') == simple_zones.attrs.get('crs')
+        for coord in simple_zones.coords:
+            np.testing.assert_allclose(
+                result[coord].data, simple_zones[coord].data
+            )
+
+    def test_pycnophylactic_preserves_attrs_and_coords(
+        self, simple_zones, simple_values
+    ):
+        result = pycnophylactic(simple_zones, simple_values)
+        assert result.attrs == simple_zones.attrs
+        for coord in simple_zones.coords:
+            np.testing.assert_allclose(
+                result[coord].data, simple_zones[coord].data
+            )
+
+    @pytest.mark.skipif(not has_dask_array(), reason="dask not available")
+    def test_disaggregate_dask_preserves_attrs(
+        self, simple_zones_data, simple_weight_data, simple_values
+    ):
+        zones = create_test_raster(simple_zones_data, backend='dask+numpy',
+                                   chunks=(2, 2))
+        weight = create_test_raster(simple_weight_data, backend='dask+numpy',
+                                    chunks=(2, 2))
+        result = disaggregate(zones, simple_values, weight)
+        assert result.attrs == zones.attrs
+        for coord in zones.coords:
+            np.testing.assert_allclose(
+                result[coord].data, zones[coord].data
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestSinglePixel (#3407)
+# ---------------------------------------------------------------------------
+
+class TestSinglePixel:
+    """A true 1x1 raster is the degenerate kernel case (#3407).
+
+    For pycnophylactic both the ``nrows > 1`` and ``ncols > 1`` guards are
+    skipped, so the smoothing loop runs with no neighbour shifts at all.
+    """
+
+    def test_disaggregate_1x1(self):
+        zones = create_test_raster(np.array([[1]], dtype=np.float64),
+                                   backend='numpy')
+        weight = create_test_raster(np.array([[5.0]]), backend='numpy')
+        result = disaggregate(zones, {1: 100.0}, weight)
+        assert result.shape == (1, 1)
+        assert result.values[0, 0] == pytest.approx(100.0)
+
+    def test_disaggregate_1x1_binary(self):
+        zones = create_test_raster(np.array([[7]], dtype=np.float64),
+                                   backend='numpy')
+        weight = create_test_raster(np.array([[3.0]]), backend='numpy')
+        result = disaggregate(zones, {7: 42.0}, weight, method='binary')
+        assert result.values[0, 0] == pytest.approx(42.0)
+
+    def test_pycnophylactic_1x1(self):
+        zones = create_test_raster(np.array([[1]], dtype=np.float64),
+                                   backend='numpy')
+        result = pycnophylactic(zones, {1: 100.0})
+        assert result.shape == (1, 1)
+        # single pixel, no neighbours: keeps the full zone value
+        assert result.values[0, 0] == pytest.approx(100.0)
+
+    @pytest.mark.skipif(not has_dask_array(), reason="dask not available")
+    def test_disaggregate_1x1_dask_matches_numpy(self):
+        zones_np = create_test_raster(np.array([[1]], dtype=np.float64),
+                                      backend='numpy')
+        weight_np = create_test_raster(np.array([[5.0]]), backend='numpy')
+        zones_dk = create_test_raster(np.array([[1]], dtype=np.float64),
+                                      backend='dask+numpy', chunks=(1, 1))
+        weight_dk = create_test_raster(np.array([[5.0]]),
+                                       backend='dask+numpy', chunks=(1, 1))
+        r_np = disaggregate(zones_np, {1: 100.0}, weight_np)
+        r_dk = disaggregate(zones_dk, {1: 100.0}, weight_dk)
+        np.testing.assert_allclose(r_np.values, r_dk.values, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# TestInfWeight (#3407)
+# ---------------------------------------------------------------------------
+
+class TestInfWeight:
+    """An infinite weight makes the zone weight-sum infinite (#3407).
+
+    The proportional term ``zval * w / wsum`` then evaluates to NaN for the
+    inf pixel and 0 for the finite pixels, so the zone total collapses to 0
+    and conservation silently breaks.  This pins the current behaviour; if a
+    future change starts handling Inf differently the test will flag it for
+    review.
+    """
+
+    def test_inf_weight_collapses_zone(self):
+        zones = create_test_raster(np.array([[1, 1, 1]], dtype=np.float64),
+                                   backend='numpy')
+        weight = create_test_raster(np.array([[1.0, np.inf, 2.0]]),
+                                    backend='numpy')
+        result = disaggregate(zones, {1: 100.0}, weight)
+        data = result.values
+        # inf pixel -> NaN, finite pixels -> 0
+        assert np.isnan(data[0, 1])
+        assert data[0, 0] == pytest.approx(0.0)
+        assert data[0, 2] == pytest.approx(0.0)
+        # conservation is broken by the Inf (documented limitation)
+        assert np.nansum(data) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# TestLimitingVariableThreeClass (#3407)
+# ---------------------------------------------------------------------------
+
+class TestLimitingVariableThreeClass:
+    """Multi-break limiting_variable with per-class caps (#3407).
+
+    Only the 2-class ``(0.0,)`` break was previously tested.  This covers
+    the three-class path the docstring advertises.
+    """
+
+    def test_three_class_caps_and_overflow(self):
+        # breaks (1.0, 3.0): class 0 = w<=1, class 1 = 1<w<=3, class 2 = w>3
+        zones = create_test_raster(
+            np.array([[1, 1, 1, 1, 1, 1]], dtype=np.float64), backend='numpy')
+        weight = create_test_raster(
+            np.array([[0.0, 0.5, 1.5, 2.0, 4.0, 5.0]]), backend='numpy')
+        result = disaggregate(
+            zones, {1: 300.0}, weight, method='limiting_variable',
+            class_breaks=(1.0, 3.0), density_caps=[0.0, 5.0, np.inf],
+        )
+        data = result.values[0]
+        # class 0 pixels (w <= 1): cap 0 -> get nothing
+        assert data[0] == pytest.approx(0.0)
+        assert data[1] == pytest.approx(0.0)
+        # class 1 pixels (1 < w <= 3): capped at 5 each
+        assert data[2] == pytest.approx(5.0)
+        assert data[3] == pytest.approx(5.0)
+        # class 2 pixels (w > 3): absorb the remainder, (300 - 10) / 2 = 145
+        assert data[4] == pytest.approx(145.0)
+        assert data[5] == pytest.approx(145.0)
+        # conservation
+        assert np.nansum(result.values) == pytest.approx(300.0)
+
+    def test_three_class_conservation_only(self):
+        """Three classes with finite caps everywhere still conserve."""
+        zones = create_test_raster(
+            np.array([[1, 1, 1, 1]], dtype=np.float64), backend='numpy')
+        weight = create_test_raster(
+            np.array([[0.5, 2.0, 5.0, 8.0]]), backend='numpy')
+        result = disaggregate(
+            zones, {1: 50.0}, weight, method='limiting_variable',
+            class_breaks=(1.0, 4.0), density_caps=[10.0, 20.0, 100.0],
+        )
+        assert np.nansum(result.values) == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# TestPycnophylacticEmptyValid (#3406)
+# ---------------------------------------------------------------------------
+
+class TestPycnophylacticEmptyValid:
+    """pycnophylactic crashes when no pixel is valid for smoothing (#3406).
+
+    disaggregate handles the same inputs gracefully (all-NaN output); these
+    are xfail(strict) until #3406 makes pycnophylactic agree.  When the
+    source fix lands, the tests start XPASSing and strict mode flips them
+    red, prompting removal of the marker.
+    """
+
+    def test_disaggregate_all_nan_zones_is_all_nan(self):
+        """Reference: disaggregate returns all-NaN, no crash."""
+        zones = create_test_raster(np.full((3, 3), np.nan), backend='numpy')
+        weight = create_test_raster(np.ones((3, 3)), backend='numpy')
+        result = disaggregate(zones, {1: 100.0}, weight)
+        assert np.all(np.isnan(result.values))
+
+    @pytest.mark.xfail(
+        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
+        strict=True,
+        raises=ValueError,
+    )
+    def test_pycnophylactic_all_nan_zones(self):
+        zones = create_test_raster(np.full((3, 3), np.nan), backend='numpy')
+        result = pycnophylactic(zones, {1: 100.0})
+        assert np.all(np.isnan(result.values))
+
+    @pytest.mark.xfail(
+        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
+        strict=True,
+        raises=ValueError,
+    )
+    def test_pycnophylactic_no_matching_zone(self):
+        zones = create_test_raster(
+            np.array([[1, 1], [2, 2]], dtype=np.float64), backend='numpy')
+        result = pycnophylactic(zones, {99: 100.0})
+        assert np.all(np.isnan(result.values))
