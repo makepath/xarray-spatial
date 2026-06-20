@@ -386,6 +386,62 @@ class TestEdgeCases:
         # should not raise; zone 999 doesn't exist, just ignore
         assert result.shape == simple_zones.shape
 
+    def test_many_zones_conservation(self):
+        """Vectorized path: many zones still conserve totals and leave
+        missing/zero-weight zones as NaN (issue #3408)."""
+        rng = np.random.default_rng(0)
+        n_zones = 200
+        side = 240  # wide enough that every zone id appears in the raster
+        zones_data = np.tile(
+            np.arange(1, n_zones + 1, dtype=np.float64),
+            (side, (side + n_zones - 1) // n_zones),
+        )[:side, :side]
+        weight_data = rng.random((side, side)) + 0.1
+        # zone 23 all-zero weight -> NaN
+        weight_data[zones_data == 23] = 0.0
+        # zone 17 present in raster but absent from values -> NaN
+        values = {i: 10.0 * i for i in range(1, n_zones + 1) if i != 17}
+
+        present = set(np.unique(zones_data).astype(int))
+        assert {17, 23}.issubset(present)
+
+        zones = create_test_raster(zones_data, backend='numpy')
+        weight = create_test_raster(weight_data, backend='numpy')
+        result = disaggregate(zones, values, weight).values
+
+        for zid, zval in values.items():
+            if zid == 23:
+                assert np.all(np.isnan(result[zones_data == 23]))
+                continue
+            total = np.nansum(result[zones_data == zid])
+            assert total == pytest.approx(zval, rel=1e-10)
+        # zone 17 was never in values -> NaN
+        assert np.all(np.isnan(result[zones_data == 17]))
+
+    @pytest.mark.skipif(not has_dask_array(), reason="dask not available")
+    def test_many_zones_dask_matches_numpy(self):
+        """Vectorized per-chunk path matches numpy with many zones (#3408)."""
+        rng = np.random.default_rng(1)
+        n_zones = 150
+        side = 64
+        zones_data = np.tile(
+            np.arange(1, n_zones + 1, dtype=np.float64),
+            (side, (side + n_zones - 1) // n_zones),
+        )[:side, :side]
+        weight_data = rng.random((side, side)) - 0.2  # exercise clamping
+        values = {i: 5.0 * i for i in range(1, n_zones + 1)}
+
+        zones_np = create_test_raster(zones_data, backend='numpy')
+        weight_np = create_test_raster(weight_data, backend='numpy')
+        zones_dk = create_test_raster(zones_data, backend='dask+numpy',
+                                      chunks=(16, 16))
+        weight_dk = create_test_raster(weight_data, backend='dask+numpy',
+                                       chunks=(16, 16))
+
+        result_np = disaggregate(zones_np, values, weight_np).values
+        result_dk = disaggregate(zones_dk, values, weight_dk).values
+        np.testing.assert_allclose(result_np, result_dk, equal_nan=True)
+
 
 # ---------------------------------------------------------------------------
 # TestValidation
