@@ -33,7 +33,7 @@ except ImportError:
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
                              _pad_array, _validate_boundary, _validate_raster, calc_cuda_dims,
-                             ngjit)
+                             has_dask_array, ngjit)
 
 # ---------------------------------------------------------------------------
 # Memory guard
@@ -431,7 +431,14 @@ def _dispatch(agg, kernel, boundary, name, numpy_fn, cupy_fn, dask_fn, dask_cupy
 
     rows, cols = agg.shape
     ky, kx = kernel.shape
-    _check_kernel_memory(rows, cols, ky, kx, name)
+    # The guard budgets a full padded float64 copy of the input, which only
+    # the eager numpy/cupy backends allocate. Dask processes the array
+    # chunk-by-chunk via map_overlap, so peak memory scales with chunk size,
+    # not the full shape -- skip the full-shape check for dask-backed inputs.
+    # (This assumes reasonable chunking; a single giant chunk would still
+    # materialize a full padded copy per block.)
+    if not (has_dask_array() and isinstance(agg.data, da.Array)):
+        _check_kernel_memory(rows, cols, ky, kx, name)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(numpy_fn, kernel=kernel, boundary=boundary),
