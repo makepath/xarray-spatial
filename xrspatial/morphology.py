@@ -448,6 +448,8 @@ def _dispatch(agg, kernel, boundary, name, numpy_fn, cupy_fn, dask_fn, dask_cupy
     # the eager numpy/cupy backends allocate. Dask processes the array
     # chunk-by-chunk via map_overlap, so peak memory scales with chunk size,
     # not the full shape -- skip the full-shape check for dask-backed inputs.
+    # (This assumes reasonable chunking; a single giant chunk would still
+    # materialize a full padded copy per block.)
     if not (has_dask_array() and isinstance(agg.data, da.Array)):
         _check_kernel_memory(rows, cols, ky, kx, name)
 
