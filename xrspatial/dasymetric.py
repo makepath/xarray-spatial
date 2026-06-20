@@ -229,19 +229,24 @@ def _disaggregate_numpy(zones, weight, values_dict, method, nodata_zone):
     sums_arr = _zone_weight_sums(weight_arr, zone_index, sorted_ids.size)
     zone_sums = {int(zid): float(s) for zid, s in zip(sorted_ids, sums_arr)}
 
+    # reuse the already-computed zone_index for the distribute step
     return _disaggregate_numpy_with_sums(
         zones_arr, weight_arr, values_dict, zone_sums, invalid,
+        zone_index=zone_index,
     )
 
 
 def _disaggregate_numpy_with_sums(
     zones_arr, weight_arr, values_dict, zone_sums, invalid,
+    zone_index=None,
 ):
     """Distribute using precomputed zone weight sums.
 
     Used directly by numpy and also called per-chunk by the dask backend.
     Vectorized: one ``searchsorted`` lookup plus a gathered division, instead
-    of one full-array boolean mask per zone.
+    of one full-array boolean mask per zone.  *zone_index* (from
+    :func:`_pixel_zone_index`) may be supplied to skip a redundant lookup
+    when the caller has already computed it.
     """
     result = np.full(zones_arr.shape, np.nan, dtype=np.float64)
 
@@ -249,7 +254,8 @@ def _disaggregate_numpy_with_sums(
     if sorted_ids.size == 0:
         return result
 
-    zone_index = _pixel_zone_index(zones_arr, invalid, sorted_ids)
+    if zone_index is None:
+        zone_index = _pixel_zone_index(zones_arr, invalid, sorted_ids)
 
     # per-zone-slot lookup tables aligned with sorted_ids
     zvals = np.array([values_dict[int(zid)] for zid in sorted_ids],
