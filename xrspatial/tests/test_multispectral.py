@@ -1201,3 +1201,38 @@ def test_osavi_approaches_ndvi_for_large_dn(nir_data, red_data, qgis_ndvi):
     osavi_vals[mask] = np.nan
     np.testing.assert_allclose(
         osavi_vals, ndvi_vals, equal_nan=True, rtol=1e-3)
+
+
+@pytest.mark.parametrize(
+    "func",
+    [arvi, bai, ebbi, evi, gci, mndwi, msavi2, nbr, nbr2, ndbi,
+     ndmi, ndsi, ndvi, ndwi, osavi, savi, sipi],
+)
+def test_docstring_params_match_signature(func):
+    # Every parameter documented in the numpy-style "Parameters" section
+    # must exist in the signature (and vice versa). Guards against
+    # docstring/signature drift such as nbr documenting `swir_agg`
+    # while the signature accepts `swir2_agg`.
+    import inspect
+    import re
+
+    sig_params = set(inspect.signature(func).parameters)
+
+    doc = inspect.getdoc(func) or ""
+    lines = doc.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "Parameters")
+    # Skip the "----------" underline row.
+    documented = []
+    for ln in lines[start + 2:]:
+        if ln.strip() in ("Returns", "References", "Notes", "Examples"):
+            break
+        # Parameter entries are flush-left "name : type" lines.
+        m = re.match(r"^(\w+)\s*:", ln)
+        if m:
+            documented.append(m.group(1))
+    documented = set(documented)
+
+    assert documented == sig_params, (
+        f"{func.__name__}: documented params {sorted(documented)} != "
+        f"signature params {sorted(sig_params)}"
+    )

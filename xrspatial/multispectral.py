@@ -575,7 +575,7 @@ def nbr(nir_agg: xr.DataArray,
     ----------
     nir_agg : xr.DataArray
         2D array of near-infrared band.
-    swir_agg : xr.DataArray
+    swir2_agg : xr.DataArray
         2D array of shortwave infrared band.
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
