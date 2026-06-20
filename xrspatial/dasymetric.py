@@ -391,6 +391,12 @@ def _disaggregate_limiting_numpy(zones, weight, values_dict, nodata_zone,
             n_overflow = int(overflow_mask.sum())
             if n_overflow > 0:
                 result[overflow_mask] += remaining / n_overflow
+            else:
+                # No pixel can absorb the leftover (e.g. every pixel in the
+                # zone is uninhabitable under the caps).  Match the weighted
+                # method: a value with nowhere to go becomes NaN rather than
+                # silently vanishing into zeros.
+                result[zmask] = np.nan
 
     return result
 

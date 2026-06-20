@@ -258,6 +258,29 @@ class TestLimitingVariable:
         # conservation
         assert np.nansum(data) == pytest.approx(100.0)
 
+    def test_uninhabitable_zone_is_nan_not_zero(self):
+        """A zone with no habitable pixel must not silently lose its value.
+
+        When every pixel falls in a cap-0 class (e.g. all zero-weight),
+        the value has nowhere to go.  The result must be NaN (matching the
+        weighted method), not finite zeros that drop the value (#3403).
+        """
+        zones_data = np.array([[1, 1], [1, 1]], dtype=np.float64)
+        weight_data = np.zeros((2, 2), dtype=np.float64)
+        zones = create_test_raster(zones_data, backend='numpy')
+        weight = create_test_raster(weight_data, backend='numpy')
+
+        result = disaggregate(zones, {1: 500.0}, weight,
+                              method='limiting_variable')
+        data = result.values
+        assert np.all(np.isnan(data))
+        # the value is not silently zeroed away
+        assert np.nansum(data) == pytest.approx(0.0)
+
+        # weighted method agrees: same input yields all-NaN
+        weighted = disaggregate(zones, {1: 500.0}, weight, method='weighted')
+        assert np.all(np.isnan(weighted.values))
+
     @pytest.mark.skipif(not has_dask_array(), reason="dask not available")
     def test_raises_for_dask(self, simple_zones_data, simple_weight_data,
                              simple_values):
