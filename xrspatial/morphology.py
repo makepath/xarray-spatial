@@ -41,6 +41,7 @@ from xrspatial.utils import (
     _validate_raster,
     calc_cuda_dims,
     has_cuda_and_cupy,
+    has_dask_array,
     ngjit,
     not_implemented_func,
 )
@@ -443,7 +444,12 @@ def _dispatch(agg, kernel, boundary, name, numpy_fn, cupy_fn, dask_fn, dask_cupy
 
     rows, cols = agg.shape
     ky, kx = kernel.shape
-    _check_kernel_memory(rows, cols, ky, kx, name)
+    # The guard budgets a full padded float64 copy of the input, which only
+    # the eager numpy/cupy backends allocate. Dask processes the array
+    # chunk-by-chunk via map_overlap, so peak memory scales with chunk size,
+    # not the full shape -- skip the full-shape check for dask-backed inputs.
+    if not (has_dask_array() and isinstance(agg.data, da.Array)):
+        _check_kernel_memory(rows, cols, ky, kx, name)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(numpy_fn, kernel=kernel, boundary=boundary),

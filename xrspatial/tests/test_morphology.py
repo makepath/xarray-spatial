@@ -531,6 +531,29 @@ def test_kernel_memory_guard_allows_normal_use(monkeypatch):
     general_output_checks(agg, result, verify_attrs=True)
 
 
+@dask_array_available
+def test_memory_guard_skipped_for_lazy_dask(monkeypatch):
+    """The full-shape guard must not fire on a lazy dask array.
+
+    Dask processes the raster chunk-by-chunk via map_overlap, so peak
+    memory scales with chunk size, not the full logical shape. A guard
+    sized against the full array would reject workloads that run fine.
+    """
+    import dask.array as da
+
+    # Tiny memory budget: the full-shape guard would trip immediately, but
+    # the dask path never allocates a full padded copy.
+    monkeypatch.setattr(
+        morphology_mod, "_available_memory_bytes", lambda: 1 * 1024 * 1024,
+    )
+    arr = da.zeros((4096, 4096), chunks=(512, 512), dtype=np.float64)
+    agg = xr.DataArray(arr, dims=['y', 'x'])
+    # Graph construction only -- no .compute().
+    result = morph_erode(agg, kernel=_KERNEL_3x3, boundary='reflect')
+    assert isinstance(result.data, da.Array)
+    assert result.shape == (4096, 4096)
+
+
 def test_kernel_memory_guard_runs_for_all_public_apis(monkeypatch):
     """Every public API entry point should trigger the guard via _dispatch."""
     monkeypatch.setattr(
