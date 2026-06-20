@@ -88,6 +88,8 @@ def test_dataarray_accessor_has_expected_methods(elevation):
         'natural_breaks', 'equal_interval', 'quantile', 'reclassify',
         'binary', 'percentiles',
         'focal_mean',
+        'morph_erode', 'morph_dilate', 'morph_opening', 'morph_closing',
+        'morph_gradient', 'morph_white_tophat', 'morph_black_tophat',
         'proximity', 'allocation', 'direction', 'cost_distance',
         'a_star_search',
         'zonal_stats', 'zonal_apply', 'zonal_crosstab', 'crop', 'trim',
@@ -111,6 +113,8 @@ def test_dataset_accessor_has_expected_methods():
         'natural_breaks', 'equal_interval', 'quantile', 'reclassify',
         'binary', 'percentiles',
         'focal_mean',
+        'morph_erode', 'morph_dilate', 'morph_opening', 'morph_closing',
+        'morph_gradient', 'morph_white_tophat', 'morph_black_tophat',
         'proximity', 'allocation', 'direction', 'cost_distance',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
@@ -219,6 +223,49 @@ def test_da_arvi(nir, red, blue):
     from xrspatial.multispectral import arvi
     expected = arvi(nir, red, blue)
     result = nir.xrs.arvi(red, blue)
+    xr.testing.assert_identical(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# 4b. DataArray morphology — accessor matches direct call
+# ---------------------------------------------------------------------------
+
+_MORPH_KERNEL = np.ones((3, 3), dtype=np.uint8)
+
+
+def test_da_morph_erode(elevation):
+    from xrspatial.morphology import morph_erode
+    expected = morph_erode(elevation, kernel=_MORPH_KERNEL)
+    result = elevation.xrs.morph_erode(kernel=_MORPH_KERNEL)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_morph_gradient(elevation):
+    from xrspatial.morphology import morph_gradient
+    expected = morph_gradient(elevation, kernel=_MORPH_KERNEL)
+    result = elevation.xrs.morph_gradient(kernel=_MORPH_KERNEL)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_morph_white_tophat(elevation):
+    from xrspatial.morphology import morph_white_tophat
+    expected = morph_white_tophat(elevation, kernel=_MORPH_KERNEL)
+    result = elevation.xrs.morph_white_tophat(kernel=_MORPH_KERNEL)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_morph_black_tophat(elevation):
+    from xrspatial.morphology import morph_black_tophat
+    expected = morph_black_tophat(elevation, kernel=_MORPH_KERNEL)
+    result = elevation.xrs.morph_black_tophat(kernel=_MORPH_KERNEL)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_ds_morph_gradient(elevation):
+    from xrspatial.morphology import morph_gradient
+    ds = xr.Dataset({'elev': elevation})
+    expected = morph_gradient(ds, kernel=_MORPH_KERNEL)
+    result = ds.xrs.morph_gradient(kernel=_MORPH_KERNEL)
     xr.testing.assert_identical(result, expected)
 
 
