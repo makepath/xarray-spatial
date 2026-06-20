@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import cmath
 import warnings
 from functools import partial
 from typing import List, Optional
-
-import cmath
 
 import xarray as xr
 
@@ -24,16 +23,9 @@ except ImportError:
 import numba as nb
 import numpy as np
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    _validate_raster,
-    _validate_scalar,
-    cuda_args,
-    ngjit,
-    not_implemented_func,
-)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             _validate_scalar, cuda_args, ngjit)
 
 
 def _available_memory_bytes():
