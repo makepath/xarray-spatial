@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import cmath
+import functools
 import warnings
 from functools import partial
 from typing import List, Optional
@@ -103,7 +104,7 @@ def _run_dask_cupy_binary(data, values_cupy):
 
 
 @supports_dataset
-def binary(agg, values, name='binary'):
+def binary(agg: xr.DataArray, values, name: Optional[str] = 'binary') -> xr.DataArray:
     """
     Binarize a data array based on a set of values. Data that equals to a value in the set will be
     set to 1. In contrast, data that does not equal to any value in the set will be set to 0.
@@ -795,11 +796,39 @@ def _run_dask_cupy_natural_break(agg, num_sample, k):
     return out
 
 
+def _natural_breaks_legacy_order(func):
+    """Bridge the pre-1.0 ``natural_breaks`` parameter order.
+
+    The old signature was ``(agg, num_sample, name, k)``. The new order is
+    ``(agg, k, num_sample, name)`` to match ``quantile`` and
+    ``maximum_breaks``. Legacy callers always passed ``k`` as a keyword
+    (it was the last parameter), so a call that supplies ``k=`` together
+    with a second positional argument is using the old order: that
+    positional is the old ``num_sample``. Remap it and warn.
+    """
+    @functools.wraps(func)
+    def wrapper(agg, *args, **kwargs):
+        if 'k' in kwargs and len(args) >= 1 and 'num_sample' not in kwargs:
+            warnings.warn(
+                "natural_breaks parameter order changed to "
+                "(agg, k, num_sample, name) to match the other "
+                "classifiers. Passing num_sample positionally is "
+                "deprecated; pass num_sample=... instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            kwargs['num_sample'] = args[0]
+            args = args[1:]
+        return func(agg, *args, **kwargs)
+    return wrapper
+
+
 @supports_dataset
+@_natural_breaks_legacy_order
 def natural_breaks(agg: xr.DataArray,
+                   k: int = 5,
                    num_sample: Optional[int] = 20000,
-                   name: Optional[str] = 'natural_breaks',
-                   k: int = 5) -> xr.DataArray:
+                   name: Optional[str] = 'natural_breaks') -> xr.DataArray:
     """
     Reclassifies data for array `agg` into new values based on Natural
     Breaks or K-Means clustering method. Values are grouped so that
@@ -811,14 +840,14 @@ def natural_breaks(agg: xr.DataArray,
     agg : xr.DataArray or xr.Dataset
         2D NumPy, CuPy, NumPy-backed Dask, or CuPy-backed Dask array
         of values to be reclassified.
+    k : int, default=5
+        Number of classes to be produced.
     num_sample : int, default=20000
         Number of sample data points used to fit the model.
         Natural Breaks (Jenks) classification is indeed O(n²) complexity,
         where n is the total number of data points, i.e: `agg.size`
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
-    k : int, default=5
-        Number of classes to be produced.
     name : str, default='natural_breaks'
         Name of output aggregate.
 

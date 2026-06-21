@@ -1080,6 +1080,23 @@ def test_percentiles_dask_no_unknown_chunks():
     )
 
 
+def test_natural_breaks_positional_k_matches_siblings():
+    """natural_breaks second positional arg is k, like quantile/maximum_breaks."""
+    agg = input_data()
+    positional = natural_breaks(agg, 3)
+    keyword = natural_breaks(agg, k=3)
+    np.testing.assert_array_equal(positional.data, keyword.data)
+
+
+def test_natural_breaks_legacy_positional_num_sample_warns():
+    """Legacy (agg, num_sample, k=...) order warns and still maps correctly."""
+    agg = input_data()
+    with pytest.warns(DeprecationWarning):
+        legacy = natural_breaks(agg, 20000, k=3)
+    new = natural_breaks(agg, k=3, num_sample=20000)
+    np.testing.assert_array_equal(legacy.data, new.data)
+
+
 # ===================================================================
 # Geometric edge cases: 1x1 single pixel and Nx1 strip
 # ===================================================================
