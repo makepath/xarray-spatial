@@ -886,6 +886,42 @@ def test_true_color_mismatched_backends_raises():
         true_color(red, green, blue)
 
 
+# true_color metadata propagation (issue #3429) ----------
+def _tc_band(backend):
+    data = np.random.default_rng(3429).random((6, 6)).astype(np.float32)
+    return create_test_raster(
+        data, backend=backend, dims=['lat', 'lon'],
+        attrs={'res': (0.5, 0.5), 'crs': 'EPSG: 5070'},
+    )
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["numpy",
+     pytest.param("dask+numpy", marks=dask_array_available),
+     pytest.param("cupy", marks=cuda_and_cupy_available),
+     pytest.param("dask+cupy", marks=cuda_and_cupy_available)],
+)
+def test_true_color_preserves_non_yx_dims(backend):
+    # true_color used to hardcode y/x and raised KeyError on lat/lon input.
+    r = _tc_band(backend)
+    g = _tc_band(backend)
+    b = _tc_band(backend)
+    out = true_color(r, g, b)
+    assert out.dims == ('lat', 'lon', 'band')
+    np.testing.assert_allclose(out['lat'].data, r['lat'].data)
+    np.testing.assert_allclose(out['lon'].data, r['lon'].data)
+    assert out.attrs == r.attrs
+
+
+def test_true_color_preserves_extra_coords():
+    # A non-spatial coord (e.g. rioxarray's spatial_ref) must pass through.
+    r = _tc_band('numpy').assign_coords(spatial_ref=0)
+    out = true_color(r, r.copy(), r.copy())
+    assert 'spatial_ref' in out.coords
+    assert int(out['spatial_ref']) == 0
+
+
 # NDSI ----------
 @pytest.fixture
 def expected_ndsi():
@@ -1300,3 +1336,38 @@ def test_savi_soil_factor_out_of_range(bad_soil):
     red = nir.copy()
     with pytest.raises(ValueError, match='soil factor must be between'):
         savi(nir, red, soil_factor=bad_soil)
+
+
+@pytest.mark.parametrize(
+    "func",
+    [arvi, bai, ebbi, evi, gci, mndwi, msavi2, nbr, nbr2, ndbi,
+     ndmi, ndsi, ndvi, ndwi, osavi, savi, sipi],
+)
+def test_docstring_params_match_signature(func):
+    # Every parameter documented in the numpy-style "Parameters" section
+    # must exist in the signature (and vice versa). Guards against
+    # docstring/signature drift such as nbr documenting `swir_agg`
+    # while the signature accepts `swir2_agg`.
+    import inspect
+    import re
+
+    sig_params = set(inspect.signature(func).parameters)
+
+    doc = inspect.getdoc(func) or ""
+    lines = doc.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "Parameters")
+    # Skip the "----------" underline row.
+    documented = []
+    for ln in lines[start + 2:]:
+        if ln.strip() in ("Returns", "References", "Notes", "Examples"):
+            break
+        # Parameter entries are flush-left "name : type" lines.
+        m = re.match(r"^(\w+)\s*:", ln)
+        if m:
+            documented.append(m.group(1))
+    documented = set(documented)
+
+    assert documented == sig_params, (
+        f"{func.__name__}: documented params {sorted(documented)} != "
+        f"signature params {sorted(sig_params)}"
+    )
