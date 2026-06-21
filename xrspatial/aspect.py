@@ -15,14 +15,12 @@ import xarray as xr
 from numba import cuda
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2,
-                                _check_geodesic_memory_backend_aware,
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory_backend_aware,
                                 _cpu_geodesic_aspect, _run_gpu_geodesic_aspect)
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
-                             _extract_latlon_coords, _pad_array, _validate_boundary,
-                             _validate_raster, cuda_args, get_dataarray_resolution,
-                             ngjit, warn_if_unit_mismatch)
-from xrspatial.utils import _dask_task_name_kwargs
+                             _dask_task_name_kwargs, _extract_latlon_coords, _pad_array,
+                             _validate_boundary, _validate_raster, cuda_args,
+                             get_dataarray_resolution, ngjit, warn_if_unit_mismatch)
 
 
 def _geodesic_cuda_dims(shape):
