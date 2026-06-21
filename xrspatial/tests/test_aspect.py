@@ -585,6 +585,101 @@ def test_name_consistent_dask_numpy(name):
     _assert_name_derived('dask+numpy', name)
 
 
+# ---- Inf and all-NaN elevation input (issue #3439) ----
+#
+# The suite exercises NaN inputs (qgis fixture, derived-function propagation)
+# but never an Inf cell or an entirely-NaN raster. Both run without error
+# today and agree across the four backends; these pin that contract so a
+# backend can't silently diverge on Inf or all-NaN input.
+
+def _inf_raster():
+    data = np.ones((6, 7), dtype=np.float64) * 100.0
+    data[2, 3] = np.inf
+    data[3, 1] = -np.inf
+    return data
+
+
+def test_inf_input_numpy_finite_neighbors():
+    """An Inf cell does not crash; the planar interior is finite or -1/NaN,
+    never Inf."""
+    agg = create_test_raster(_inf_raster(), backend='numpy')
+    out = _to_numpy(aspect(agg))
+    assert not np.any(np.isinf(out))
+
+
+@dask_array_available
+def test_inf_input_numpy_equals_dask():
+    data = _inf_raster()
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=(3, 4))
+    np_out = _to_numpy(aspect(numpy_agg))
+    da_out = _to_numpy(aspect(dask_agg))
+    np.testing.assert_allclose(np_out, da_out, equal_nan=True, rtol=1e-5)
+
+
+@cuda_and_cupy_available
+def test_inf_input_numpy_equals_cupy():
+    data = _inf_raster()
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_out = _to_numpy(aspect(numpy_agg))
+    cu_out = _to_numpy(aspect(cupy_agg))
+    np.testing.assert_allclose(np_out, cu_out, equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_inf_input_numpy_equals_dask_cupy():
+    data = _inf_raster()
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(3, 4))
+    np_out = _to_numpy(aspect(numpy_agg))
+    dc_out = _to_numpy(aspect(dask_cupy_agg))
+    np.testing.assert_allclose(np_out, dc_out, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+def test_all_nan_input_numpy(func):
+    """An entirely-NaN raster comes back all-NaN with the shape preserved."""
+    data = np.full((6, 7), np.nan, dtype=np.float64)
+    agg = create_test_raster(data, backend='numpy')
+    result = func(agg)
+    general_output_checks(agg, result)
+    assert result.shape == (6, 7)
+    assert np.all(np.isnan(result.data))
+
+
+@dask_array_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+def test_all_nan_input_dask_numpy(func):
+    data = np.full((6, 7), np.nan, dtype=np.float64)
+    agg = create_test_raster(data, backend='dask+numpy', chunks=(3, 4))
+    result = func(agg)
+    assert result.shape == (6, 7)
+    assert np.all(np.isnan(_to_numpy(result)))
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+def test_all_nan_input_cupy(func):
+    data = np.full((6, 7), np.nan, dtype=np.float64)
+    agg = create_test_raster(data, backend='cupy')
+    result = func(agg)
+    assert result.shape == (6, 7)
+    assert np.all(np.isnan(_to_numpy(result)))
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+def test_all_nan_input_dask_cupy(func):
+    data = np.full((6, 7), np.nan, dtype=np.float64)
+    agg = create_test_raster(data, backend='dask+cupy', chunks=(3, 4))
+    result = func(agg)
+    assert result.shape == (6, 7)
+    assert np.all(np.isnan(_to_numpy(result)))
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("name", [None, 'aspect'])
 def test_name_consistent_cupy(name):

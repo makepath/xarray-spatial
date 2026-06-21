@@ -5,6 +5,7 @@ import xarray as xr
 from xrspatial.diffusion import diffuse
 from xrspatial.tests.general_checks import (
     create_test_raster,
+    cuda_and_cupy_available,
     general_output_checks,
 )
 
@@ -394,3 +395,197 @@ def test_cfl_bound_uses_max_alpha():
     result = diffuse(agg, diffusivity=alpha, steps=5, dt=0.125,
                      boundary='nearest')
     assert np.all(np.isfinite(result.values))
+
+
+# ---- cupy / dask+cupy backend coverage (issue #3422) ----
+
+@cuda_and_cupy_available
+def test_cupy_matches_numpy():
+    """The cupy backend should match numpy (registered but previously untested)."""
+    data = _make_hotspot((13, 13))
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1.0, 1.0)})
+
+    np_result = diffuse(numpy_agg, diffusivity=0.5, steps=5, boundary='nearest')
+    cp_result = diffuse(cupy_agg, diffusivity=0.5, steps=5, boundary='nearest')
+
+    general_output_checks(cupy_agg, cp_result, verify_attrs=True)
+    np.testing.assert_allclose(
+        np_result.values, cp_result.data.get(), rtol=1e-7
+    )
+
+
+@cuda_and_cupy_available
+def test_dask_cupy_matches_numpy():
+    """The dask+cupy backend should match numpy (registered but previously untested)."""
+    data = _make_hotspot((13, 13))
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1.0, 1.0)}, chunks=(7, 7))
+
+    np_result = diffuse(numpy_agg, diffusivity=0.5, steps=5, boundary='nearest')
+    dcp_result = diffuse(dask_cupy_agg, diffusivity=0.5, steps=5, boundary='nearest')
+
+    general_output_checks(dask_cupy_agg, dcp_result, verify_attrs=True)
+    np.testing.assert_allclose(
+        np_result.values, dcp_result.data.compute().get(), rtol=1e-6
+    )
+
+
+@cuda_and_cupy_available
+def test_cupy_spatially_varying_diffusivity():
+    """Spatially varying diffusivity should work on the cupy backend."""
+    data = np.zeros((9, 9))
+    data[4, 4] = 10.0
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1.0, 1.0)})
+
+    alpha = np.full((9, 9), 0.5)
+    alpha_np = create_test_raster(alpha, backend='numpy', attrs={'res': (1.0, 1.0)})
+    alpha_cp = create_test_raster(alpha, backend='cupy', attrs={'res': (1.0, 1.0)})
+
+    np_result = diffuse(numpy_agg, diffusivity=alpha_np, steps=4,
+                        dt=0.05, boundary='nearest')
+    cp_result = diffuse(cupy_agg, diffusivity=alpha_cp, steps=4,
+                        dt=0.05, boundary='nearest')
+
+    np.testing.assert_allclose(
+        np_result.values, cp_result.data.get(), rtol=1e-7
+    )
+
+
+@cuda_and_cupy_available
+def test_cupy_nan_propagation():
+    """NaN cells stay NaN on the cupy backend, matching numpy."""
+    data = np.ones((5, 5))
+    data[2, 2] = np.nan
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1.0, 1.0)})
+
+    np_result = diffuse(numpy_agg, diffusivity=1.0, steps=1, boundary='nearest')
+    cp_result = diffuse(cupy_agg, diffusivity=1.0, steps=1, boundary='nearest')
+
+    assert np.isnan(cp_result.data.get()[2, 2])
+    np.testing.assert_allclose(
+        np_result.values, cp_result.data.get(), equal_nan=True, rtol=1e-7
+    )
+
+
+# ---- reflect boundary mode coverage (issue #3422) ----
+
+def test_reflect_boundary_numpy():
+    """reflect boundary runs and keeps all-finite output for finite input."""
+    data = _make_hotspot((11, 11))
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=0.5, steps=5, boundary='reflect')
+    assert np.all(np.isfinite(result.values))
+    assert result.shape == agg.shape
+
+
+@dask_array_available
+def test_reflect_boundary_dask_matches_numpy():
+    """reflect boundary: dask matches numpy."""
+    data = _make_hotspot((12, 12))
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    dask_agg = create_test_raster(data, backend='dask', attrs={'res': (1.0, 1.0)},
+                                  chunks=(6, 6))
+    np_result = diffuse(numpy_agg, diffusivity=0.5, steps=4, boundary='reflect')
+    dk_result = diffuse(dask_agg, diffusivity=0.5, steps=4, boundary='reflect')
+    np.testing.assert_allclose(
+        np_result.values, dk_result.data.compute(), rtol=1e-10
+    )
+
+
+@cuda_and_cupy_available
+def test_reflect_boundary_cupy_matches_numpy():
+    """reflect boundary: cupy and dask+cupy match numpy."""
+    data = _make_hotspot((12, 12))
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1.0, 1.0)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1.0, 1.0)}, chunks=(6, 6))
+
+    np_result = diffuse(numpy_agg, diffusivity=0.5, steps=4, boundary='reflect')
+    cp_result = diffuse(cupy_agg, diffusivity=0.5, steps=4, boundary='reflect')
+    dcp_result = diffuse(dask_cupy_agg, diffusivity=0.5, steps=4, boundary='reflect')
+
+    np.testing.assert_allclose(np_result.values, cp_result.data.get(), rtol=1e-6)
+    np.testing.assert_allclose(
+        np_result.values, dcp_result.data.compute().get(), rtol=1e-6
+    )
+
+
+# ---- geometric edge cases: 1x1 and strip rasters (issue #3422) ----
+
+def test_single_pixel_raster_numpy():
+    """A 1x1 raster diffuses to itself (no finite neighbours to exchange with)."""
+    data = np.array([[5.0]])
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=1.0, steps=3, boundary='nearest')
+    np.testing.assert_allclose(result.values, [[5.0]])
+
+
+@dask_array_available
+def test_single_pixel_raster_dask_matches_numpy():
+    """A 1x1 dask raster matches numpy."""
+    data = np.array([[5.0]])
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    dask_agg = create_test_raster(data, backend='dask', attrs={'res': (1.0, 1.0)},
+                                  chunks=(1, 1))
+    np_result = diffuse(numpy_agg, diffusivity=1.0, steps=3, boundary='nearest')
+    dk_result = diffuse(dask_agg, diffusivity=1.0, steps=3, boundary='nearest')
+    np.testing.assert_allclose(np_result.values, dk_result.data.compute())
+
+
+def test_column_strip_raster_numpy():
+    """An Nx1 column strip diffuses along its single column without error."""
+    data = np.arange(8.0).reshape(8, 1)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=0.5, steps=3, boundary='nearest')
+    assert result.shape == (8, 1)
+    assert np.all(np.isfinite(result.values))
+
+
+def test_row_strip_raster_numpy():
+    """A 1xN row strip diffuses along its single row without error."""
+    data = np.arange(8.0).reshape(1, 8)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=0.5, steps=3, boundary='nearest')
+    assert result.shape == (1, 8)
+    assert np.all(np.isfinite(result.values))
+
+
+@dask_array_available
+def test_column_strip_raster_dask_matches_numpy():
+    """An Nx1 strip on dask (chunked along the strip) matches numpy."""
+    data = np.arange(8.0).reshape(8, 1)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1.0, 1.0)})
+    dask_agg = create_test_raster(data, backend='dask', attrs={'res': (1.0, 1.0)},
+                                  chunks=(4, 1))
+    np_result = diffuse(numpy_agg, diffusivity=0.5, steps=3, boundary='nearest')
+    dk_result = diffuse(dask_agg, diffusivity=0.5, steps=3, boundary='nearest')
+    np.testing.assert_allclose(np_result.values, dk_result.data.compute())
+
+
+# ---- NaN / Inf edge cases (issue #3422) ----
+
+def test_all_nan_input_stays_nan():
+    """An all-NaN raster stays all-NaN under diffusion."""
+    data = np.full((6, 6), np.nan)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=1.0, steps=2, boundary='nearest')
+    assert np.all(np.isnan(result.values))
+
+
+def test_inf_input_propagates_like_nan():
+    """An Inf cell contaminates its stencil neighbours (Inf - Inf -> NaN)."""
+    data = np.ones((5, 5))
+    data[2, 2] = np.inf
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=1.0, steps=1, boundary='nearest')
+    # The Inf cell itself: lap = (1+1+1+1) - 4*inf = -inf, so 4 cells away.
+    out = result.values
+    # Direct neighbours of the Inf cell see Inf in their stencil. Whether the
+    # neighbour lands on inf or nan depends on the exact stencil arithmetic, so
+    # this loose check is intentional -- it asserts contamination, not a value.
+    assert np.isnan(out[1, 2]) or np.isinf(out[1, 2])

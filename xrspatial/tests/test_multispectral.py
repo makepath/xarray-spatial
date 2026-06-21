@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -884,6 +886,42 @@ def test_true_color_mismatched_backends_raises():
         true_color(red, green, blue)
 
 
+# true_color metadata propagation (issue #3429) ----------
+def _tc_band(backend):
+    data = np.random.default_rng(3429).random((6, 6)).astype(np.float32)
+    return create_test_raster(
+        data, backend=backend, dims=['lat', 'lon'],
+        attrs={'res': (0.5, 0.5), 'crs': 'EPSG: 5070'},
+    )
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["numpy",
+     pytest.param("dask+numpy", marks=dask_array_available),
+     pytest.param("cupy", marks=cuda_and_cupy_available),
+     pytest.param("dask+cupy", marks=cuda_and_cupy_available)],
+)
+def test_true_color_preserves_non_yx_dims(backend):
+    # true_color used to hardcode y/x and raised KeyError on lat/lon input.
+    r = _tc_band(backend)
+    g = _tc_band(backend)
+    b = _tc_band(backend)
+    out = true_color(r, g, b)
+    assert out.dims == ('lat', 'lon', 'band')
+    np.testing.assert_allclose(out['lat'].data, r['lat'].data)
+    np.testing.assert_allclose(out['lon'].data, r['lon'].data)
+    assert out.attrs == r.attrs
+
+
+def test_true_color_preserves_extra_coords():
+    # A non-spatial coord (e.g. rioxarray's spatial_ref) must pass through.
+    r = _tc_band('numpy').assign_coords(spatial_ref=0)
+    out = true_color(r, r.copy(), r.copy())
+    assert 'spatial_ref' in out.coords
+    assert int(out['spatial_ref']) == 0
+
+
 # NDSI ----------
 @pytest.fixture
 def expected_ndsi():
@@ -1165,3 +1203,171 @@ def test_osavi_approaches_ndvi_for_large_dn(nir_data, red_data, qgis_ndvi):
     osavi_vals[mask] = np.nan
     np.testing.assert_allclose(
         osavi_vals, ndvi_vals, equal_nan=True, rtol=1e-3)
+
+
+# true_color edge cases and parameters (#3431) ----------
+def _true_color_to_numpy(result):
+    # Pull a true_color result back to a host numpy array regardless of
+    # backend (numpy / cupy / dask+numpy / dask+cupy).
+    #
+    # The dask path casts the normalized float buffer (which holds NaN for
+    # nodata/zero-range cells) to uint8 lazily, so the "invalid value
+    # encountered in cast" RuntimeWarning surfaces here at compute time
+    # rather than inside true_color's own catch_warnings block. That NaN->0
+    # cast is the documented behaviour these tests assert on, so silence it.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        data = result.data
+        if hasattr(data, 'compute'):
+            data = data.compute()
+        if hasattr(data, 'get'):
+            data = data.get()
+        return np.asarray(data)
+
+
+@pytest.fixture
+def true_color_nan_bands(backend):
+    # Red band carries a NaN and a value at/below the default nodata=1 so
+    # both legs of the alpha mask (isnan(r) OR r <= nodata) are exercised.
+    red = np.array([[np.nan, 5000.], [1.0, 8000.]], dtype=np.float64)
+    green = np.array([[3000., 5000.], [4000., 8000.]], dtype=np.float64)
+    blue = np.array([[2000., 5000.], [3000., 8000.]], dtype=np.float64)
+    r = create_test_raster(red, backend=backend, chunks=(2, 2))
+    g = create_test_raster(green, backend=backend, chunks=(2, 2))
+    b = create_test_raster(blue, backend=backend, chunks=(2, 2))
+    return r, g, b
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_true_color_nan_alpha_cpu(true_color_nan_bands):
+    # NaN input and r <= nodata input must both drive the alpha channel
+    # to 0 (transparent); the other pixels are opaque (255).
+    r, g, b = true_color_nan_bands
+    result = true_color(r, g, b, nodata=1)
+    alpha = _true_color_to_numpy(result)[:, :, 3]
+    expected_alpha = np.array([[0, 255], [0, 255]], dtype=np.uint8)
+    np.testing.assert_array_equal(alpha, expected_alpha)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_true_color_nan_alpha_gpu(true_color_nan_bands):
+    r, g, b = true_color_nan_bands
+    result = true_color(r, g, b, nodata=1)
+    alpha = _true_color_to_numpy(result)[:, :, 3]
+    expected_alpha = np.array([[0, 255], [0, 255]], dtype=np.uint8)
+    np.testing.assert_array_equal(alpha, expected_alpha)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_true_color_all_equal_input(backend):
+    # Zero-range input hits the `range_val != 0` false branch in
+    # _normalize_data_cpu, leaving the RGB channels at the NaN->0 fill.
+    const = np.full((3, 3), 5000., dtype=np.float64)
+    r = create_test_raster(const, backend=backend, chunks=(3, 3))
+    g = create_test_raster(const, backend=backend, chunks=(3, 3))
+    b = create_test_raster(const, backend=backend, chunks=(3, 3))
+    result = true_color(r, g, b)
+    data = _true_color_to_numpy(result)
+    assert data.shape == (3, 3, 4)
+    # range_val == 0 -> normalize returns all-NaN -> uint8 cast yields 0
+    np.testing.assert_array_equal(data[:, :, :3], np.zeros((3, 3, 3), dtype=np.uint8))
+    # all input > nodata default and not NaN, so alpha is fully opaque
+    np.testing.assert_array_equal(data[:, :, 3], np.full((3, 3), 255, dtype=np.uint8))
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_true_color_nondefault_params_change_output(backend):
+    # Non-default nodata / c / th should change the result relative to the
+    # defaults, confirming the parameters are threaded through.
+    rng = np.random.default_rng(3431)
+    arr = rng.uniform(100, 9000, size=(4, 4)).astype(np.float64)
+    r = create_test_raster(arr, backend=backend, chunks=(4, 4))
+    g = create_test_raster(arr, backend=backend, chunks=(4, 4))
+    b = create_test_raster(arr, backend=backend, chunks=(4, 4))
+
+    default = _true_color_to_numpy(true_color(r, g, b))
+    tuned = _true_color_to_numpy(true_color(r, g, b, c=5.0, th=0.5))
+    assert not np.array_equal(default[:, :, :3], tuned[:, :, :3])
+
+    # nodata high enough to mask every pixel -> alpha all 0
+    masked = _true_color_to_numpy(true_color(r, g, b, nodata=1e9))
+    np.testing.assert_array_equal(
+        masked[:, :, 3], np.zeros((4, 4), dtype=np.uint8))
+
+
+# evi / savi validation error paths (#3431) ----------
+@pytest.fixture
+def _small_bands():
+    data = np.array([[0.5, 0.6], [0.4, 0.3]], dtype=np.float64)
+    a = xr.DataArray(data, dims=['y', 'x']).assign_coords(y=[0, 1], x=[0, 1])
+    return a, a.copy(), a.copy()
+
+
+def test_evi_c1_must_be_numeric(_small_bands):
+    nir, red, blue = _small_bands
+    with pytest.raises(ValueError, match='c1 must be numeric'):
+        evi(nir, red, blue, c1='not-a-number')
+
+
+def test_evi_c2_must_be_numeric(_small_bands):
+    nir, red, blue = _small_bands
+    with pytest.raises(ValueError, match='c2 must be numeric'):
+        evi(nir, red, blue, c2='not-a-number')
+
+
+@pytest.mark.parametrize("bad_soil", [1.5, -1.5])
+def test_evi_soil_factor_out_of_range(_small_bands, bad_soil):
+    nir, red, blue = _small_bands
+    with pytest.raises(ValueError, match='soil factor must be between'):
+        evi(nir, red, blue, soil_factor=bad_soil)
+
+
+def test_evi_negative_gain(_small_bands):
+    nir, red, blue = _small_bands
+    with pytest.raises(ValueError, match='gain must be greater than 0'):
+        evi(nir, red, blue, gain=-1.0)
+
+
+@pytest.mark.parametrize("bad_soil", [1.5, -1.5])
+def test_savi_soil_factor_out_of_range(bad_soil):
+    data = np.array([[0.5, 0.6], [0.4, 0.3]], dtype=np.float64)
+    nir = xr.DataArray(data, dims=['y', 'x']).assign_coords(y=[0, 1], x=[0, 1])
+    red = nir.copy()
+    with pytest.raises(ValueError, match='soil factor must be between'):
+        savi(nir, red, soil_factor=bad_soil)
+
+
+@pytest.mark.parametrize(
+    "func",
+    [arvi, bai, ebbi, evi, gci, mndwi, msavi2, nbr, nbr2, ndbi,
+     ndmi, ndsi, ndvi, ndwi, osavi, savi, sipi],
+)
+def test_docstring_params_match_signature(func):
+    # Every parameter documented in the numpy-style "Parameters" section
+    # must exist in the signature (and vice versa). Guards against
+    # docstring/signature drift such as nbr documenting `swir_agg`
+    # while the signature accepts `swir2_agg`.
+    import inspect
+    import re
+
+    sig_params = set(inspect.signature(func).parameters)
+
+    doc = inspect.getdoc(func) or ""
+    lines = doc.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "Parameters")
+    # Skip the "----------" underline row.
+    documented = []
+    for ln in lines[start + 2:]:
+        if ln.strip() in ("Returns", "References", "Notes", "Examples"):
+            break
+        # Parameter entries are flush-left "name : type" lines.
+        m = re.match(r"^(\w+)\s*:", ln)
+        if m:
+            documented.append(m.group(1))
+    documented = set(documented)
+
+    assert documented == sig_params, (
+        f"{func.__name__}: documented params {sorted(documented)} != "
+        f"signature params {sorted(sig_params)}"
+    )
