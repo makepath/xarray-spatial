@@ -189,6 +189,8 @@ def least_cost_corridor(
         # precomputed path bypasses it.  Without this check, surfaces of
         # differing shape get silently aligned on the intersection of their
         # coordinates by xarray, producing a truncated, wrong-valued corridor.
+        # Like cost_distance, this guards shape only; mismatched coordinates
+        # on same-shape surfaces are out of scope.
         expected_shape = cd_surfaces[0].shape
         for i, cd in enumerate(cd_surfaces[1:], start=1):
             _validate_matching_shape(

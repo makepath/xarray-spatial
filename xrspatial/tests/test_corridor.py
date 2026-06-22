@@ -401,3 +401,13 @@ def test_precomputed_mismatched_shape_pairwise_raises():
         least_cost_corridor(
             friction, sources=sources, precomputed=True, pairwise=True
         )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_precomputed_mismatched_shape_dask_raises():
+    """The shape check fires on dask surfaces without triggering a compute."""
+    friction = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_a = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_b = _make_raster(np.ones((3, 3)), backend="dask+numpy", chunks=(3, 3))
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
