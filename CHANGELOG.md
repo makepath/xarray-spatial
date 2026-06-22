@@ -2,6 +2,41 @@
 -----------
 
 
+### Version 0.10.11 - 2026-06-21
+
+#### Bug fixes and improvements
+- classify: align natural_breaks parameter order with sibling classifiers (#3418)
+- multispectral: propagate input dims/coords through true_color() (#3429) (#3434)
+- multispectral: fix nbr() docstring parameter name to match signature (swir2_agg) (#3435)
+- multispectral: remove unused import and fix import ordering (#3428) (#3432)
+- multispectral: add test coverage for true_color edges and evi/savi validation (#3436)
+- diffusion: drop unused import, sort imports (#3421) (#3423)
+- diffusion: add test coverage for cupy/dask+cupy, reflect boundary, and edge shapes (#3424)
+- disaggregate: fix limiting_variable silently losing a zone's value (#3403) (#3414)
+- disaggregate: vectorize the zone-membership loop (#3408) (#3420)
+- dasymetric: add test coverage for metadata, 1x1, Inf weight, 3-class limiting_variable (#3419)
+- dasymetric: clean up lint (F401, E128, isort) (#3411)
+- classify: keep the large-array sampler O(num_sample) in host memory (#3416)
+- classify: add edge-case and error-path test coverage (#3417)
+- classify: remove unused import and fix isort ordering (#3405)
+- morphology: remove unused imports and dead local, fix import order (#3413)
+- morphology: skip the memory guard for lazy dask inputs (#3401) (#3410)
+- morphology: add missing accessor methods (#3409)
+- morphology: add test coverage for edge inputs (Inf, all-NaN, strip, integer) (#3415)
+- viewshed: add tests for 1x1, all-NaN, and Inf-terrain edge cases (#3425) (#3426)
+- proximity: match GPU max_distance precision to the CPU brute-force (#3389) (#3391)
+- proximity: fix isort import-ordering drift (#3393)
+- proximity: cover Dataset input for proximity/allocation/direction (#3390)
+- fire: declare float32 dtype on the dask+numpy backend (#3394) (#3396)
+- fire: drop dead code and fix import ordering (#3395) (#3397)
+- aspect: sort imports per isort config (#3437) (#3438)
+- aspect: test Inf and all-NaN elevation input across backends (#3439) (#3440)
+- engine: carry the coregister/auto_reproject target on the parameter value (#3380)
+- rasterize: match dask all_touched polygon boundary to eager on grid lines (#3384) (#3386)
+- rasterize: add validation-guard test coverage (#3383) (#3385)
+- zonal: vectorize _sort_and_stride 3D reindex, drop deepcopy (#3381) (#3382)
+
+
 ### Version 0.10.10 - 2026-06-17
 
 #### New features
