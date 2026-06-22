@@ -25,7 +25,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.cost_distance import cost_distance
-from xrspatial.utils import _validate_raster
+from xrspatial.utils import _validate_matching_shape, _validate_raster
 
 
 def _scalar_to_float(da_scalar):
@@ -185,6 +185,19 @@ def least_cost_corridor(
     # ------------------------------------------------------------------
     if precomputed:
         cd_surfaces = list(sources)
+        # cost_distance() guarantees matching shapes when it runs, but the
+        # precomputed path bypasses it.  Without this check, surfaces of
+        # differing shape get silently aligned on the intersection of their
+        # coordinates by xarray, producing a truncated, wrong-valued corridor.
+        expected_shape = cd_surfaces[0].shape
+        for i, cd in enumerate(cd_surfaces[1:], start=1):
+            _validate_matching_shape(
+                cd,
+                expected_shape,
+                func_name="least_cost_corridor",
+                name=f"precomputed surface {i}",
+                expected_name="precomputed surface 0",
+            )
     else:
         cd_surfaces = [
             cost_distance(
