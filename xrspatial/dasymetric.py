@@ -50,14 +50,8 @@ except ImportError:
     class cupy:
         ndarray = False
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    has_cuda_and_cupy,
-    has_dask_array,
-    is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, has_cuda_and_cupy,
+                             has_dask_array, is_cupy_array)
 
 VALID_METHODS = ('binary', 'weighted', 'limiting_variable')
 
@@ -158,8 +152,48 @@ def _normalize_values(values):
 # numpy backend
 # ---------------------------------------------------------------------------
 
-def _disaggregate_numpy(zones, weight, values_dict, method, nodata_zone):
-    """Core numpy implementation.  Returns a float64 ndarray."""
+def _pixel_zone_index(zones_arr, invalid, sorted_zone_ids):
+    """Map each valid pixel to the index of its zone in *sorted_zone_ids*.
+
+    Returns an int64 array the same shape as *zones_arr*.  Pixels that are
+    invalid, or whose zone id is not present in *sorted_zone_ids*, get -1.
+
+    ``sorted_zone_ids`` must be a sorted float64 ndarray of the zone ids in
+    ``values_dict``; ``np.searchsorted`` then turns the per-zone membership
+    loop into a single vectorized lookup.
+    """
+    idx = np.full(zones_arr.shape, -1, dtype=np.int64)
+    if sorted_zone_ids.size == 0:
+        return idx
+    valid = ~invalid
+    zf = zones_arr[valid]
+    pos = np.searchsorted(sorted_zone_ids, zf)
+    # clip so out-of-range positions index a real slot; the equality check
+    # below rejects them.
+    pos_clipped = np.clip(pos, 0, sorted_zone_ids.size - 1)
+    matches = sorted_zone_ids[pos_clipped] == zf
+    pix_idx = np.where(matches, pos_clipped, -1)
+    idx[valid] = pix_idx
+    return idx
+
+
+def _zone_weight_sums(weight_arr, zone_index, n_zones):
+    """Accumulate per-zone weight sums in a single pass.
+
+    *zone_index* is the output of :func:`_pixel_zone_index` (-1 for pixels
+    that belong to no tracked zone).  Returns a float64 array of length
+    *n_zones*.
+    """
+    sums = np.zeros(n_zones, dtype=np.float64)
+    if n_zones == 0:
+        return sums
+    sel = zone_index >= 0
+    np.add.at(sums, zone_index[sel], weight_arr[sel])
+    return sums
+
+
+def _preprocess(zones, weight, method, nodata_zone):
+    """Coerce to float64, clamp/binarize weights, and build the invalid mask."""
     zones_arr = np.asarray(zones, dtype=np.float64)
     weight_arr = np.asarray(weight, dtype=np.float64)
 
@@ -175,35 +209,65 @@ def _disaggregate_numpy(zones, weight, values_dict, method, nodata_zone):
     if nodata_zone is not None:
         invalid |= (zones_arr == nodata_zone)
 
-    # compute zone weight sums
-    zone_ids = np.array(sorted(values_dict.keys()), dtype=np.float64)
-    zone_sums = {}
-    for zid in zone_ids:
-        mask = (~invalid) & (zones_arr == zid)
-        zone_sums[int(zid)] = float(np.nansum(weight_arr[mask]))
+    return zones_arr, weight_arr, invalid
 
+
+def _disaggregate_numpy(zones, weight, values_dict, method, nodata_zone):
+    """Core numpy implementation.  Returns a float64 ndarray."""
+    zones_arr, weight_arr, invalid = _preprocess(
+        zones, weight, method, nodata_zone,
+    )
+
+    sorted_ids = np.array(sorted(values_dict.keys()), dtype=np.float64)
+    zone_index = _pixel_zone_index(zones_arr, invalid, sorted_ids)
+    sums_arr = _zone_weight_sums(weight_arr, zone_index, sorted_ids.size)
+    zone_sums = {int(zid): float(s) for zid, s in zip(sorted_ids, sums_arr)}
+
+    # reuse the already-computed zone_index for the distribute step
     return _disaggregate_numpy_with_sums(
         zones_arr, weight_arr, values_dict, zone_sums, invalid,
+        zone_index=zone_index,
     )
 
 
 def _disaggregate_numpy_with_sums(
     zones_arr, weight_arr, values_dict, zone_sums, invalid,
+    zone_index=None,
 ):
     """Distribute using precomputed zone weight sums.
 
     Used directly by numpy and also called per-chunk by the dask backend.
+    Vectorized: one ``searchsorted`` lookup plus a gathered division, instead
+    of one full-array boolean mask per zone.  *zone_index* (from
+    :func:`_pixel_zone_index`) may be supplied to skip a redundant lookup
+    when the caller has already computed it.
     """
     result = np.full(zones_arr.shape, np.nan, dtype=np.float64)
 
-    for zid, zval in values_dict.items():
-        mask = (~invalid) & (zones_arr == zid)
-        wsum = zone_sums.get(int(zid), 0.0)
-        if wsum == 0.0:
-            # zero total weight -> NaN
-            result[mask] = np.nan
-        else:
-            result[mask] = zval * weight_arr[mask] / wsum
+    sorted_ids = np.array(sorted(values_dict.keys()), dtype=np.float64)
+    if sorted_ids.size == 0:
+        return result
+
+    if zone_index is None:
+        zone_index = _pixel_zone_index(zones_arr, invalid, sorted_ids)
+
+    # per-zone-slot lookup tables aligned with sorted_ids
+    zvals = np.array([values_dict[int(zid)] for zid in sorted_ids],
+                     dtype=np.float64)
+    wsums = np.array([zone_sums.get(int(zid), 0.0) for zid in sorted_ids],
+                     dtype=np.float64)
+
+    sel = zone_index >= 0
+    slot = zone_index[sel]
+    slot_wsum = wsums[slot]
+    # zero-weight-sum zones stay NaN; everyone else gets the proportional share
+    with np.errstate(invalid='ignore', divide='ignore'):
+        share = np.where(
+            slot_wsum == 0.0,
+            np.nan,
+            zvals[slot] * weight_arr[sel] / slot_wsum,
+        )
+    result[sel] = share
 
     return result
 
@@ -232,21 +296,13 @@ def _compute_zone_sums_dask(zones_da, weight_da, zone_ids, method,
     Returns a plain ``dict[int, float]``.
     """
     zone_ids_set = set(int(z) for z in zone_ids)
+    sorted_ids = np.array(sorted(zone_ids_set), dtype=np.float64)
 
     def _chunk_sums(z_block, w_block):
-        z = np.asarray(z_block, dtype=np.float64)
-        w = np.asarray(w_block, dtype=np.float64)
-        w = np.where(w < 0, 0.0, w)
-        if method == 'binary':
-            w = np.where(w != 0, 1.0, 0.0)
-        invalid = np.isnan(z) | np.isnan(w)
-        if nodata_zone is not None:
-            invalid |= (z == nodata_zone)
-        sums = {}
-        for zid in zone_ids_set:
-            mask = (~invalid) & (z == zid)
-            sums[zid] = float(np.nansum(w[mask]))
-        return sums
+        z, w, invalid = _preprocess(z_block, w_block, method, nodata_zone)
+        zone_index = _pixel_zone_index(z, invalid, sorted_ids)
+        sums_arr = _zone_weight_sums(w, zone_index, sorted_ids.size)
+        return {int(zid): float(s) for zid, s in zip(sorted_ids, sums_arr)}
 
     # collect delayed chunk sums
     z_blocks = zones_da.to_delayed().ravel()
@@ -266,14 +322,7 @@ def _compute_zone_sums_dask(zones_da, weight_da, zone_ids, method,
 def _distribute_chunk(z_block, w_block, values_dict, zone_sums, method,
                       nodata_zone):
     """Map-blocks worker: distribute within a single chunk."""
-    z = np.asarray(z_block, dtype=np.float64)
-    w = np.asarray(w_block, dtype=np.float64)
-    w = np.where(w < 0, 0.0, w)
-    if method == 'binary':
-        w = np.where(w != 0, 1.0, 0.0)
-    invalid = np.isnan(z) | np.isnan(w)
-    if nodata_zone is not None:
-        invalid |= (z == nodata_zone)
+    z, w, invalid = _preprocess(z_block, w_block, method, nodata_zone)
     return _disaggregate_numpy_with_sums(z, w, values_dict, zone_sums,
                                          invalid)
 
@@ -320,7 +369,7 @@ def _disaggregate_dask_cupy(zones_da, weight_da, values_dict, method,
                               dtype=weight_da.dtype,
                               meta=np.array((), dtype=weight_da.dtype))
     return _disaggregate_dask_numpy(zones_np, weight_np, values_dict,
-                                   method, nodata_zone)
+                                    method, nodata_zone)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +440,12 @@ def _disaggregate_limiting_numpy(zones, weight, values_dict, nodata_zone,
             n_overflow = int(overflow_mask.sum())
             if n_overflow > 0:
                 result[overflow_mask] += remaining / n_overflow
+            else:
+                # No pixel can absorb the leftover (e.g. every pixel in the
+                # zone is uninhabitable under the caps).  Match the weighted
+                # method: a value with nowhere to go becomes NaN rather than
+                # silently vanishing into zeros.
+                result[zmask] = np.nan
 
     return result
 

@@ -16,10 +16,8 @@ from __future__ import annotations
 from functools import partial
 
 import numpy as np
-import xarray as xr
-from xarray import DataArray
-
 from numba import cuda, prange
+from xarray import DataArray
 
 try:
     import cupy
@@ -32,24 +30,15 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _boundary_to_dask,
-    _dask_task_name_kwargs,
-    _pad_array,
-    _validate_boundary,
-    _validate_raster,
-    calc_cuda_dims,
-    has_cuda_and_cupy,
-    ngjit,
-    not_implemented_func,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, calc_cuda_dims,
+                             has_dask_array, ngjit)
 
 # ---------------------------------------------------------------------------
 # Memory guard
 # ---------------------------------------------------------------------------
+
 
 def _available_memory_bytes():
     """Best-effort estimate of available memory in bytes."""
@@ -103,7 +92,6 @@ def _circle_kernel(radius):
     The kernel has shape ``(2*radius+1, 2*radius+1)`` with ``True``
     for cells whose centre is within *radius* cells of the centre.
     """
-    size = 2 * radius + 1
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     return (x * x + y * y <= radius * radius).astype(np.uint8)
 
@@ -443,7 +431,14 @@ def _dispatch(agg, kernel, boundary, name, numpy_fn, cupy_fn, dask_fn, dask_cupy
 
     rows, cols = agg.shape
     ky, kx = kernel.shape
-    _check_kernel_memory(rows, cols, ky, kx, name)
+    # The guard budgets a full padded float64 copy of the input, which only
+    # the eager numpy/cupy backends allocate. Dask processes the array
+    # chunk-by-chunk via map_overlap, so peak memory scales with chunk size,
+    # not the full shape -- skip the full-shape check for dask-backed inputs.
+    # (This assumes reasonable chunking; a single giant chunk would still
+    # materialize a full padded copy per block.)
+    if not (has_dask_array() and isinstance(agg.data, da.Array)):
+        _check_kernel_memory(rows, cols, ky, kx, name)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(numpy_fn, kernel=kernel, boundary=boundary),

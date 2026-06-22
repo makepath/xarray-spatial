@@ -25,8 +25,8 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
-                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
@@ -634,6 +634,12 @@ def _proximity_cuda_kernel(target_xs, target_ys, target_vals, n_targets,
             best_dist = d
             best_idx = k
 
+    # Round the winning distance to float32 before the range test so the
+    # in-range decision matches the CPU brute-force path, where _distance
+    # returns np.float32(d). Comparing the float64 distance here let a target
+    # whose distance rounds down across a float32 ulp pass on the CPU but fail
+    # on the GPU (or the reverse) when max_distance sits in that ulp gap.
+    best_dist = np.float32(best_dist)
     if best_idx >= 0 and best_dist <= max_distance:
         if process_mode == PROXIMITY:
             out[iy, ix] = best_dist
