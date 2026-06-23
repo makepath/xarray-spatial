@@ -456,3 +456,17 @@ def test_generate_terrain_cupy_preserves_coords_attrs():
     np.testing.assert_array_equal(terrain.x.data, src.x.data)
     assert terrain.attrs['crs'] == 'EPSG:5070'
     assert terrain.attrs['res'] == (30, 30)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_generate_terrain_dask_cupy_preserves_coords_attrs():
+    src = _georef_arr(backend='dask+cupy')
+    terrain = generate_terrain(src)
+
+    assert isinstance(terrain.data, da.Array)
+    assert terrain.data.chunks == src.data.chunks
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+    assert terrain.attrs['res'] == (30, 30)
