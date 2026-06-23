@@ -108,6 +108,27 @@ def test_perlin_rejects_integer_dtype(dtype):
         perlin(raster)
 
 
+def test_perlin_preserves_coords():
+    # Regression: perlin() preserved attrs but dropped the input's x/y
+    # coords, yielding a DataArray that kept its `crs` attr with no
+    # coordinates.  The output must carry the input coords through.
+    H, W = 10, 12
+    data = np.zeros((H, W), dtype=np.float32)
+    raster = xr.DataArray(
+        data,
+        dims=['y', 'x'],
+        coords={'y': np.linspace(10.0, 20.0, H),
+                'x': np.linspace(100.0, 200.0, W)},
+        attrs={'crs': 'EPSG:4326', 'res': (1.0, 1.0)},
+    )
+    result = perlin(raster)
+    general_output_checks(raster, result)
+    assert list(result.coords) == ['y', 'x']
+    np.testing.assert_array_equal(result['y'].data, raster['y'].data)
+    np.testing.assert_array_equal(result['x'].data, raster['x'].data)
+    assert result.attrs == raster.attrs
+
+
 def test_perlin_float64_input():
     # float64 should still work (not just float32).
     data = np.zeros((20, 20), dtype=np.float64)

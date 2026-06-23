@@ -351,6 +351,7 @@ def perlin(agg: xr.DataArray,
     out = mapper(agg)(agg.data, freq, seed)
     result = xr.DataArray(out,
                           dims=agg.dims,
+                          coords=agg.coords,
                           attrs=agg.attrs,
                           name=name)
     return result
