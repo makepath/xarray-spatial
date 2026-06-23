@@ -129,6 +129,10 @@ def test_perlin_dask_cpu_preserves_dtype(dtype):
     raster = xr.DataArray(data, dims=['y', 'x'])
     result = perlin(raster)
     assert result.dtype == dtype
+    computed = result.data.compute()
+    assert np.isfinite(computed).all()
+    assert computed.min() >= 0.0
+    assert computed.max() <= 1.0
 
 
 @cuda_and_cupy_available
