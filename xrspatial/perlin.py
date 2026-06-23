@@ -25,8 +25,8 @@ import numba as nb
 from numba import cuda, jit
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs,
-                             _validate_raster, cuda_args, not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             cuda_args)
 
 
 def _make_perm_table(seed):
