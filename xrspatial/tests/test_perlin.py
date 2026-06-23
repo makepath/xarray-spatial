@@ -52,6 +52,36 @@ def test_perlin_dask_cpu():
     )
 
 
+@dask_array_available
+def test_perlin_dask_does_not_persist_whole_array(monkeypatch):
+    # Regression for issue #3469: the dask backends used dask.persist() to
+    # cache the noise before reducing it, which forces every chunk resident
+    # at once and OOMs at scale. The min/ptp reductions share the noise
+    # subgraph within a single dask.compute call, so the persist is
+    # unnecessary. Fail loudly if it ever comes back.
+    import dask
+
+    def _no_persist(*args, **kwargs):
+        raise AssertionError(
+            "perlin dask backend called dask.persist(); this materializes "
+            "the whole noise array and reintroduces the OOM from #3469"
+        )
+
+    monkeypatch.setattr(dask, "persist", _no_persist)
+
+    data_numpy = create_test_arr()
+    perlin_numpy = perlin(data_numpy)
+
+    data_dask = create_test_arr(backend='dask')
+    perlin_dask = perlin(data_dask)
+    general_output_checks(data_dask, perlin_dask)
+
+    np.testing.assert_allclose(
+        perlin_numpy.data, perlin_dask.data.compute(),
+        rtol=1e-05, atol=1e-07, equal_nan=True
+    )
+
+
 @cuda_and_cupy_available
 def test_perlin_gpu():
     # vanilla numpy version
@@ -70,7 +100,20 @@ def test_perlin_gpu():
 
 @cuda_and_cupy_available
 @dask_array_available
-def test_perlin_dask_gpu():
+def test_perlin_dask_gpu(monkeypatch):
+    # The dask+cupy path must not call dask.persist either (issue #3469);
+    # guard it here so the GPU backend is covered too.
+    import dask
+
+    def _no_persist(*args, **kwargs):
+        raise AssertionError(
+            "perlin dask+cupy backend called dask.persist(); this "
+            "materializes the whole noise array and reintroduces the "
+            "OOM from #3469"
+        )
+
+    monkeypatch.setattr(dask, "persist", _no_persist)
+
     # numpy baseline
     data_numpy = create_test_arr()
     perlin_numpy = perlin(data_numpy)

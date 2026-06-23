@@ -124,8 +124,13 @@ def _perlin_dask_numpy(data: da.Array,
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
-    # persist so min/ptp don't recompute the noise from scratch
-    (data,) = dask.persist(data)
+    # min and ptp go out in one dask.compute call, which shares the noise
+    # subgraph between them, so each chunk is computed once and freed after
+    # both reductions read it. Persisting the whole array first would instead
+    # hold every chunk resident at once and OOM at scale. The returned lazy
+    # array recomputes the noise when the caller materializes it; that extra
+    # pass is intentional -- the noise is point-wise and deterministic, so
+    # recompute is exact and cheap relative to keeping the array resident.
     min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
     data = (data - min_val) / ptp_val
     return data
@@ -275,8 +280,13 @@ def _perlin_dask_cupy(data: da.Array,
                          meta=cupy.array((), dtype=cupy.float32),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
-    # persist so min/max don't recompute the noise from scratch
-    (data,) = dask.persist(data)
+    # min and max go out in one dask.compute call, which shares the noise
+    # subgraph between them, so each chunk is computed once and freed after
+    # both reductions read it. Persisting the whole array first would instead
+    # hold every chunk resident at once and OOM at scale. The returned lazy
+    # array recomputes the noise when the caller materializes it; that extra
+    # pass is intentional -- the noise is point-wise and deterministic, so
+    # recompute is exact and cheap relative to keeping the array resident.
     min_val, max_val = dask.compute(da.min(data), da.max(data))
     data = (data - min_val) / (max_val - min_val)
     return data
