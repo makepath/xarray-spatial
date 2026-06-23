@@ -118,3 +118,16 @@ def test_perlin_float64_input():
     # Normalized to [0, 1]
     assert result.data.min() >= 0.0
     assert result.data.max() <= 1.0
+
+
+def test_perlin_name_param():
+    # The `name` parameter sets the output DataArray name.
+    raster = create_test_arr()
+    assert perlin(raster).name == 'perlin'
+    assert perlin(raster, name='custom').name == 'custom'
+
+
+def test_perlin_docstring_documents_name():
+    # Regression for issue #3465: the docstring must document the `name`
+    # parameter that exists in the signature.
+    assert 'name : str' in perlin.__doc__

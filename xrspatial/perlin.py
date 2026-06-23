@@ -298,6 +298,8 @@ def perlin(agg: xr.DataArray,
         (x, y) frequency multipliers.
     seed : int, default=5
         Seed for random number generator.
+    name : str, default='perlin'
+        Name for the output DataArray.
 
     Returns
     -------
