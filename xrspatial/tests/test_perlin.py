@@ -100,7 +100,20 @@ def test_perlin_gpu():
 
 @cuda_and_cupy_available
 @dask_array_available
-def test_perlin_dask_gpu():
+def test_perlin_dask_gpu(monkeypatch):
+    # The dask+cupy path must not call dask.persist either (issue #3469);
+    # guard it here so the GPU backend is covered too.
+    import dask
+
+    def _no_persist(*args, **kwargs):
+        raise AssertionError(
+            "perlin dask+cupy backend called dask.persist(); this "
+            "materializes the whole noise array and reintroduces the "
+            "OOM from #3469"
+        )
+
+    monkeypatch.setattr(dask, "persist", _no_persist)
+
     # numpy baseline
     data_numpy = create_test_arr()
     perlin_numpy = perlin(data_numpy)
