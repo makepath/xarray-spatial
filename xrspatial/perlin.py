@@ -294,15 +294,27 @@ def perlin(agg: xr.DataArray,
     agg : xr.DataArray
         2D array of size width x height, will be used to determine
         height/ width and which platform to use for calculation.
+        Must have a floating-point dtype (float32 or float64); integer
+        input is rejected (see Raises).
     freq : tuple, default=(1,1)
         (x, y) frequency multipliers.
     seed : int, default=5
         Seed for random number generator.
+    name : str, default='perlin'
+        Name assigned to the output DataArray.
 
     Returns
     -------
     perlin_agg : xarray.DataArray
         2D array of perlin noise values.
+
+    Raises
+    ------
+    ValueError
+        If `agg` does not have a floating-point dtype. The noise is
+        written into `agg` in place and then normalized; an integer
+        buffer would truncate the float values to zero and corrupt the
+        result, so non-float input is rejected up front.
 
     References
     ----------
