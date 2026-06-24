@@ -45,6 +45,14 @@ chaining. These two lines are equivalent:
    incline = slope(terrain)
    incline = terrain.xrs.slope()
 
+To see what's available without tab completion or an editor, print the
+accessor. Its repr lists the operations grouped by category, and renders
+as a table in a Jupyter notebook:
+
+.. code-block:: python
+
+   terrain.xrs        # prints slope, hillshade, ndvi, watershed, ... by category
+
 Reading and writing GeoTIFFs
 ============================
 

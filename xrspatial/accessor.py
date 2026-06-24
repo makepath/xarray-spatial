@@ -11,6 +11,11 @@ directly via tab-completion::
     nir.xrs.ndvi(red)
 """
 
+import functools
+import html
+import inspect
+import re
+import textwrap
 import warnings
 
 import xarray as xr
@@ -579,12 +584,119 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
     return result
 
 
+# ---------------------------------------------------------------------------
+# Accessor repr: list the available ``.xrs`` operations grouped by category so
+# users can discover the toolset from a plain REPL or notebook, without relying
+# on tab-completion or an LSP (issue #3476).
+# ---------------------------------------------------------------------------
+
+# A category banner in the accessor source, e.g. ``    # ---- Hydrology ----``.
+_REPR_BANNER_RE = re.compile(r'^\s*#\s*----\s*(.+?)\s*----\s*$')
+# A method definition inside a class body (indented ``def name(``).
+_REPR_METHOD_RE = re.compile(r'^\s+def\s+([A-Za-z][A-Za-z0-9_]*)\s*\(')
+
+
+@functools.lru_cache(maxsize=None)
+def _accessor_categories(cls):
+    """Parse ``# ---- Category ----`` banners out of *cls* source.
+
+    Returns an ordered tuple of ``(category, (method_name, ...))`` pairs,
+    one per banner that has at least one public method beneath it. Returns
+    an empty tuple when the source is unavailable (e.g. a frozen build), so
+    callers fall back to a flat listing.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return ()
+    categories = []
+    current = None
+    for line in source.splitlines():
+        banner = _REPR_BANNER_RE.match(line)
+        if banner:
+            current = (banner.group(1), [])
+            categories.append(current)
+            continue
+        method = _REPR_METHOD_RE.match(line)
+        if method and current is not None and not method.group(1).startswith('_'):
+            current[1].append(method.group(1))
+    return tuple(
+        (name, tuple(methods)) for name, methods in categories if methods
+    )
+
+
+def _public_accessor_methods(cls):
+    """Sorted public method names defined directly on *cls*."""
+    return tuple(sorted(
+        name for name, member in vars(cls).items()
+        if callable(member) and not name.startswith('_')
+    ))
+
+
+def _accessor_kind(cls):
+    return 'Dataset' if cls.__name__.endswith('DatasetAccessor') else 'DataArray'
+
+
+def _accessor_repr_text(cls):
+    """Plain-text repr listing the accessor's operations by category."""
+    lines = [
+        f"<{cls.__name__}> xarray-spatial tools for this {_accessor_kind(cls)}",
+        "call as: .xrs.<name>(...)",
+        "",
+    ]
+    categories = _accessor_categories(cls)
+    if not categories:
+        lines.append("(categories unavailable; flat method list)")
+        categories = (("", _public_accessor_methods(cls)),)
+    for name, methods in categories:
+        if name:
+            lines.append(f"{name}:")
+        for chunk in textwrap.wrap(
+            ", ".join(methods), width=74,
+            break_long_words=False, break_on_hyphens=False,
+        ):
+            lines.append(f"    {chunk}")
+    return "\n".join(lines)
+
+
+def _accessor_repr_html(cls):
+    """Jupyter HTML repr: the same listing as a compact table."""
+    categories = _accessor_categories(cls)
+    if not categories:
+        categories = (("Available tools", _public_accessor_methods(cls)),)
+    rows = []
+    for name, methods in categories:
+        methods_html = ", ".join(
+            f"<code>{html.escape(m)}</code>" for m in methods
+        )
+        rows.append(
+            "<tr>"
+            "<td style='text-align:right;vertical-align:top;"
+            "padding-right:0.75em;font-weight:bold;white-space:nowrap'>"
+            f"{html.escape(name)}</td>"
+            f"<td style='text-align:left'>{methods_html}</td>"
+            "</tr>"
+        )
+    return (
+        f"<div><strong>xarray-spatial</strong> tools for this "
+        f"{_accessor_kind(cls)} &mdash; call as "
+        "<code>.xrs.&lt;name&gt;(...)</code>"
+        f"<table>{''.join(rows)}</table></div>"
+    )
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __repr__(self):
+        return _accessor_repr_text(type(self))
+
+    def _repr_html_(self):
+        return _accessor_repr_html(type(self))
 
     # ---- Plot ----
 
@@ -1237,6 +1349,12 @@ class XrsSpatialDatasetAccessor:
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __repr__(self):
+        return _accessor_repr_text(type(self))
+
+    def _repr_html_(self):
+        return _accessor_repr_html(type(self))
 
     # ---- Plot ----
 
