@@ -150,6 +150,19 @@ def test_projected_latlon_is_warning():
     assert "geographic_range" in _checks(report)
 
 
+def test_bare_latlon_dim_does_not_trigger_geographic_warning():
+    # A dim named 'lat' with no real coordinate must not be checked
+    # against the geographic range using xarray's synthesized indices.
+    da = xr.DataArray(
+        np.zeros((100, 4), dtype="float64"), dims=["lat", "lon"],
+        attrs={"crs": "EPSG:4326"},
+    )
+    report = da.xrs.validate()
+    assert "geographic_range" not in _checks(report)
+    # the real problem (no coords) is still reported
+    assert "coords_present" in _checks(report)
+
+
 def test_missing_crs_is_warning():
     da = _compliant()
     da.attrs = {}

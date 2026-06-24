@@ -431,9 +431,10 @@ def _check_spatial_coords(agg, ydim, xdim, issues):
             )
             continue
 
-        # --- even spacing --- (mirrors utils._warn_if_irregular_spacing)
+        # --- even spacing --- (mirrors utils._warn_if_irregular_spacing,
+        # which compares each step to the averaged span/(n-1) resolution)
         if values.size >= 3:
-            step = abs(diffs[0])
+            step = abs(values[-1] - values[0]) / (values.size - 1)
             if not np.allclose(np.abs(diffs), step, rtol=1e-5, atol=0):
                 issues.append(
                     ValidationIssue(
@@ -476,13 +477,18 @@ def _check_cellsize(agg, ydim, xdim, issues):
 
 
 def _check_geographic_range(agg, ydim, xdim, issues):
-    """When dims look like lat/lon, values must be in geographic range."""
-    is_lat = str(ydim).lower() in _LAT_NAMES
-    is_lon = str(xdim).lower() in _LON_NAMES
+    """When dims look like lat/lon, values must be in geographic range.
+
+    Only real coordinates are checked: a bare dimension synthesizes a
+    default integer index whose range would otherwise trip a false
+    "looks projected" warning.
+    """
+    is_lat = str(ydim).lower() in _LAT_NAMES and ydim in agg.coords
+    is_lon = str(xdim).lower() in _LON_NAMES and xdim in agg.coords
     if not (is_lat or is_lon):
         return
     if is_lat:
-        lat = _coord_values(agg.coords.get(ydim))
+        lat = _coord_values(agg.coords[ydim])
         if lat is not None and lat.size:
             lo, hi = float(np.nanmin(lat)), float(np.nanmax(lat))
             if lo < -90 or hi > 90 or (hi - lo) > 180:
@@ -498,7 +504,7 @@ def _check_geographic_range(agg, ydim, xdim, issues):
                     )
                 )
     if is_lon:
-        lon = _coord_values(agg.coords.get(xdim))
+        lon = _coord_values(agg.coords[xdim])
         if lon is not None and lon.size:
             lo, hi = float(np.nanmin(lon)), float(np.nanmax(lon))
             if lo < -180 or hi > 360 or (hi - lo) > 360:
