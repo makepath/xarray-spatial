@@ -53,6 +53,13 @@ as a table in a Jupyter notebook:
 
    terrain.xrs        # prints slope, hillshade, ndvi, watershed, ... by category
 
+Drop the call parentheses on a single tool to read its signature and
+docstring, the same text ``help(terrain.xrs.slope)`` shows:
+
+.. code-block:: python
+
+   terrain.xrs.slope  # prints the slope signature and docstring
+
 Reading and writing GeoTIFFs
 ============================
 
