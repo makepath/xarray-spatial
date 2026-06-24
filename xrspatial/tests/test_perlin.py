@@ -319,17 +319,16 @@ def test_perlin_preserves_dims_and_attrs():
     assert out.attrs == src.attrs
 
 
-def test_perlin_drops_input_coords():
-    # Pins current behavior: perlin() rebuilds the output from dims + attrs but
-    # not coords, so input coordinate variables are dropped.  This is a known
-    # bug -- see the perlin "drops input coordinates from output" issue.  Flip
-    # this to assert the coords ARE preserved once that is fixed.
+def test_perlin_preserves_input_coords():
+    # perlin() preserves the caller's x/y coordinates on the output (#3470).
     src = xr.DataArray(np.zeros((10, 12), dtype=np.float32), dims=['lat', 'lon'])
     src['lat'] = np.arange(10)
     src['lon'] = np.arange(12)
     out = perlin(src)
-    assert 'lat' not in out.coords
-    assert 'lon' not in out.coords
+    assert 'lat' in out.coords
+    assert 'lon' in out.coords
+    np.testing.assert_array_equal(out['lat'].values, src['lat'].values)
+    np.testing.assert_array_equal(out['lon'].values, src['lon'].values)
 
 
 def test_perlin_docstring_documents_name():
