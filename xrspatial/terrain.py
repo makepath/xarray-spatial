@@ -594,6 +594,10 @@ def generate_terrain(agg: xr.DataArray,
     ----------
     agg : xr.DataArray
         2D template array (determines height, width, and backend).
+        If it carries its own ``y``/``x`` coordinates and attrs (e.g.
+        ``crs``, ``res``, ``units``), they are preserved on the output and
+        ``x_range``/``y_range`` only drive the noise field. A bare template
+        with no coordinates gets a synthetic grid from ``x_range``/``y_range``.
     x_range : tuple, default=(0, 500)
         Range of x values.
     y_range : tuple, default=(0, 500)
@@ -695,16 +699,39 @@ def generate_terrain(agg: xr.DataArray,
                       octaves, lacunarity, persistence, noise_mode,
                       warp_strength, warp_octaves, worley_blend, worley_seed)
 
-    # Build pixel-center coordinates (matches datashader Canvas convention)
-    dx = (x_range[1] - x_range[0]) / width
-    dy = (y_range[1] - y_range[0]) / height
-    xs = np.linspace(x_range[0] + dx / 2, x_range[1] - dx / 2, width)
-    ys = np.linspace(y_range[0] + dy / 2, y_range[1] - dy / 2, height)
+    # When the caller's array carries its own georeference (coords / attrs
+    # such as crs, res, units), preserve it so generate_terrain fills the
+    # caller's grid instead of replacing it with a synthetic (x_range,
+    # y_range) one.  A bare template with no coords keeps the old behaviour
+    # of synthesizing pixel-center coordinates from x_range / y_range.
+    if 'x' in agg.coords and 'y' in agg.coords:
+        coords = {'y': agg.coords['y'], 'x': agg.coords['x']}
+    else:
+        # pixel-center coordinates (matches datashader Canvas convention)
+        dx = (x_range[1] - x_range[0]) / width
+        dy = (y_range[1] - y_range[0]) / height
+        xs = np.linspace(x_range[0] + dx / 2, x_range[1] - dx / 2, width)
+        ys = np.linspace(y_range[0] + dy / 2, y_range[1] - dy / 2, height)
+        coords = {'y': ys, 'x': xs}
+
+    # Carry the caller's attrs (crs, units, ...) verbatim.  Only synthesize a
+    # res when the caller did not provide one, deriving it from the output
+    # coord spacing so it stays consistent with the coordinates above.
+    attrs = dict(agg.attrs)
+    if 'res' not in attrs:
+        xs_arr = np.asarray(coords['x'])
+        ys_arr = np.asarray(coords['y'])
+        res_x = (float(xs_arr[1] - xs_arr[0]) if xs_arr.size > 1
+                 else float(x_range[1] - x_range[0]))
+        res_y = (float(ys_arr[1] - ys_arr[0]) if ys_arr.size > 1
+                 else float(y_range[1] - y_range[0]))
+        attrs['res'] = (res_x, res_y)
+
     result = xr.DataArray(out,
                           name=name,
-                          coords={'y': ys, 'x': xs},
+                          coords=coords,
                           dims=['y', 'x'],
-                          attrs={'res': (dx, dy)})
+                          attrs=attrs)
 
     # --- hydraulic erosion ---
     if erode:

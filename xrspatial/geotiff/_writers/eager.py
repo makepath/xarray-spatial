@@ -435,6 +435,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
+    # Categorical rasters carry their value->label map in attrs. GDAL/QGIS
+    # only read category names and colors from a PAM ``<file>.aux.xml``
+    # sidecar (an embedded RAT is ignored), so capture the labels now and
+    # emit the sidecar next to the file on the way out. File-like
+    # destinations have no path to anchor a sidecar, so skip them.
+    _cat_names = None
+    _cat_colors = None
+    if isinstance(path, str) and isinstance(data, xr.DataArray):
+        _cat_names = data.attrs.get('category_names')
+        _cat_colors = data.attrs.get('category_colors')
+
+    def _write_category_sidecar():
+        if _cat_names:
+            from .._pam import write_pam_sidecar
+            write_pam_sidecar(path, _cat_names, _cat_colors)
+
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
     # downstream ``isinstance(nodata, (int, float))`` guard. The geotag
@@ -812,6 +828,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          allow_unparseable_crs=allow_unparseable_crs,
                          allow_internal_only_jpeg=allow_internal_only_jpeg,
                          drop_rotation=drop_rotation)
+        _write_category_sidecar()
         return path
 
     # Dispatch to _write_geotiff_gpu when GPU was selected (explicit
@@ -860,6 +877,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_unparseable_crs=allow_unparseable_crs,
                 drop_rotation=drop_rotation,
             )
+            _write_category_sidecar()
             return path
         except ImportError as e:
             # ``_write_geotiff_gpu`` raises ImportError when cupy itself
@@ -1042,6 +1060,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
+            _write_category_sidecar()
             return path
 
         # Eager compute (numpy, CuPy, or dask+COG)
@@ -1137,6 +1156,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         allow_unparseable_crs=allow_unparseable_crs,
     )
+    _write_category_sidecar()
     return path
 
 

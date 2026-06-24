@@ -3744,8 +3744,52 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
 # Input parsing
 # ---------------------------------------------------------------------------
 
+def _is_categorical_like(series):
+    """True when a GeoDataFrame column should be label-encoded.
+
+    Catches pandas ``CategoricalDtype`` and any non-numeric dtype
+    (object / string).  Bool stays numeric (it burns as 0/1), matching
+    the historical ``.astype(np.float64)`` behaviour.
+    """
+    import pandas as pd
+    return (isinstance(series.dtype, pd.CategoricalDtype)
+            or not pd.api.types.is_numeric_dtype(series.dtype))
+
+
+def _encode_categorical(series):
+    """Label-encode a column to integer codes plus an ordered name list.
+
+    An existing ``CategoricalDtype`` keeps its declared category order;
+    a plain string/object column is converted with ``astype('category')``,
+    whose categories come out lexically sorted.  Missing values keep the
+    pandas ``-1`` code, which the caller maps to the fill value.
+    """
+    import pandas as pd
+    cat = series if isinstance(series.dtype, pd.CategoricalDtype) \
+        else series.astype('category')
+    codes = cat.cat.codes.to_numpy()
+    names = [str(c) for c in cat.cat.categories]
+    return codes, names
+
+
+def _categorical_colors(n):
+    """Generate ``n`` distinct opaque RGBA colors from an HSV spread.
+
+    Evenly spaced hues at fixed saturation/value give visually separable
+    classes without pulling in matplotlib.  Returns a list of
+    ``(r, g, b, a)`` int tuples with components in 0-255.
+    """
+    import colorsys
+    colors = []
+    for i in range(n):
+        h = i / n if n else 0.0
+        r, g, b = colorsys.hsv_to_rgb(h, 0.65, 0.95)
+        colors.append((round(r * 255), round(g * 255), round(b * 255), 255))
+    return colors
+
+
 def _parse_input(geometries, column=None, columns=None):
-    """Normalise input to (geometry_list, props_array, bounds, crs).
+    """Normalise input to (geometry_list, props_array, bounds, crs, cats).
 
     Returns
     -------
@@ -3755,6 +3799,9 @@ def _parse_input(geometries, column=None, columns=None):
     crs : the GeoDataFrame's ``.crs`` (any pyproj-parseable value) or
         ``None``.  Only a GeoDataFrame exposes a CRS; the
         ``(geometry, value)`` iterable path always returns ``None``.
+    category_names : ordered list of label strings when ``column`` named a
+        string/categorical field, else ``None``.  When set, ``props_array``
+        holds the integer codes (``-1`` for missing).
     """
     # Handle dask-geopandas by materializing eagerly.  Geometry data is
     # typically much smaller than the output raster, so this is fine.
@@ -3775,6 +3822,7 @@ def _parse_input(geometries, column=None, columns=None):
             # guard fires instead of producing a raster with nan coords.
             if any(not np.isfinite(v) for v in total_bounds):
                 total_bounds = None
+            category_names = None
             if columns is not None:
                 props_array = geometries[columns].values.astype(np.float64)
             else:
@@ -3786,9 +3834,15 @@ def _parse_input(geometries, column=None, columns=None):
                             "GeoDataFrame has no numeric columns to burn. "
                             "Pass a 'column' name explicitly.")
                     column = numeric_cols[0]
-                props_array = geometries[column].values.astype(
-                    np.float64).reshape(-1, 1)
-            return geom_list, props_array, total_bounds, geometries.crs
+                col = geometries[column]
+                if _is_categorical_like(col):
+                    codes, category_names = _encode_categorical(col)
+                    props_array = codes.astype(np.float64).reshape(-1, 1)
+                else:
+                    props_array = col.values.astype(
+                        np.float64).reshape(-1, 1)
+            return (geom_list, props_array, total_bounds,
+                    geometries.crs, category_names)
     except ImportError:
         pass
 
@@ -3804,13 +3858,13 @@ def _parse_input(geometries, column=None, columns=None):
 
     if not geom_list:
         props_array = np.empty((0, 1), dtype=np.float64)
-        return geom_list, props_array, None, None
+        return geom_list, props_array, None, None, None
 
     props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
     # Bounds computation is deferred: return None here and let the
     # caller compute bboxes only when bounds are actually needed.
-    return geom_list, props_array, None, None
+    return geom_list, props_array, None, None, None
 
 
 def _check_uniform_axis(axis_name, coords, expected_step):
@@ -4135,6 +4189,18 @@ def rasterize(
         Name of the GeoDataFrame column whose values are burned into
         the raster.  Ignored when ``geometries`` is a list of pairs.
         Mutually exclusive with ``columns``.
+
+        A string or categorical column is label-encoded: each distinct
+        label gets an integer code ``0..N-1`` and the result is an
+        ``int32`` band with a ``-1`` nodata sentinel (unless ``dtype`` /
+        ``fill`` are passed explicitly).  Plain string/object columns are
+        ordered lexically; an existing pandas ``Categorical`` keeps its
+        declared order.  The label map is stored on the result as
+        ``attrs['category_names']`` (index == pixel code) plus an
+        auto-generated ``attrs['category_colors']`` (one RGBA per class).
+        ``to_geotiff`` writes these to a PAM ``<file>.aux.xml`` sidecar
+        so GDAL/QGIS display the class names, and ``open_geotiff`` reads
+        them back.
     columns : list of str, optional
         Names of multiple GeoDataFrame columns to pass as a properties
         array to the merge function.  Mutually exclusive with ``column``.
@@ -4396,8 +4462,30 @@ def rasterize(
         like_x_descending = grid.x_descending
 
     # Parse input geometries
-    geom_list, props_array, inferred_bounds, geom_crs = _parse_input(
-        geometries, column=column, columns=columns)
+    geom_list, props_array, inferred_bounds, geom_crs, category_names = \
+        _parse_input(geometries, column=column, columns=columns)
+
+    # Categorical column: burn integer codes onto an integer band with a
+    # -1 nodata sentinel (pandas' own missing code) so the result renders
+    # as discrete classes in QGIS rather than a float ramp.  Explicit
+    # ``dtype`` / ``fill`` always win.  ``like`` only supplies the grid
+    # here, not the dtype -- a float template must not silently demote the
+    # codes back to a float ramp.
+    category_colors = None
+    if category_names is not None:
+        if dtype is None:
+            dtype = np.int32
+        try:
+            fill_is_nan = np.isnan(float(fill))
+        except (TypeError, ValueError):
+            fill_is_nan = False
+        if fill_is_nan:
+            fill = -1
+        # Map the pandas missing code (-1) to the resolved fill so
+        # geometries with no category become nodata.
+        if fill != -1:
+            props_array = np.where(props_array == -1, fill, props_array)
+        category_colors = _categorical_colors(len(category_names))
 
     # Guard against silently burning geometries onto a template in a
     # different CRS.  The output inherits the template CRS (attrs /
@@ -4770,6 +4858,13 @@ def rasterize(
         out_attrs['nodata'] = fill
         out_attrs['_FillValue'] = fill
         out_attrs['nodatavals'] = (fill,)
+
+    # Carry the label map so to_geotiff can emit a PAM sidecar and QGIS
+    # shows class names.  Index == pixel code; colors are one RGBA per
+    # category.  These are pass-through attrs (xrspatial/geotiff/_attrs.py).
+    if category_names is not None:
+        out_attrs['category_names'] = category_names
+        out_attrs['category_colors'] = category_colors
 
     # Emit the geometry CRS when the output would otherwise carry none.
     # The grid is laid out in the geometry's coordinate system (bounds
