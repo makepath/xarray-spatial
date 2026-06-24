@@ -206,6 +206,43 @@ def test_perlin_float64_input():
     assert result.data.max() <= 1.0
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_dask_cpu_preserves_dtype(dtype):
+    # Regression: the dask backends used to hardcode float32, silently
+    # downcasting float64 input while numpy/cupy preserved it.
+    import dask.array as da
+    data = da.from_array(np.zeros((20, 20), dtype=dtype), chunks=(10, 10))
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
+    computed = result.data.compute()
+    assert np.isfinite(computed).all()
+    assert computed.min() >= 0.0
+    assert computed.max() <= 1.0
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_gpu_preserves_dtype(dtype):
+    import cupy
+    data = cupy.zeros((20, 20), dtype=dtype)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
+
+
+@cuda_and_cupy_available
+@dask_array_available
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_dask_gpu_preserves_dtype(dtype):
+    import cupy
+    import dask.array as da
+    data = da.from_array(cupy.zeros((20, 20), dtype=dtype), chunks=(10, 10))
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
+
+
 # ---------------------------------------------------------------------------
 # Parameter coverage (freq / seed / name)
 # ---------------------------------------------------------------------------
