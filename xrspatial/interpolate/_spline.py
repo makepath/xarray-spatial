@@ -12,6 +12,7 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _
                              _validate_scalar, cuda_args, ngjit)
 
 from ._validation import extract_grid_coords, validate_points
+from ._vector import resolve_xyz
 
 try:
     import cupy
@@ -300,13 +301,16 @@ def _check_spline_memory(n_points, grid_pixels):
         )
 
 
-def spline(x, y, z, template, smoothing=0.0, name='spline'):
+def spline(x, y=None, z=None, template=None, smoothing=0.0, name='spline',
+           *, column=None):
     """Thin Plate Spline interpolation.
 
     Parameters
     ----------
     x, y, z : array-like
-        Coordinates and values of scattered input points.
+        Coordinates and values of scattered input points.  Alternatively,
+        pass a GeoDataFrame of Point geometries as the first argument and
+        leave *y*/*z* unset; *template* and *column* must then be keywords.
     template : xr.DataArray
         2-D DataArray whose grid defines the output raster.
     smoothing : float, default 0.0
@@ -314,6 +318,9 @@ def spline(x, y, z, template, smoothing=0.0, name='spline'):
         the data points.
     name : str, default 'spline'
         Name of the output DataArray.
+    column : str, optional
+        When the first argument is a GeoDataFrame, the column whose values
+        are interpolated.  Defaults to the first numeric column.
 
     Returns
     -------
@@ -325,6 +332,7 @@ def spline(x, y, z, template, smoothing=0.0, name='spline'):
         If the worst-case allocation (kernel block K or augmented
         system A) would exceed 80% of available memory.
     """
+    x, y, z = resolve_xyz(x, y, z, column=column, func_name='spline')
     _validate_raster(template, func_name='spline', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='spline')
     _validate_scalar(smoothing, func_name='spline', name='smoothing',

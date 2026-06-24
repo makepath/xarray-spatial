@@ -10,6 +10,7 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _
                              _validate_scalar, cuda_args, ngjit)
 
 from ._validation import extract_grid_coords, validate_points
+from ._vector import resolve_xyz
 
 try:
     import cupy
@@ -281,14 +282,16 @@ def _check_idw_memory(grid_pixels, k):
         )
 
 
-def idw(x, y, z, template, power=2.0, k=None,
-        fill_value=np.nan, name='idw'):
+def idw(x, y=None, z=None, template=None, power=2.0, k=None,
+        fill_value=np.nan, name='idw', *, column=None):
     """Inverse Distance Weighting interpolation.
 
     Parameters
     ----------
     x, y, z : array-like
-        Coordinates and values of scattered input points.
+        Coordinates and values of scattered input points.  Alternatively,
+        pass a GeoDataFrame of Point geometries as the first argument and
+        leave *y*/*z* unset; *template* and *column* must then be keywords.
     template : xr.DataArray
         2-D DataArray whose grid defines the output raster.
     power : float, default 2.0
@@ -301,6 +304,9 @@ def idw(x, y, z, template, power=2.0, k=None,
         Value for pixels with zero total weight.
     name : str, default 'idw'
         Name of the output DataArray.
+    column : str, optional
+        When the first argument is a GeoDataFrame, the column whose values
+        are interpolated.  Defaults to the first numeric column.
 
     Returns
     -------
@@ -313,6 +319,7 @@ def idw(x, y, z, template, power=2.0, k=None,
         ``(grid_pixels, k)`` distance and index arrays from the
         ``cKDTree`` query would exceed 80% of available memory.
     """
+    x, y, z = resolve_xyz(x, y, z, column=column, func_name='idw')
     _validate_raster(template, func_name='idw', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='idw')
     _validate_scalar(power, func_name='idw', name='power',
