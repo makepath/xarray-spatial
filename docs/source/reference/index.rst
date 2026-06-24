@@ -29,6 +29,7 @@ Reference
    reproject
    resample
    surface
+   templates
    terrain_metrics
    utilities
    zonal
