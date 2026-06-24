@@ -4189,6 +4189,18 @@ def rasterize(
         Name of the GeoDataFrame column whose values are burned into
         the raster.  Ignored when ``geometries`` is a list of pairs.
         Mutually exclusive with ``columns``.
+
+        A string or categorical column is label-encoded: each distinct
+        label gets an integer code ``0..N-1`` and the result is an
+        ``int32`` band with a ``-1`` nodata sentinel (unless ``dtype`` /
+        ``fill`` are passed explicitly).  Plain string/object columns are
+        ordered lexically; an existing pandas ``Categorical`` keeps its
+        declared order.  The label map is stored on the result as
+        ``attrs['category_names']`` (index == pixel code) plus an
+        auto-generated ``attrs['category_colors']`` (one RGBA per class).
+        ``to_geotiff`` writes these to a PAM ``<file>.aux.xml`` sidecar
+        so GDAL/QGIS display the class names, and ``open_geotiff`` reads
+        them back.
     columns : list of str, optional
         Names of multiple GeoDataFrame columns to pass as a properties
         array to the merge function.  Mutually exclusive with ``column``.
