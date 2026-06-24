@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # std lib
 import math
-from functools import partial
 
 # 3rd-party
 import numpy as np
@@ -112,6 +111,7 @@ def _perlin_dask_numpy(data: da.Array,
                        freq: tuple,
                        seed: int) -> da.Array:
     p = _make_perm_table(seed)
+    out_dtype = data.dtype
 
     height, width = data.shape
     linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32,
@@ -120,8 +120,10 @@ def _perlin_dask_numpy(data: da.Array,
                        chunks=data.chunks[0][0])
     x, y = da.meshgrid(linx, liny)
 
-    _func = partial(_perlin, p)
-    data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32),
+    def _func(x_blk, y_blk):
+        return _perlin(p, x_blk, y_blk).astype(out_dtype)
+
+    data = da.map_blocks(_func, x, y, meta=np.array((), dtype=out_dtype),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
     # min and ptp go out in one dask.compute call, which shares the noise
@@ -259,6 +261,7 @@ def _perlin_dask_cupy(data: da.Array,
                       freq: tuple,
                       seed: int) -> da.Array:
     p = cupy.asarray(_make_perm_table(seed))
+    out_dtype = data.dtype
 
     height, width = data.shape
 
@@ -271,13 +274,13 @@ def _perlin_dask_cupy(data: da.Array,
         y0 = freq[1] * y_start / height
         y1 = freq[1] * y_end / height
 
-        out = cupy.empty(block.shape, dtype=cupy.float32)
+        out = cupy.empty(block.shape, dtype=out_dtype)
         griddim, blockdim = cuda_args(block.shape)
         _perlin_gpu[griddim, blockdim](p, x0, x1, y0, y1, 1.0, out)
         return out
 
-    data = da.map_blocks(_chunk_perlin, data, dtype=cupy.float32,
-                         meta=cupy.array((), dtype=cupy.float32),
+    data = da.map_blocks(_chunk_perlin, data, dtype=out_dtype,
+                         meta=cupy.array((), dtype=out_dtype),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
     # min and max go out in one dask.compute call, which shares the noise
@@ -373,6 +376,7 @@ def perlin(agg: xr.DataArray,
     out = mapper(agg)(agg.data, freq, seed)
     result = xr.DataArray(out,
                           dims=agg.dims,
+                          coords=agg.coords,
                           attrs=agg.attrs,
                           name=name)
     return result
