@@ -209,6 +209,26 @@ class TestRdnbr:
         np.testing.assert_allclose(cp_r.data.get(), np_r.data,
                                    rtol=1e-5, equal_nan=True)
 
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self):
+        rng = np.random.default_rng(42)
+        d = rng.uniform(-1, 1, (6, 8)).astype('f4')
+        p = rng.uniform(0.01, 1.0, (6, 8)).astype('f4') * 1000
+        np_r = rdnbr(create_test_raster(d, 'numpy'),
+                     create_test_raster(p, 'numpy'))
+        dc_r = rdnbr(create_test_raster(d, 'dask+cupy'),
+                     create_test_raster(p, 'dask+cupy'))
+        np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                                   rtol=1e-5, equal_nan=True)
+
+    def test_output_preserves_metadata(self):
+        d = np.array([[0.4, 0.3], [0.5, 0.1]], dtype=np.float32)
+        p = np.array([[500.0, 200.0], [800.0, 100.0]], dtype=np.float32)
+        d_agg = create_test_raster(d)
+        result = rdnbr(d_agg, create_test_raster(p))
+        general_output_checks(d_agg, result, verify_dtype=False)
+
 
 # ---------------------------------------------------------------------------
 # Burn severity class
@@ -269,6 +289,21 @@ class TestBurnSeverityClass:
         cp_r = burn_severity_class(create_test_raster(data, 'cupy'))
         np.testing.assert_array_equal(cp_r.data.get(), np_r.data)
 
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self):
+        rng = np.random.default_rng(99)
+        data = rng.uniform(-1, 1, (8, 10)).astype('f4')
+        np_r = burn_severity_class(create_test_raster(data, 'numpy'))
+        dc_r = burn_severity_class(create_test_raster(data, 'dask+cupy'))
+        np.testing.assert_array_equal(dc_r.data.compute().get(), np_r.data)
+
+    def test_output_preserves_metadata(self):
+        vals = np.array([[-0.5, 0.3], [0.7, 0.1]], dtype=np.float32)
+        agg = create_test_raster(vals)
+        result = burn_severity_class(agg)
+        general_output_checks(agg, result, verify_dtype=False)
+
 
 # ---------------------------------------------------------------------------
 # Fireline intensity
@@ -326,6 +361,26 @@ class TestFirelineIntensity:
         np.testing.assert_allclose(cp_r.data.get(), np_r.data,
                                    rtol=1e-5, equal_nan=True)
 
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self):
+        rng = np.random.default_rng(7)
+        f = rng.uniform(0, 5, (6, 8)).astype('f4')
+        s = rng.uniform(0, 1, (6, 8)).astype('f4')
+        np_r = fireline_intensity(create_test_raster(f, 'numpy'),
+                                  create_test_raster(s, 'numpy'))
+        dc_r = fireline_intensity(create_test_raster(f, 'dask+cupy'),
+                                  create_test_raster(s, 'dask+cupy'))
+        np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                                   rtol=1e-5, equal_nan=True)
+
+    def test_output_preserves_metadata(self):
+        f = np.array([[2.0, 0.5], [1.0, 0.3]], dtype=np.float32)
+        s = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
+        f_agg = create_test_raster(f)
+        result = fireline_intensity(f_agg, create_test_raster(s))
+        general_output_checks(f_agg, result, verify_dtype=False)
+
 
 # ---------------------------------------------------------------------------
 # Flame length
@@ -381,6 +436,19 @@ class TestFlameLength:
         cp_r = flame_length(create_test_raster(intensity_data, 'cupy'))
         np.testing.assert_allclose(cp_r.data.get(), np_r.data,
                                    rtol=1e-5, equal_nan=True)
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self, intensity_data):
+        np_r = flame_length(create_test_raster(intensity_data, 'numpy'))
+        dc_r = flame_length(create_test_raster(intensity_data, 'dask+cupy'))
+        np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                                   rtol=1e-5, equal_nan=True)
+
+    def test_output_preserves_metadata(self, intensity_data):
+        agg = create_test_raster(intensity_data)
+        result = flame_length(agg)
+        general_output_checks(agg, result, verify_dtype=False)
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +582,31 @@ class TestRateOfSpread:
         np.testing.assert_allclose(cp_r.data.get(), np_r.data,
                                    rtol=1e-4, equal_nan=True)
 
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self, ros_inputs):
+        slope, wind, moisture = ros_inputs
+        np_r = rate_of_spread(
+            create_test_raster(slope, 'numpy'),
+            create_test_raster(wind, 'numpy'),
+            create_test_raster(moisture, 'numpy'),
+        )
+        dc_r = rate_of_spread(
+            create_test_raster(slope, 'dask+cupy'),
+            create_test_raster(wind, 'dask+cupy'),
+            create_test_raster(moisture, 'dask+cupy'),
+        )
+        np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                                   rtol=1e-4, equal_nan=True)
+
+    def test_output_preserves_metadata(self, ros_inputs):
+        slope, wind, moisture = ros_inputs
+        slope_agg = create_test_raster(slope)
+        result = rate_of_spread(slope_agg,
+                                create_test_raster(wind),
+                                create_test_raster(moisture))
+        general_output_checks(slope_agg, result, verify_dtype=False)
+
 
 # ---------------------------------------------------------------------------
 # KBDI
@@ -628,6 +721,35 @@ class TestKbdi:
                     annual_precip=1200.0)
         np.testing.assert_allclose(cp_r.data.get(), np_r.data,
                                    rtol=1e-5, equal_nan=True)
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_numpy_equals_dask_cupy(self):
+        rng = np.random.default_rng(123)
+        prev = rng.uniform(0, 400, (6, 8)).astype('f4')
+        temp = rng.uniform(15, 40, (6, 8)).astype('f4')
+        precip = rng.uniform(0, 20, (6, 8)).astype('f4')
+        np_r = kbdi(create_test_raster(prev, 'numpy'),
+                    create_test_raster(temp, 'numpy'),
+                    create_test_raster(precip, 'numpy'),
+                    annual_precip=1200.0)
+        dc_r = kbdi(create_test_raster(prev, 'dask+cupy'),
+                    create_test_raster(temp, 'dask+cupy'),
+                    create_test_raster(precip, 'dask+cupy'),
+                    annual_precip=1200.0)
+        np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                                   rtol=1e-5, equal_nan=True)
+
+    def test_output_preserves_metadata(self):
+        prev = np.array([[100.0, 200.0], [300.0, 50.0]], dtype=np.float32)
+        temp = np.array([[30.0, 25.0], [35.0, 20.0]], dtype=np.float32)
+        precip = np.array([[0.0, 5.0], [2.0, 10.0]], dtype=np.float32)
+        prev_agg = create_test_raster(prev)
+        result = kbdi(prev_agg,
+                      create_test_raster(temp),
+                      create_test_raster(precip),
+                      annual_precip=1500.0)
+        general_output_checks(prev_agg, result, verify_dtype=False)
 
 
 # ---------------------------------------------------------------------------

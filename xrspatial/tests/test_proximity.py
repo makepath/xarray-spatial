@@ -2634,3 +2634,102 @@ def test_max_distance_float32_boundary_allocation_gpu_matches_cpu():
 
     assert np.isnan(numpy_val) == np.isnan(cupy_val)
     np.testing.assert_allclose(numpy_val, cupy_val, rtol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #3442: EUCLIDEAN proximity/allocation/direction
+# dropped a target sitting exactly at max_distance to NaN on the numpy and
+# dask+numpy cKDTree backends, while cupy/dask+cupy (brute force) kept it.
+# Most visible at max_distance=0, where a target pixel is distance 0 from
+# itself and so must qualify. Root cause: cKDTree squares its (exclusive)
+# distance_upper_bound for p=2, and a one-ulp widen of 0 underflows when
+# squared, so the bound collapsed back to max_distance.
+# ---------------------------------------------------------------------------
+
+def _single_target_raster():
+    data = np.zeros((3, 3), dtype=np.float64)
+    data[1, 1] = 1.0
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.arange(3)[::-1].astype(float)
+    raster['x'] = np.arange(3).astype(float)
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("metric", ['EUCLIDEAN', 'MANHATTAN'])
+def test_zero_max_distance_keeps_target_pixel(backend, metric):
+    # A target pixel is distance 0 from itself, so max_distance=0 must keep
+    # it (not NaN it out) on every backend. proximity -> 0, allocation ->
+    # the target value, direction -> 0 (the source cell).
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+
+    raster = create_test_raster(
+        _single_target_raster().data, backend=backend, dims=['y', 'x'],
+        attrs={'res': (1.0, 1.0)}, chunks=(2, 2),
+    )
+    # create_test_raster lays its own coords but keeps the 1.0 at (1, 1).
+    kwargs = dict(max_distance=0.0, distance_metric=metric)
+
+    prox = proximity(raster, **kwargs)
+    alloc = allocation(raster, **kwargs)
+    direc = direction(raster, **kwargs)
+
+    def _get(agg):
+        d = agg.data
+        if da is not None and isinstance(d, da.Array):
+            d = d.compute()
+        if has_cuda_and_cupy() and 'cupy' in backend:
+            d = d.get()
+        return d
+
+    pd, ad, dd = _get(prox), _get(alloc), _get(direc)
+    # Target pixel qualifies on every backend.
+    assert pd[1, 1] == 0.0
+    assert ad[1, 1] == 1.0
+    assert dd[1, 1] == 0.0
+    # Every non-target pixel is beyond max_distance=0, so it stays NaN.
+    off = np.ones((3, 3), dtype=bool)
+    off[1, 1] = False
+    assert np.all(np.isnan(pd[off]))
+    assert np.all(np.isnan(ad[off]))
+    assert np.all(np.isnan(dd[off]))
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_zero_max_distance_numpy_matches_dask(func):
+    # Regression: numpy/dask EUCLIDEAN used cKDTree and dropped the target at
+    # max_distance=0; cupy/dask+cupy used brute force and kept it. Pin the two
+    # CPU backends together so they cannot drift again.
+    raster = _single_target_raster()
+    numpy_result = func(raster, max_distance=0.0)
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(raster.data, chunks=(2, 2))
+    dask_result = func(dask_raster, max_distance=0.0)
+
+    np.testing.assert_allclose(
+        numpy_result.values, dask_result.values, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("metric", ['EUCLIDEAN', 'MANHATTAN'])
+def test_exact_max_distance_keeps_boundary_pixel(metric):
+    # A pixel whose true nearest-target distance equals max_distance exactly
+    # must qualify (inclusive <= semantics), matching the brute-force
+    # backends. The cKDTree bound is exclusive; the fix widens it.
+    raster = _single_target_raster()
+    # nearest-target distance from (1, 0) to the target at (1, 1) is 1.0 for
+    # both EUCLIDEAN and MANHATTAN on this unit grid.
+    md = 1.0
+
+    numpy_result = proximity(raster, max_distance=md, distance_metric=metric)
+    assert numpy_result.values[1, 0] == pytest.approx(md)
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(raster.data, chunks=(2, 2))
+    dask_result = proximity(dask_raster, max_distance=md,
+                            distance_metric=metric)
+    assert dask_result.values[1, 0] == pytest.approx(md)

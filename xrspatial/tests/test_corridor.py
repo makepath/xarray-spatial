@@ -552,3 +552,127 @@ def test_custom_dim_names_preserved():
     assert result.dims == ("lat", "lon")
     np.testing.assert_array_equal(result["lat"].data, friction["lat"].data)
     np.testing.assert_array_equal(result["lon"].data, friction["lon"].data)
+
+
+# -----------------------------------------------------------------------
+# Metadata propagation (issue #3446)
+# -----------------------------------------------------------------------
+
+
+_GEO_ATTRS = {
+    "res": (1.0, 1.0),
+    "crs": "EPSG:4326",
+    "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 0.0),
+    "nodatavals": (-9999.0,),
+}
+
+
+def _make_geo_raster(data, attrs, name, backend="numpy"):
+    """Build a raster with explicit attrs/name on top of ``_make_raster``."""
+    raster = _make_raster(data, backend=backend, chunks=data.shape)
+    raster.attrs = dict(attrs)
+    raster.name = name
+    return raster
+
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "dask+numpy", "cupy", "dask+cupy"]
+)
+def test_corridor_inherits_friction_geo_attrs(backend):
+    """Corridor carries friction's geo-attrs/name even when sources have none."""
+    n = 7
+    friction = _make_geo_raster(
+        np.ones((n, n)), _GEO_ATTRS, "friction", backend=backend
+    )
+    sa_d = np.zeros((n, n))
+    sa_d[3, 0] = 1.0
+    sb_d = np.zeros((n, n))
+    sb_d[3, 6] = 1.0
+    # Source masks deliberately carry no attrs and no name.
+    sa = _make_geo_raster(sa_d, {}, None, backend=backend)
+    sb = _make_geo_raster(sb_d, {}, None, backend=backend)
+
+    result = least_cost_corridor(friction, sa, sb)
+
+    assert dict(result.attrs) == _GEO_ATTRS
+    assert result.name == "friction"
+    assert result.dims == ("y", "x")
+    assert list(result.coords) == ["y", "x"]
+
+
+@pytest.mark.parametrize(
+    "backend", ["numpy", "dask+numpy", "cupy", "dask+cupy"]
+)
+def test_corridor_threshold_keeps_geo_attrs(backend):
+    """Thresholded corridor still carries friction's geo-attrs."""
+    n = 7
+    friction = _make_geo_raster(
+        np.ones((n, n)), _GEO_ATTRS, "friction", backend=backend
+    )
+    sa_d = np.zeros((n, n))
+    sa_d[3, 0] = 1.0
+    sb_d = np.zeros((n, n))
+    sb_d[3, 6] = 1.0
+    sa = _make_geo_raster(sa_d, {}, None, backend=backend)
+    sb = _make_geo_raster(sb_d, {}, None, backend=backend)
+
+    result = least_cost_corridor(friction, sa, sb, threshold=0.5)
+
+    assert dict(result.attrs) == _GEO_ATTRS
+    assert result.name == "friction"
+
+
+def test_corridor_unreachable_keeps_geo_attrs():
+    """All-NaN corridor (unreachable sources) still carries geo-attrs."""
+    n = 5
+    fr_d = np.ones((n, n))
+    fr_d[:, 2] = np.nan  # impenetrable wall
+    friction = _make_geo_raster(fr_d, _GEO_ATTRS, "friction")
+    sa_d = np.zeros((n, n))
+    sa_d[2, 0] = 1.0
+    sb_d = np.zeros((n, n))
+    sb_d[2, 4] = 1.0
+    sa = _make_geo_raster(sa_d, {}, None)
+    sb = _make_geo_raster(sb_d, {}, None)
+
+    result = least_cost_corridor(friction, sa, sb)
+
+    assert np.all(np.isnan(_compute(result)))
+    assert dict(result.attrs) == _GEO_ATTRS
+
+
+def test_pairwise_inherits_friction_geo_attrs():
+    """Every variable in a pairwise Dataset carries friction's geo-attrs."""
+    n = 7
+    friction = _make_geo_raster(np.ones((n, n)), _GEO_ATTRS, "friction")
+    sources = []
+    for r, c in [(0, 0), (0, 6), (6, 3)]:
+        s = np.zeros((n, n))
+        s[r, c] = 1.0
+        sources.append(_make_geo_raster(s, {}, None))
+
+    result = least_cost_corridor(friction, sources=sources, pairwise=True)
+
+    assert isinstance(result, xr.Dataset)
+    for name in result.data_vars:
+        assert dict(result[name].attrs) == _GEO_ATTRS
+
+
+def test_precomputed_keeps_source_attrs_not_friction():
+    """Precomputed path leaves the source-derived attrs alone (no friction)."""
+    n = 7
+    friction = _make_geo_raster(np.ones((n, n)), _GEO_ATTRS, "friction")
+    sa_d = np.zeros((n, n))
+    sa_d[3, 0] = 1.0
+    sb_d = np.zeros((n, n))
+    sb_d[3, 6] = 1.0
+    src_attrs = {"res": (1.0, 1.0), "crs": "EPSG:3857"}
+    cd_a = _make_geo_raster(sa_d, src_attrs, "cd")
+    cd_b = _make_geo_raster(sb_d, src_attrs, "cd")
+
+    result = least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
+
+    # Friction's attrs must NOT leak into a precomputed corridor; the
+    # matching source attrs survive xarray's binary-op intersection.
+    assert dict(result.attrs) == src_attrs
+    assert "EPSG:4326" not in result.attrs.get("crs", "")

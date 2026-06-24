@@ -749,6 +749,36 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
     )
 
 
+def _inclusive_upper_bound(max_distance):
+    """Exclusive ``distance_upper_bound`` that cKDTree treats as inclusive.
+
+    ``cKDTree.query``'s ``distance_upper_bound`` is exclusive, while the
+    brute-force and CUDA kernels keep ``dist <= max_distance``. To turn the
+    exclusive check into the inclusive one the bound has to be widened just
+    past ``max_distance``.
+
+    A one-ulp widen (``np.nextafter``) is not enough for the EUCLIDEAN query
+    (``p=2``): cKDTree compares *squared* distances internally, and the square
+    of ``nextafter(0.0, inf)`` (the smallest subnormal) underflows back to
+    0.0, so the bound collapses to exactly ``max_distance`` again and a
+    target sitting exactly at the bound -- most visibly a target pixel itself
+    at ``max_distance=0`` -- is dropped to NaN. numpy/dask then disagreed with
+    the cupy/dask+cupy brute-force backends, which include it.
+
+    Widen by a relative epsilon with an absolute floor instead. The bump stays
+    large enough to survive squaring for ``p=2`` (and is harmless for ``p=1``)
+    while staying far below the next representable distance, so nothing beyond
+    ``max_distance`` is pulled in. Because the bump is relative, a target at a
+    true distance within roughly ``8 * eps * max_distance`` of the bound could
+    qualify, but at that magnitude the two distances are not distinguishable in
+    float64 anyway, so the result is still correct.
+    """
+    if not np.isfinite(max_distance):
+        return np.inf
+    bump = 4.0 * np.finfo(np.float64).eps * max(abs(max_distance), 1.0)
+    return max_distance + bump
+
+
 def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p,
                           workers=1):
     """Exact nearest-target PROXIMITY on the CPU via scipy's cKDTree.
@@ -785,11 +815,10 @@ def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p,
     query_pts = np.column_stack([ys[finite_coords], xs[finite_coords]])
 
     # cKDTree's distance_upper_bound is exclusive, while the brute-force and
-    # CUDA kernels keep dist <= max_distance. Widening the bound by one ulp
-    # turns the exclusive check into the inclusive one.
-    upper = max_distance
-    if np.isfinite(upper):
-        upper = np.nextafter(upper, np.inf)
+    # CUDA kernels keep dist <= max_distance. Widen the bound so the exclusive
+    # check becomes the inclusive one for both p=1 and p=2 (see
+    # _inclusive_upper_bound).
+    upper = _inclusive_upper_bound(max_distance)
     dists, _ = tree.query(query_pts, p=p, distance_upper_bound=upper,
                           workers=workers)
 
@@ -816,12 +845,16 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     relies on cKDTree returning the lower index among the rest, which it does
     for the row-major target order used here but does not strictly promise.
     """
+    # Match the inclusive dist <= max_distance check of the brute-force/CUDA
+    # backends; cKDTree's bound is exclusive (see _inclusive_upper_bound).
+    upper = _inclusive_upper_bound(max_distance)
+
     n_targets = tree.n
     if n_targets < 2:
-        return tree.query(query_pts, p=p, distance_upper_bound=max_distance)
+        return tree.query(query_pts, p=p, distance_upper_bound=upper)
 
     dists2, idx2 = tree.query(query_pts, k=2, p=p,
-                              distance_upper_bound=max_distance)
+                              distance_upper_bound=upper)
     dists = dists2[:, 0]
     indices = idx2[:, 0]
     # A tie exists where both neighbours are finite and equidistant. Prefer the
