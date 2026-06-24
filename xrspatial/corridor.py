@@ -38,11 +38,33 @@ def _scalar_to_float(da_scalar):
     return float(data)
 
 
+def _apply_geo_metadata(
+    result: xr.DataArray,
+    geo_source: xr.DataArray | None,
+) -> xr.DataArray:
+    """Re-emit the grid-defining raster's attrs/name on the corridor output.
+
+    The corridor is ``cd_a + cd_b``, and each cost-distance surface carries
+    the attrs of its *source* raster (see ``cost_distance``).  Source rasters
+    are usually plain marker masks with no geo-attrs, so the xarray binary
+    sum drops ``res``/``crs``/``transform``/``nodatavals`` even when the
+    friction surface that defines the grid had them.  When a grid-defining
+    raster is available (the non-precomputed case, where *friction* is it),
+    copy its attrs and name back onto the result.
+    """
+    if geo_source is None:
+        return result
+    result = result.copy()
+    result.attrs = dict(geo_source.attrs)
+    return result.rename(geo_source.name)
+
+
 def _compute_corridor(
     cd_a: xr.DataArray,
     cd_b: xr.DataArray,
     threshold: float | None,
     relative: bool,
+    geo_source: xr.DataArray | None = None,
 ) -> xr.DataArray:
     """Sum two cost-distance surfaces, normalize, and optionally threshold."""
     corridor = cd_a + cd_b
@@ -50,7 +72,7 @@ def _compute_corridor(
 
     if not np.isfinite(corridor_min):
         # Sources are mutually unreachable -- return all-NaN.
-        return corridor * np.nan
+        return _apply_geo_metadata(corridor * np.nan, geo_source)
 
     normalized = corridor - corridor_min
 
@@ -74,7 +96,7 @@ def _compute_corridor(
                 data = np.where(data <= cutoff, data, np.nan)
         normalized = normalized.copy(data=data)
 
-    return normalized
+    return _apply_geo_metadata(normalized, geo_source)
 
 
 def least_cost_corridor(
@@ -200,6 +222,9 @@ def least_cost_corridor(
                 name=f"precomputed surface {i}",
                 expected_name="precomputed surface 0",
             )
+        # No friction surface to draw grid metadata from -- keep the
+        # existing source-derived attrs/name behaviour.
+        geo_source = None
     else:
         cd_surfaces = [
             cost_distance(
@@ -208,13 +233,16 @@ def least_cost_corridor(
             )
             for src in sources
         ]
+        # The friction surface defines the grid (res/crs/transform), so its
+        # attrs and name should ride through to the corridor output.
+        geo_source = friction
 
     # ------------------------------------------------------------------
     # Two-source case: return a single DataArray
     # ------------------------------------------------------------------
     if len(cd_surfaces) == 2 and not pairwise:
         return _compute_corridor(
-            cd_surfaces[0], cd_surfaces[1], threshold, relative
+            cd_surfaces[0], cd_surfaces[1], threshold, relative, geo_source
         )
 
     # ------------------------------------------------------------------
@@ -224,7 +252,7 @@ def least_cost_corridor(
     for i, j in itertools.combinations(range(len(cd_surfaces)), 2):
         name = f"corridor_{i}_{j}"
         corridors[name] = _compute_corridor(
-            cd_surfaces[i], cd_surfaces[j], threshold, relative
+            cd_surfaces[i], cd_surfaces[j], threshold, relative, geo_source
         )
 
     return xr.Dataset(corridors)

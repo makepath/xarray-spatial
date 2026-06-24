@@ -25,8 +25,8 @@ import numba as nb
 from numba import cuda, jit
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs,
-                             _validate_raster, cuda_args, not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             cuda_args)
 
 
 def _make_perm_table(seed):
@@ -124,8 +124,13 @@ def _perlin_dask_numpy(data: da.Array,
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
-    # persist so min/ptp don't recompute the noise from scratch
-    (data,) = dask.persist(data)
+    # min and ptp go out in one dask.compute call, which shares the noise
+    # subgraph between them, so each chunk is computed once and freed after
+    # both reductions read it. Persisting the whole array first would instead
+    # hold every chunk resident at once and OOM at scale. The returned lazy
+    # array recomputes the noise when the caller materializes it; that extra
+    # pass is intentional -- the noise is point-wise and deterministic, so
+    # recompute is exact and cheap relative to keeping the array resident.
     min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
     data = (data - min_val) / ptp_val
     return data
@@ -275,8 +280,13 @@ def _perlin_dask_cupy(data: da.Array,
                          meta=cupy.array((), dtype=cupy.float32),
                          **_dask_task_name_kwargs('xrspatial.perlin'))
 
-    # persist so min/max don't recompute the noise from scratch
-    (data,) = dask.persist(data)
+    # min and max go out in one dask.compute call, which shares the noise
+    # subgraph between them, so each chunk is computed once and freed after
+    # both reductions read it. Persisting the whole array first would instead
+    # hold every chunk resident at once and OOM at scale. The returned lazy
+    # array recomputes the noise when the caller materializes it; that extra
+    # pass is intentional -- the noise is point-wise and deterministic, so
+    # recompute is exact and cheap relative to keeping the array resident.
     min_val, max_val = dask.compute(da.min(data), da.max(data))
     data = (data - min_val) / (max_val - min_val)
     return data
@@ -294,15 +304,27 @@ def perlin(agg: xr.DataArray,
     agg : xr.DataArray
         2D array of size width x height, will be used to determine
         height/ width and which platform to use for calculation.
+        Must have a floating-point dtype (float32 or float64); integer
+        input is rejected (see Raises).
     freq : tuple, default=(1,1)
         (x, y) frequency multipliers.
     seed : int, default=5
         Seed for random number generator.
+    name : str, default='perlin'
+        Name assigned to the output DataArray.
 
     Returns
     -------
     perlin_agg : xarray.DataArray
         2D array of perlin noise values.
+
+    Raises
+    ------
+    ValueError
+        If `agg` does not have a floating-point dtype. The noise is
+        written into `agg` in place and then normalized; an integer
+        buffer would truncate the float values to zero and corrupt the
+        result, so non-float input is rejected up front.
 
     References
     ----------

@@ -17,6 +17,9 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.utils import ngjit, has_cuda_and_cupy, has_dask_array
+from xrspatial.interpolate._vector import (
+    is_geodataframe, points_from_geodataframe,
+)
 
 try:
     import cupy
@@ -493,7 +496,7 @@ def _split_sizes(total, chunk):
 
 def kde(
     x: Union[np.ndarray, list],
-    y: Union[np.ndarray, list],
+    y: Optional[Union[np.ndarray, list]] = None,
     *,
     weights: Optional[Union[np.ndarray, list]] = None,
     bandwidth: Union[float, str] = 'silverman',
@@ -504,6 +507,7 @@ def kde(
     width: int = 256,
     height: int = 256,
     name: str = 'kde',
+    column: Optional[str] = None,
 ) -> xr.DataArray:
     """Compute 2-D kernel density estimation from point data.
 
@@ -513,9 +517,14 @@ def kde(
     Parameters
     ----------
     x, y : array-like
-        1-D arrays of point coordinates.
+        1-D arrays of point coordinates.  Alternatively, pass a GeoDataFrame
+        of Point geometries as the first argument and leave *y* unset.
     weights : array-like, optional
         Per-point weights.  Defaults to uniform weights of 1.
+    column : str, optional
+        When the first argument is a GeoDataFrame, the column used as
+        per-point weights.  Omit for a pure (uniform-weight) point density.
+        Mutually exclusive with *weights*.
     bandwidth : float or ``'silverman'``
         Kernel bandwidth in the same units as *x*/*y*.
         ``'silverman'`` (default) uses Silverman's rule of thumb.
@@ -539,6 +548,31 @@ def kde(
     xr.DataArray
         2-D density surface.
     """
+    # -- Resolve GeoDataFrame input ----------------------------------------
+    if is_geodataframe(x):
+        if y is not None:
+            raise ValueError(
+                "kde(): when the first argument is a GeoDataFrame, pass "
+                "weights via 'column' or 'weights' as keywords, not y"
+            )
+        if weights is not None and column is not None:
+            raise ValueError(
+                "kde(): pass either 'weights' or 'column', not both"
+            )
+        x, y, col_weights, _crs = points_from_geodataframe(
+            x, column=column, value_required=False, func_name='kde'
+        )
+        if col_weights is not None:
+            weights = col_weights
+    else:
+        if column is not None:
+            raise ValueError(
+                "kde(): 'column' is only valid when the first argument is a "
+                "GeoDataFrame"
+            )
+        if y is None:
+            raise ValueError("kde(): y is required when x is not a GeoDataFrame")
+
     # -- Validate and coerce inputs ----------------------------------------
     x_arr = np.asarray(x, dtype=np.float64).ravel()
     y_arr = np.asarray(y, dtype=np.float64).ravel()
