@@ -1127,7 +1127,7 @@ def open_geotiff(source: str | BinaryIO, *,
         if missing_sources_passed:
             vrt_kwargs['missing_sources'] = missing_sources
         return _attach_category_attrs(_read_vrt(
-            source, dtype=dtype, window=window, band=band,
+                         source, dtype=dtype, window=window, band=band,
                          name=default_name, chunks=chunks, gpu=gpu,
                          max_pixels=max_pixels,
                          allow_rotated=allow_rotated,
