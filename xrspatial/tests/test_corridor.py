@@ -376,6 +376,43 @@ def test_single_source_in_list_raises():
         least_cost_corridor(friction, sources=[src])
 
 
+def test_precomputed_mismatched_shape_raises():
+    """Precomputed surfaces of differing shape raise instead of aligning.
+
+    Without the shape check, xarray silently aligns the two surfaces on the
+    intersection of their coordinates and returns a truncated corridor with
+    wrong values (e.g. 4x4 + 3x3 -> an all-zero 3x3 result).
+    """
+    friction = _make_raster(np.ones((4, 4)))
+    cd_a = _make_raster(np.ones((4, 4)))
+    cd_b = _make_raster(np.ones((3, 3)))
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
+
+
+def test_precomputed_mismatched_shape_pairwise_raises():
+    """Pairwise precomputed surfaces of differing shape raise."""
+    friction = _make_raster(np.ones((4, 4)))
+    sources = [
+        _make_raster(np.ones((4, 4))),
+        _make_raster(np.ones((3, 3))),
+    ]
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(
+            friction, sources=sources, precomputed=True, pairwise=True
+        )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_precomputed_mismatched_shape_dask_raises():
+    """The shape check fires on dask surfaces without triggering a compute."""
+    friction = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_a = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_b = _make_raster(np.ones((3, 3)), backend="dask+numpy", chunks=(3, 3))
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
+
+
 # -----------------------------------------------------------------------
 # Metadata propagation (issue #3446)
 # -----------------------------------------------------------------------
