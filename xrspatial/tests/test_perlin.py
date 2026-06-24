@@ -151,6 +151,49 @@ def test_perlin_rejects_integer_dtype(dtype):
         perlin(raster)
 
 
+def test_perlin_preserves_coords():
+    # Regression: perlin() preserved attrs but dropped the input's x/y
+    # coords, yielding a DataArray that kept its `crs` attr with no
+    # coordinates.  The output must carry the input coords through.
+    H, W = 10, 12
+    data = np.zeros((H, W), dtype=np.float32)
+    raster = xr.DataArray(
+        data,
+        dims=['y', 'x'],
+        coords={'y': np.linspace(10.0, 20.0, H),
+                'x': np.linspace(100.0, 200.0, W)},
+        attrs={'crs': 'EPSG:4326', 'res': (1.0, 1.0)},
+    )
+    result = perlin(raster)
+    general_output_checks(raster, result)
+    assert list(result.coords) == ['y', 'x']
+    np.testing.assert_array_equal(result['y'].data, raster['y'].data)
+    np.testing.assert_array_equal(result['x'].data, raster['x'].data)
+    assert result.attrs == raster.attrs
+
+
+@dask_array_available
+def test_perlin_preserves_coords_dask():
+    # The result wrapping is a single shared path, but the coord-bearing
+    # assertion above only exercises numpy.  Lock in the dask backend too.
+    import dask.array as da
+    H, W = 10, 12
+    data = np.zeros((H, W), dtype=np.float32)
+    raster = xr.DataArray(
+        da.from_array(data, chunks=(5, 6)),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(10.0, 20.0, H),
+                'x': np.linspace(100.0, 200.0, W)},
+        attrs={'crs': 'EPSG:4326', 'res': (1.0, 1.0)},
+    )
+    result = perlin(raster)
+    general_output_checks(raster, result)
+    assert list(result.coords) == ['y', 'x']
+    np.testing.assert_array_equal(result['y'].data, raster['y'].data)
+    np.testing.assert_array_equal(result['x'].data, raster['x'].data)
+    assert result.attrs == raster.attrs
+
+
 def test_perlin_float64_input():
     # float64 should still work (not just float32).
     data = np.zeros((20, 20), dtype=np.float64)
@@ -161,6 +204,43 @@ def test_perlin_float64_input():
     # Normalized to [0, 1]
     assert result.data.min() >= 0.0
     assert result.data.max() <= 1.0
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_dask_cpu_preserves_dtype(dtype):
+    # Regression: the dask backends used to hardcode float32, silently
+    # downcasting float64 input while numpy/cupy preserved it.
+    import dask.array as da
+    data = da.from_array(np.zeros((20, 20), dtype=dtype), chunks=(10, 10))
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
+    computed = result.data.compute()
+    assert np.isfinite(computed).all()
+    assert computed.min() >= 0.0
+    assert computed.max() <= 1.0
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_gpu_preserves_dtype(dtype):
+    import cupy
+    data = cupy.zeros((20, 20), dtype=dtype)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
+
+
+@cuda_and_cupy_available
+@dask_array_available
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_perlin_dask_gpu_preserves_dtype(dtype):
+    import cupy
+    import dask.array as da
+    data = da.from_array(cupy.zeros((20, 20), dtype=dtype), chunks=(10, 10))
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == dtype
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +330,9 @@ def test_perlin_drops_input_coords():
     out = perlin(src)
     assert 'lat' not in out.coords
     assert 'lon' not in out.coords
+
+
+def test_perlin_docstring_documents_name():
+    # Regression for issue #3465: the docstring must document the `name`
+    # parameter that exists in the signature.
+    assert 'name : str' in perlin.__doc__

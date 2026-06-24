@@ -376,6 +376,221 @@ def test_single_source_in_list_raises():
         least_cost_corridor(friction, sources=[src])
 
 
+def test_precomputed_mismatched_shape_raises():
+    """Precomputed surfaces of differing shape raise instead of aligning.
+
+    Without the shape check, xarray silently aligns the two surfaces on the
+    intersection of their coordinates and returns a truncated corridor with
+    wrong values (e.g. 4x4 + 3x3 -> an all-zero 3x3 result).
+    """
+    friction = _make_raster(np.ones((4, 4)))
+    cd_a = _make_raster(np.ones((4, 4)))
+    cd_b = _make_raster(np.ones((3, 3)))
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
+
+
+def test_precomputed_mismatched_shape_pairwise_raises():
+    """Pairwise precomputed surfaces of differing shape raise."""
+    friction = _make_raster(np.ones((4, 4)))
+    sources = [
+        _make_raster(np.ones((4, 4))),
+        _make_raster(np.ones((3, 3))),
+    ]
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(
+            friction, sources=sources, precomputed=True, pairwise=True
+        )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_precomputed_mismatched_shape_dask_raises():
+    """The shape check fires on dask surfaces without triggering a compute."""
+    friction = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_a = _make_raster(np.ones((4, 4)), backend="dask+numpy", chunks=(4, 4))
+    cd_b = _make_raster(np.ones((3, 3)), backend="dask+numpy", chunks=(3, 3))
+    with pytest.raises(ValueError, match="does not match"):
+        least_cost_corridor(friction, cd_a, cd_b, precomputed=True)
+
+
+# -----------------------------------------------------------------------
+# Degenerate strip shapes (Nx1 / 1xN)
+# -----------------------------------------------------------------------
+
+
+def test_1xn_strip():
+    """1xN single-row raster with sources at each end."""
+    n = 5
+    friction = _make_raster(np.ones((1, n)))
+
+    src_a = np.zeros((1, n))
+    src_a[0, 0] = 1.0
+    src_b = np.zeros((1, n))
+    src_b[0, n - 1] = 1.0
+
+    result = least_cost_corridor(friction, _make_raster(src_a),
+                                 _make_raster(src_b))
+    out = _compute(result)
+
+    assert out.shape == (1, n)
+    # Every cell lies on the only path, so all are optimal (cost 0).
+    np.testing.assert_allclose(out[0], 0.0, atol=1e-5)
+
+
+def test_nx1_strip():
+    """Nx1 single-column raster with sources at each end."""
+    n = 5
+    friction = _make_raster(np.ones((n, 1)))
+
+    src_a = np.zeros((n, 1))
+    src_a[0, 0] = 1.0
+    src_b = np.zeros((n, 1))
+    src_b[n - 1, 0] = 1.0
+
+    result = least_cost_corridor(friction, _make_raster(src_a),
+                                 _make_raster(src_b))
+    out = _compute(result)
+
+    assert out.shape == (n, 1)
+    np.testing.assert_allclose(out[:, 0], 0.0, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Cross-backend equivalence
+# -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", ["dask+numpy", "cupy", "dask+cupy"])
+def test_numpy_matches_other_backends(backend):
+    """Each non-numpy backend produces the same corridor as numpy."""
+    if "cupy" in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    n = 7
+    friction_data = np.ones((n, n))
+    src_a = np.zeros((n, n))
+    src_a[3, 0] = 1.0
+    src_b = np.zeros((n, n))
+    src_b[3, 6] = 1.0
+
+    numpy_out = _compute(
+        least_cost_corridor(
+            _make_raster(friction_data),
+            _make_raster(src_a),
+            _make_raster(src_b),
+        )
+    )
+
+    other_out = _compute(
+        least_cost_corridor(
+            _make_raster(friction_data, backend=backend, chunks=(7, 7)),
+            _make_raster(src_a, backend=backend, chunks=(7, 7)),
+            _make_raster(src_b, backend=backend, chunks=(7, 7)),
+        )
+    )
+
+    np.testing.assert_allclose(other_out, numpy_out, equal_nan=True, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Forwarded cost_distance parameters (connectivity, max_cost)
+# -----------------------------------------------------------------------
+
+
+def test_connectivity_4():
+    """connectivity=4 is forwarded to cost_distance and yields a corridor."""
+    n = 5
+    friction = _make_raster(np.ones((n, n)))
+
+    src_a = np.zeros((n, n))
+    src_a[2, 0] = 1.0
+    src_b = np.zeros((n, n))
+    src_b[2, 4] = 1.0
+
+    result = least_cost_corridor(
+        friction, _make_raster(src_a), _make_raster(src_b), connectivity=4
+    )
+    out = _compute(result)
+
+    assert out.shape == (n, n)
+    # Optimal corridor minimum is 0 after normalization.
+    assert np.nanmin(out) == pytest.approx(0.0, abs=1e-5)
+    # Row 2 is the straight cardinal-only path; all cells optimal.
+    for col in range(n):
+        assert out[2, col] == pytest.approx(0.0, abs=1e-5)
+
+
+def test_max_cost_forwarded():
+    """A finite max_cost reaches cost_distance; optimal path still resolves."""
+    n = 7
+    friction = _make_raster(np.ones((n, n)))
+
+    src_a = np.zeros((n, n))
+    src_a[3, 0] = 1.0
+    src_b = np.zeros((n, n))
+    src_b[3, 6] = 1.0
+
+    result = least_cost_corridor(
+        friction, _make_raster(src_a), _make_raster(src_b), max_cost=20.0
+    )
+    out = _compute(result)
+
+    assert out.shape == (n, n)
+    # The straight middle row stays within budget and normalizes to 0.
+    for col in range(n):
+        assert out[3, col] == pytest.approx(0.0, abs=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Metadata / coordinate / dim-name preservation
+# -----------------------------------------------------------------------
+
+
+def test_attrs_coords_preserved():
+    """Output preserves input attrs, dims, and coordinates."""
+    n = 5
+    friction = _make_raster(np.ones((n, n)))
+
+    src_a = np.zeros((n, n))
+    src_a[2, 0] = 1.0
+    src_b = np.zeros((n, n))
+    src_b[2, 4] = 1.0
+    sa = _make_raster(src_a)
+    sb = _make_raster(src_b)
+
+    result = least_cost_corridor(friction, sa, sb)
+
+    assert result.dims == friction.dims
+    assert result.attrs == friction.attrs
+    np.testing.assert_array_equal(result["y"].data, friction["y"].data)
+    np.testing.assert_array_equal(result["x"].data, friction["x"].data)
+
+
+def test_custom_dim_names_preserved():
+    """Non-default lat/lon dim names propagate through to the output."""
+    n = 5
+    friction = xr.DataArray(
+        np.ones((n, n), dtype=np.float64),
+        dims=["lat", "lon"],
+        attrs={"res": (1.0, 1.0)},
+    )
+    friction["lat"] = np.arange(n, dtype=np.float64)
+    friction["lon"] = np.arange(n, dtype=np.float64)
+
+    def _src(r, c):
+        s = friction.copy(data=np.zeros((n, n), dtype=np.float64))
+        s.data[r, c] = 1.0
+        return s
+
+    result = least_cost_corridor(
+        friction, _src(2, 0), _src(2, 4), x="lon", y="lat"
+    )
+
+    assert result.dims == ("lat", "lon")
+    np.testing.assert_array_equal(result["lat"].data, friction["lat"].data)
+    np.testing.assert_array_equal(result["lon"].data, friction["lon"].data)
+
+
 # -----------------------------------------------------------------------
 # Metadata propagation (issue #3446)
 # -----------------------------------------------------------------------
