@@ -445,9 +445,9 @@ For a broader catalog of spectral indices and sensor-specific band combinations,
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points to a raster grid | Standard (IDW) | ✅ | 🔼 | 🔼 | 🔼 |
-| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | Standard (ordinary kriging) | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing | Standard (TPS) | 🔼 | 🔼 | 🔼 | 🔼 |
+| [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points (arrays or a GeoDataFrame) to a raster grid | Standard (IDW) | ✅ | 🔼 | 🔼 | 🔼 |
+| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian); accepts arrays or a GeoDataFrame | Standard (ordinary kriging) | 🔼 | 🔼 | 🔼 | 🔼 |
+| [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing; accepts arrays or a GeoDataFrame | Standard (TPS) | 🔼 | 🔼 | 🔼 | 🔼 |
 
 -----------
 
@@ -494,7 +494,7 @@ For a broader catalog of spectral indices and sensor-specific band combinations,
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
-| [KDE](xrspatial/kde.py) | Point-to-raster kernel density estimation (Gaussian, Epanechnikov, quartic) | Silverman 1986 | 🔼 | 🔼 | 🔼 | 🔼 |
+| [KDE](xrspatial/kde.py) | Point-to-raster kernel density estimation (Gaussian, Epanechnikov, quartic); accepts arrays or a GeoDataFrame | Silverman 1986 | 🔼 | 🔼 | 🔼 | 🔼 |
 | [Line Density](xrspatial/kde.py) | Line-segment-to-raster density estimation | Standard | 🔼 |  |  |  |
 
 --------

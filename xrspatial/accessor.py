@@ -761,6 +761,59 @@ def _wrap_accessor_attr(accessor, name):
     return _AccessorTool(attr)
 
 
+def _check_point_crs_match(src, target):
+    """Raise if point CRS and caller CRS disagree.
+
+    Both arguments are already-normalized ``pyproj.CRS`` instances (or
+    ``None``).  A ``None`` on either side is a no-op, mirroring how
+    ``rasterize`` treats a missing CRS.
+    """
+    if src is None or target is None:
+        return
+    if not src.equals(target):
+        def _label(crs):
+            epsg = crs.to_epsg()
+            return f"EPSG:{epsg}" if epsg is not None else crs.name
+        raise ValueError(
+            f"CRS mismatch: points are in {_label(src)} but the caller is "
+            f"in {_label(target)}. Pass coregister=True to reproject the "
+            f"points into the caller CRS."
+        )
+
+
+def _interp_on_accessor(obj, func, points, rest, *, coregister, **kwargs):
+    """Run interpolation *func* against caller raster *obj* as the template.
+
+    *obj* supplies the output grid, chunks, CRS, and attrs (passed as
+    ``template``).  *points* is the first argument to *func*: a GeoDataFrame,
+    or raw ``x`` for the legacy array form, in which case *rest* carries the
+    remaining positional coordinates (``y``, ``z``).  When *points* is a
+    GeoDataFrame and ``coregister=True``, its geometries are reprojected into
+    the caller's CRS before interpolation; otherwise a genuine CRS mismatch
+    raises (matching ``rasterize``'s default).  ``coregister`` needs a CRS on
+    both sides and only applies to GeoDataFrame input.
+    """
+    from xrspatial.interpolate._vector import is_geodataframe
+
+    if is_geodataframe(points):
+        target = _to_pyproj_crs(obj.attrs.get('crs'))
+        src = _to_pyproj_crs(points.crs)
+        if coregister:
+            if src is None or target is None:
+                raise ValueError(
+                    "coregister=True needs a CRS on both the points "
+                    "(GeoDataFrame.crs) and the caller (attrs['crs'])"
+                )
+            points = points.to_crs(target)
+        else:
+            _check_point_crs_match(src, target)
+    elif coregister:
+        raise ValueError(
+            "coregister=True requires a GeoDataFrame input carrying a CRS"
+        )
+    return func(points, *rest, template=obj, **kwargs)
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
@@ -1189,17 +1242,54 @@ class XrsSpatialDataArrayAccessor:
 
     # ---- Interpolation ----
 
-    def idw(self, x, y, z, **kwargs):
+    def kde(self, x, y=None, *, coregister=False, **kwargs):
+        """Kernel density of points onto this DataArray's grid.
+
+        Pass a GeoDataFrame of Point geometries as the first argument
+        (``column`` selects per-point weights), or raw ``x``/``y`` arrays.
+        With ``coregister=True`` a GeoDataFrame's points are reprojected
+        from their CRS into this array's CRS first.  See
+        :func:`xrspatial.kde`.
+        """
+        from .kde import kde
+        return _interp_on_accessor(self._obj, kde, x, (y,),
+                                   coregister=coregister, **kwargs)
+
+    def idw(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Inverse-distance-weighted interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.idw`.
+        """
         from .interpolate import idw
-        return idw(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, idw, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
-    def kriging(self, x, y, z, **kwargs):
+    def kriging(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Ordinary-kriging interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.kriging`.
+        """
         from .interpolate import kriging
-        return kriging(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, kriging, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
-    def spline(self, x, y, z, **kwargs):
+    def spline(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Thin-plate-spline interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.spline`.
+        """
         from .interpolate import spline
-        return spline(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, spline, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
     # ---- Preview ----
 
@@ -1857,6 +1947,56 @@ class XrsSpatialDatasetAccessor:
             "Dataset has no 2D variable with 'y' and 'x' dimensions "
             "to use as rasterize template"
         )
+
+    # ---- Interpolation ----
+
+    def _interp_template(self):
+        """First 2-D y/x variable to use as an interpolation template."""
+        ds = self._obj
+        for var in ds.data_vars:
+            da = ds[var]
+            if da.ndim == 2 and 'y' in da.dims and 'x' in da.dims:
+                return da
+        raise ValueError(
+            "Dataset has no 2D variable with 'y' and 'x' dimensions "
+            "to use as an interpolation template"
+        )
+
+    def kde(self, x, y=None, *, coregister=False, **kwargs):
+        """Kernel density of points onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.kde`.
+        """
+        from .kde import kde
+        return _interp_on_accessor(self._interp_template(), kde, x, (y,),
+                                   coregister=coregister, **kwargs)
+
+    def idw(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Inverse-distance-weighted interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.idw`.
+        """
+        from .interpolate import idw
+        return _interp_on_accessor(self._interp_template(), idw, x, (y, z),
+                                   coregister=coregister, **kwargs)
+
+    def spline(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Thin-plate-spline interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.spline`.
+        """
+        from .interpolate import spline
+        return _interp_on_accessor(self._interp_template(), spline, x, (y, z),
+                                   coregister=coregister, **kwargs)
+
+    def kriging(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Ordinary-kriging interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.kriging`.
+        """
+        from .interpolate import kriging
+        return _interp_on_accessor(self._interp_template(), kriging, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
     # ---- GeoTIFF I/O ----
 
