@@ -33,7 +33,12 @@ def _resolve_value_column(gdf, *, column, value_required, func_name):
             raise ValueError(
                 f"{func_name}(): column {column!r} is not in the GeoDataFrame"
             )
-        return np.asarray(gdf[column].values, dtype=np.float64)
+        try:
+            return np.asarray(gdf[column].values, dtype=np.float64)
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"{func_name}(): column {column!r} is not numeric"
+            ) from e
 
     if not value_required:
         return None

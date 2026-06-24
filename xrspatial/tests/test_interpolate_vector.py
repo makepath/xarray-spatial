@@ -8,6 +8,7 @@ import xarray as xr
 
 import xrspatial  # noqa: F401  (registers the .xrs accessor)
 from xrspatial import idw, kde, kriging, spline
+from xrspatial.tests.general_checks import cuda_and_cupy_available
 
 gpd = pytest.importorskip("geopandas")
 shapely_geometry = pytest.importorskip("shapely.geometry")
@@ -141,6 +142,20 @@ def test_accessor_array_form_backward_compatible():
                                equal_nan=True)
 
 
+@cuda_and_cupy_available
+def test_geodataframe_parity_cupy():
+    # the GeoDataFrame branch runs before backend dispatch, so a cupy
+    # template should match numpy. One smoke test documents that.
+    import cupy
+    t_np = _template("numpy")
+    t_cp = t_np.copy()
+    t_cp.data = cupy.asarray(t_cp.data)
+    out_np = idw(_gdf(), template=t_np, column="z")
+    out_cp = idw(_gdf(), template=t_cp, column="z")
+    np.testing.assert_allclose(_np(out_np), out_cp.data.get(),
+                               equal_nan=True)
+
+
 def test_accessor_dataset():
     t = _template()
     ds = t.to_dataset(name="band")
@@ -237,6 +252,16 @@ def test_unknown_column_raises():
     t = _template()
     with pytest.raises(ValueError, match="not in the GeoDataFrame"):
         idw(_gdf(), template=t, column="nope")
+
+
+def test_non_numeric_column_raises():
+    t = _template()
+    gdf = gpd.GeoDataFrame(
+        {"label": ["a", "b", "c", "d", "e"]},
+        geometry=[Point(a, b) for a, b in zip(PX, PY)], crs="EPSG:3857",
+    )
+    with pytest.raises(ValueError, match="not numeric"):
+        idw(gdf, template=t, column="label")
 
 
 def test_positional_yz_with_geodataframe_raises():
