@@ -910,6 +910,17 @@ def open_geotiff(source: str | BinaryIO, *,
 
     source = _coerce_path(source)
 
+    def _attach_category_attrs(da):
+        # Categorical labels/colors live in a PAM ``<file>.aux.xml`` sidecar
+        # (GDAL ignores them embedded in the TIFF). Merge them back onto the
+        # result so a rasterize -> to_geotiff -> open_geotiff round-trip
+        # preserves ``category_names`` / ``category_colors``. Local string
+        # sources only; a missing/malformed sidecar yields {} and is a no-op.
+        if isinstance(source, str):
+            from ._pam import read_pam_sidecar
+            da.attrs.update(read_pam_sidecar(source))
+        return da
+
     # Resolve the rioxarray-compatible renames. ``masked`` / ``default_name``
     # are the canonical names; ``mask_nodata`` / ``name`` are deprecated
     # aliases kept for back-compat. Mirrors the sentinel-based deprecation in
@@ -1115,7 +1126,8 @@ def open_geotiff(source: str | BinaryIO, *,
         vrt_kwargs = {}
         if missing_sources_passed:
             vrt_kwargs['missing_sources'] = missing_sources
-        return _read_vrt(source, dtype=dtype, window=window, band=band,
+        return _attach_category_attrs(_read_vrt(
+                         source, dtype=dtype, window=window, band=band,
                          name=default_name, chunks=chunks, gpu=gpu,
                          max_pixels=max_pixels,
                          allow_rotated=allow_rotated,
@@ -1126,7 +1138,7 @@ def open_geotiff(source: str | BinaryIO, *,
                          allow_internal_only_jpeg=allow_internal_only_jpeg,
                          band_nodata=band_nodata,
                          mask_nodata=masked,
-                         **vrt_kwargs)
+                         **vrt_kwargs))
 
     # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
     # fired inside ``_validate_dispatch_kwargs`` above; the non-VRT branches
@@ -1138,7 +1150,8 @@ def open_geotiff(source: str | BinaryIO, *,
         gpu_kwargs = {}
         if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL:
             gpu_kwargs['on_gpu_failure'] = on_gpu_failure
-        return _read_geotiff_gpu(source, dtype=dtype,
+        return _attach_category_attrs(_read_geotiff_gpu(
+                                 source, dtype=dtype,
                                  overview_level=overview_level,
                                  window=window, band=band,
                                  name=default_name, chunks=chunks,
@@ -1153,11 +1166,12 @@ def open_geotiff(source: str | BinaryIO, *,
                                     allow_internal_only_jpeg),
                                  mask_nodata=masked,
                                  mask_and_scale=unpack,
-                                 **gpu_kwargs)
+                                 **gpu_kwargs))
 
     # Dask path (CPU)
     if chunks is not None:
-        return _read_geotiff_dask(source, dtype=dtype, chunks=chunks,
+        return _attach_category_attrs(_read_geotiff_dask(
+                                  source, dtype=dtype, chunks=chunks,
                                   overview_level=overview_level,
                                   window=window, band=band,
                                   max_pixels=max_pixels, name=default_name,
@@ -1171,7 +1185,7 @@ def open_geotiff(source: str | BinaryIO, *,
                                      allow_internal_only_jpeg),
                                   mask_nodata=masked,
                                   mask_and_scale=unpack,
-                                  parse_coordinates=parse_coordinates)
+                                  parse_coordinates=parse_coordinates))
 
     kwargs = {}
     if max_pixels is not None:
@@ -1212,7 +1226,7 @@ def open_geotiff(source: str | BinaryIO, *,
         getattr(geo_info, '_mask_nodata', nodata)
         if nodata is not None else None
     )
-    return _finalize_eager_read(
+    return _attach_category_attrs(_finalize_eager_read(
         arr,
         geo_info=geo_info,
         nodata=nodata,
@@ -1226,7 +1240,7 @@ def open_geotiff(source: str | BinaryIO, *,
         mask_and_scale=unpack,
         parse_coordinates=parse_coordinates,
         band=band,
-    )
+    ))
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):

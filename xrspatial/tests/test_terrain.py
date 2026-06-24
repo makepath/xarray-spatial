@@ -366,3 +366,107 @@ class TestTerrainMemoryAndValidation:
         from xrspatial.terrain import generate_terrain
         with pytest.raises(ValueError, match="persistence"):
             generate_terrain(self._template(), persistence=per)
+
+
+# =====================================================================
+# Issue #3474: preserve the caller's coords / chunks / res / crs
+# =====================================================================
+
+def _georef_arr(H=40, W=30, res=30, backend='numpy'):
+    """A georeferenced template: real y/x coords plus crs / res / units."""
+    ys = np.arange(H) * res
+    xs = np.arange(W) * res
+    data = np.zeros((H, W), dtype=np.float32)
+    raster = xr.DataArray(
+        data, coords={'y': ys, 'x': xs}, dims=('y', 'x'),
+        name='study_area',
+        attrs={'res': (res, res), 'crs': 'EPSG:5070', 'units': 'meters'},
+    )
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(13, 17))
+    return raster
+
+
+def test_generate_terrain_preserves_caller_coords_and_attrs():
+    src = _georef_arr()
+    terrain = generate_terrain(src)
+
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['res'] == (30, 30)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+    assert terrain.attrs['units'] == 'meters'
+
+
+def test_generate_terrain_accessor_preserves_georeference():
+    src = _georef_arr()
+    terrain = src.xrs.generate_terrain()
+
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['res'] == (30, 30)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+
+
+def test_generate_terrain_bare_template_keeps_synthetic_grid():
+    """No coords / attrs on the input -> old (x_range, y_range) behaviour."""
+    bare = create_test_arr()  # 50x50, dims only, no coords / attrs
+    terrain = generate_terrain(bare, x_range=(0, 500), y_range=(0, 500))
+
+    assert 'crs' not in terrain.attrs
+    dx = 500 / 50
+    np.testing.assert_allclose(terrain.x.data[0], dx / 2)
+    np.testing.assert_allclose(terrain.attrs['res'], (dx, dx))
+
+
+def test_generate_terrain_coords_without_res_attr():
+    """Coords but no res attr -> res derived from coord spacing."""
+    ys = np.arange(40) * 25.0
+    xs = np.arange(30) * 25.0
+    src = xr.DataArray(np.zeros((40, 30), dtype=np.float32),
+                       coords={'y': ys, 'x': xs}, dims=('y', 'x'))
+    terrain = generate_terrain(src)
+
+    np.testing.assert_array_equal(terrain.x.data, xs)
+    np.testing.assert_allclose(terrain.attrs['res'], (25.0, 25.0))
+
+
+@dask_array_available
+def test_generate_terrain_dask_preserves_chunks_coords_attrs():
+    src = _georef_arr(backend='dask')
+    terrain = generate_terrain(src)
+
+    assert isinstance(terrain.data, da.Array)
+    assert terrain.data.chunks == src.data.chunks
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+    assert terrain.attrs['res'] == (30, 30)
+
+
+@cuda_and_cupy_available
+def test_generate_terrain_cupy_preserves_coords_attrs():
+    src = _georef_arr(backend='cupy')
+    terrain = generate_terrain(src)
+
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+    assert terrain.attrs['res'] == (30, 30)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_generate_terrain_dask_cupy_preserves_coords_attrs():
+    src = _georef_arr(backend='dask+cupy')
+    terrain = generate_terrain(src)
+
+    assert isinstance(terrain.data, da.Array)
+    assert terrain.data.chunks == src.data.chunks
+    np.testing.assert_array_equal(terrain.y.data, src.y.data)
+    np.testing.assert_array_equal(terrain.x.data, src.x.data)
+    assert terrain.attrs['crs'] == 'EPSG:5070'
+    assert terrain.attrs['res'] == (30, 30)

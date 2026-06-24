@@ -545,3 +545,158 @@ def test_hydro_accessor_delegation_resolves(method_name, elevation):
         pytest.fail(f'{method_name} delegation still broken: {exc}')
     except Exception:
         pass  # any non-import error proves the import path resolved
+
+
+# ---------------------------------------------------------------------------
+# 11. Rich accessor repr — discoverable tool listing by category (#3476)
+# ---------------------------------------------------------------------------
+
+from xrspatial.accessor import (  # noqa: E402
+    _accessor_categories,
+    _accessor_repr_html,
+    _accessor_repr_text,
+    _public_accessor_methods,
+)
+
+_ACCESSOR_CLASSES = [XrsSpatialDataArrayAccessor, XrsSpatialDatasetAccessor]
+
+
+@pytest.mark.parametrize('cls', _ACCESSOR_CLASSES)
+def test_categories_cover_every_public_method(cls):
+    """Every public method falls under exactly one category banner.
+
+    Guards against a method added without a ``# ---- Category ----`` banner
+    above it, which would silently drop it from the repr.
+    """
+    categorized = [m for _, methods in _accessor_categories(cls) for m in methods]
+    assert sorted(categorized) == sorted(_public_accessor_methods(cls))
+    assert len(categorized) == len(set(categorized)), 'method listed twice'
+
+
+@pytest.mark.parametrize('cls', _ACCESSOR_CLASSES)
+def test_repr_text_lists_categories_and_methods(cls):
+    text = _accessor_repr_text(cls)
+    assert cls.__name__ in text
+    assert '.xrs.<name>(...)' in text
+    # A representative category banner and a method beneath it.
+    assert 'Surface:' in text
+    assert 'slope' in text
+
+
+def test_da_repr_distinct_from_ds_repr():
+    da_text = _accessor_repr_text(XrsSpatialDataArrayAccessor)
+    ds_text = _accessor_repr_text(XrsSpatialDatasetAccessor)
+    # Only the DataArray accessor exposes viewshed / interpolation tools.
+    assert 'viewshed' in da_text
+    assert 'viewshed' not in ds_text
+
+
+def test_repr_on_instance(elevation):
+    """repr(da.xrs) renders the categorized listing, not the object id."""
+    text = repr(elevation.xrs)
+    assert 'object at 0x' not in text
+    assert 'ndvi' in text
+
+
+@pytest.mark.parametrize('cls', _ACCESSOR_CLASSES)
+def test_repr_html_renders_methods(cls):
+    out = _accessor_repr_html(cls)
+    assert '<table>' in out
+    assert '<code>slope</code>' in out
+    assert 'xarray-spatial' in out
+
+
+def test_repr_html_escapes_method_names(monkeypatch):
+    """HTML-special characters in a method name are escaped, not injected."""
+    monkeypatch.setattr(
+        'xrspatial.accessor._accessor_categories',
+        lambda cls: (('Danger', ('<script>',)),),
+    )
+    out = _accessor_repr_html(XrsSpatialDataArrayAccessor)
+    assert '<script>' not in out
+    assert '&lt;script&gt;' in out
+
+
+def test_categories_fallback_when_source_unavailable():
+    """A class with no retrievable source yields a flat fallback listing."""
+    Dummy = type('DummyAccessor', (), {'foo': lambda self: None})
+    assert _accessor_categories(Dummy) == ()
+    # Both reprs fall back to the same single "Available tools" group.
+    text = _accessor_repr_text(Dummy)
+    assert 'Available tools:' in text
+    assert 'foo' in text
+    html_out = _accessor_repr_html(Dummy)
+    assert 'Available tools' in html_out
+    assert '<code>foo</code>' in html_out
+
+
+# ---------------------------------------------------------------------------
+# 12. Per-tool repr — da.xrs.slope shows slope's own info, not the catalog (#3478)
+# ---------------------------------------------------------------------------
+
+from xrspatial.accessor import _AccessorTool  # noqa: E402
+
+
+def test_tool_repr_is_scoped_to_the_tool(elevation):
+    """repr(da.xrs.slope) shows slope's signature + docstring, not the catalog."""
+    from xrspatial import slope
+
+    text = repr(elevation.xrs.slope)
+    assert text.startswith('.xrs.slope(')
+    # The catalog repr's header and other categories must not leak in.
+    assert 'call as: .xrs.<name>(...)' not in text
+    assert 'Surface:' not in text
+    assert 'Hydrology:' not in text
+    # The slope docstring is surfaced instead.
+    assert inspect.getdoc(slope) in text
+
+
+def test_tool_repr_distinct_per_tool(elevation):
+    """Different tools render different reprs (no shared catalog block)."""
+    assert repr(elevation.xrs.slope) != repr(elevation.xrs.aspect)
+    assert repr(elevation.xrs.aspect).startswith('.xrs.aspect(')
+
+
+def test_tool_access_returns_callable_proxy(elevation):
+    """The wrapped tool is an _AccessorTool that still forwards calls."""
+    from xrspatial.slope import slope
+
+    tool = elevation.xrs.slope
+    assert isinstance(tool, _AccessorTool)
+    xr.testing.assert_identical(tool(), slope(elevation))
+
+
+def test_tool_proxy_preserves_help_metadata(elevation):
+    """help()/inspect see the delegated docstring and the method name."""
+    from xrspatial import slope
+
+    tool = elevation.xrs.slope
+    assert inspect.getdoc(tool) == inspect.getdoc(slope)
+    assert tool.__name__ == 'slope'
+
+
+def test_tool_repr_html_scoped_to_tool(elevation):
+    """The notebook repr of a single tool is the tool's own block, not a table."""
+    out = elevation.xrs.slope._repr_html_()
+    assert '<pre' in out
+    assert '.xrs.slope(' in out
+    # No catalog table / other categories.
+    assert '<table>' not in out
+    assert 'Hydrology' not in out
+
+
+def test_tool_repr_on_dataset_accessor(elevation):
+    """The Dataset accessor scopes its per-tool repr the same way."""
+    ds = xr.Dataset({'elev': elevation})
+    text = repr(ds.xrs.slope)
+    assert text.startswith('.xrs.slope(')
+    assert 'Surface:' not in text
+
+
+def test_catalog_repr_still_works_with_proxy(elevation):
+    """The accessor-level catalog repr is unchanged by the per-tool wrapping."""
+    text = repr(elevation.xrs)
+    assert 'Surface:' in text
+    assert 'slope' in text
+    # _repr_html_ on the accessor itself still renders the table.
+    assert '<table>' in elevation.xrs._repr_html_()

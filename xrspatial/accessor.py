@@ -11,6 +11,11 @@ directly via tab-completion::
     nir.xrs.ndvi(red)
 """
 
+import functools
+import html
+import inspect
+import re
+import textwrap
 import warnings
 
 import xarray as xr
@@ -579,12 +584,251 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
     return result
 
 
+# ---------------------------------------------------------------------------
+# Accessor repr: list the available ``.xrs`` operations grouped by category so
+# users can discover the toolset from a plain REPL or notebook, without relying
+# on tab-completion or an LSP (issue #3476).
+# ---------------------------------------------------------------------------
+
+# A category banner in the accessor source, e.g. ``    # ---- Hydrology ----``.
+_REPR_BANNER_RE = re.compile(r'^\s*#\s*----\s*(.+?)\s*----\s*$')
+# A method definition inside a class body (indented ``def name(``).
+_REPR_METHOD_RE = re.compile(r'^\s+def\s+([A-Za-z][A-Za-z0-9_]*)\s*\(')
+
+
+@functools.lru_cache(maxsize=None)
+def _accessor_categories(cls):
+    """Parse ``# ---- Category ----`` banners out of *cls* source.
+
+    Returns an ordered tuple of ``(category, (method_name, ...))`` pairs,
+    one per banner that has at least one public method beneath it. Returns
+    an empty tuple when the source is unavailable (e.g. a frozen build), so
+    callers fall back to a flat listing.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return ()
+    categories = []
+    current = None
+    for line in source.splitlines():
+        banner = _REPR_BANNER_RE.match(line)
+        if banner:
+            current = (banner.group(1), [])
+            categories.append(current)
+            continue
+        method = _REPR_METHOD_RE.match(line)
+        if method and current is not None and not method.group(1).startswith('_'):
+            current[1].append(method.group(1))
+    return tuple(
+        (name, tuple(methods)) for name, methods in categories if methods
+    )
+
+
+def _public_accessor_methods(cls):
+    """Sorted public method names defined directly on *cls*."""
+    return tuple(sorted(
+        name for name, member in vars(cls).items()
+        if callable(member) and not name.startswith('_')
+    ))
+
+
+def _accessor_kind(cls):
+    return 'Dataset' if cls.__name__.endswith('DatasetAccessor') else 'DataArray'
+
+
+# Single category used by both reprs when the source banners can't be parsed.
+_FALLBACK_CATEGORY = 'Available tools'
+
+
+def _categories_or_fallback(cls):
+    """Parsed categories, or one flat ``Available tools`` group as a fallback."""
+    categories = _accessor_categories(cls)
+    if categories:
+        return categories
+    return ((_FALLBACK_CATEGORY, _public_accessor_methods(cls)),)
+
+
+def _accessor_repr_text(cls):
+    """Plain-text repr listing the accessor's operations by category."""
+    lines = [
+        f"<{cls.__name__}> xarray-spatial tools for this {_accessor_kind(cls)}",
+        "call as: .xrs.<name>(...)",
+        "",
+    ]
+    for name, methods in _categories_or_fallback(cls):
+        lines.append(f"{name}:")
+        for chunk in textwrap.wrap(
+            ", ".join(methods), width=74,
+            break_long_words=False, break_on_hyphens=False,
+        ):
+            lines.append(f"    {chunk}")
+    return "\n".join(lines)
+
+
+def _accessor_repr_html(cls):
+    """Jupyter HTML repr: the same listing as a compact table."""
+    rows = []
+    for name, methods in _categories_or_fallback(cls):
+        methods_html = ", ".join(
+            f"<code>{html.escape(m)}</code>" for m in methods
+        )
+        rows.append(
+            "<tr>"
+            "<td style='text-align:right;vertical-align:top;"
+            "padding-right:0.75em;font-weight:bold;white-space:nowrap'>"
+            f"{html.escape(name)}</td>"
+            f"<td style='text-align:left'>{methods_html}</td>"
+            "</tr>"
+        )
+    return (
+        f"<div><strong>xarray-spatial</strong> tools for this "
+        f"{_accessor_kind(cls)} &mdash; call as "
+        "<code>.xrs.&lt;name&gt;(...)</code>"
+        f"<table>{''.join(rows)}</table></div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-tool repr: evaluating a single tool (``da.xrs.slope``) without calling it
+# should show that tool's own signature and docstring, not the whole accessor
+# catalog. A bound method's repr is ``<bound method Cls.name of {repr(self)}>``,
+# and ``repr(self)`` routes through the accessor's catalog ``__repr__``, so
+# without intervention the full listing gets embedded (issue #3478). The
+# accessor wraps public methods in this proxy on attribute access instead.
+# ---------------------------------------------------------------------------
+
+
+def _accessor_tool_repr_text(method):
+    """Plain-text repr for a single accessor tool: signature + docstring."""
+    name = method.__name__
+    try:
+        sig = str(inspect.signature(method))
+    except (TypeError, ValueError):
+        sig = "(...)"
+    lines = [f".xrs.{name}{sig}"]
+    doc = inspect.getdoc(method)
+    if doc:
+        lines += ["", doc]
+    return "\n".join(lines)
+
+
+def _accessor_tool_repr_html(method):
+    """Jupyter HTML repr for a single tool: the text repr in a <pre> block."""
+    return (
+        "<pre style='white-space:pre-wrap'>"
+        f"{html.escape(_accessor_tool_repr_text(method))}"
+        "</pre>"
+    )
+
+
+class _AccessorTool:
+    """Callable proxy returned for a public accessor method on attribute access.
+
+    Forwards calls to the wrapped bound method unchanged, but renders its own
+    signature and docstring when evaluated in a REPL or notebook instead of the
+    bound-method repr (which would embed the whole accessor catalog via
+    ``repr(self)``; issue #3478). ``__doc__`` / ``__wrapped__`` are mirrored so
+    ``help()`` and ``inspect`` keep seeing the delegated documentation.
+    """
+
+    def __init__(self, method):
+        self._method = method
+        self.__wrapped__ = method
+        self.__name__ = method.__name__
+        self.__qualname__ = method.__qualname__
+        self.__doc__ = method.__doc__
+
+    def __call__(self, *args, **kwargs):
+        return self._method(*args, **kwargs)
+
+    def __repr__(self):
+        return _accessor_tool_repr_text(self._method)
+
+    def _repr_html_(self):
+        return _accessor_tool_repr_html(self._method)
+
+
+def _wrap_accessor_attr(accessor, name):
+    """``__getattribute__`` body shared by both accessors.
+
+    Returns public bound methods wrapped in :class:`_AccessorTool`; everything
+    else (private attributes, the catalog ``__repr__``) is returned untouched.
+    """
+    attr = object.__getattribute__(accessor, name)
+    if name.startswith("_") or not inspect.ismethod(attr):
+        return attr
+    return _AccessorTool(attr)
+
+
+def _check_point_crs_match(src, target):
+    """Raise if point CRS and caller CRS disagree.
+
+    Both arguments are already-normalized ``pyproj.CRS`` instances (or
+    ``None``).  A ``None`` on either side is a no-op, mirroring how
+    ``rasterize`` treats a missing CRS.
+    """
+    if src is None or target is None:
+        return
+    if not src.equals(target):
+        def _label(crs):
+            epsg = crs.to_epsg()
+            return f"EPSG:{epsg}" if epsg is not None else crs.name
+        raise ValueError(
+            f"CRS mismatch: points are in {_label(src)} but the caller is "
+            f"in {_label(target)}. Pass coregister=True to reproject the "
+            f"points into the caller CRS."
+        )
+
+
+def _interp_on_accessor(obj, func, points, rest, *, coregister, **kwargs):
+    """Run interpolation *func* against caller raster *obj* as the template.
+
+    *obj* supplies the output grid, chunks, CRS, and attrs (passed as
+    ``template``).  *points* is the first argument to *func*: a GeoDataFrame,
+    or raw ``x`` for the legacy array form, in which case *rest* carries the
+    remaining positional coordinates (``y``, ``z``).  When *points* is a
+    GeoDataFrame and ``coregister=True``, its geometries are reprojected into
+    the caller's CRS before interpolation; otherwise a genuine CRS mismatch
+    raises (matching ``rasterize``'s default).  ``coregister`` needs a CRS on
+    both sides and only applies to GeoDataFrame input.
+    """
+    from xrspatial.interpolate._vector import is_geodataframe
+
+    if is_geodataframe(points):
+        target = _to_pyproj_crs(obj.attrs.get('crs'))
+        src = _to_pyproj_crs(points.crs)
+        if coregister:
+            if src is None or target is None:
+                raise ValueError(
+                    "coregister=True needs a CRS on both the points "
+                    "(GeoDataFrame.crs) and the caller (attrs['crs'])"
+                )
+            points = points.to_crs(target)
+        else:
+            _check_point_crs_match(src, target)
+    elif coregister:
+        raise ValueError(
+            "coregister=True requires a GeoDataFrame input carrying a CRS"
+        )
+    return func(points, *rest, template=obj, **kwargs)
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __getattribute__(self, name):
+        return _wrap_accessor_attr(self, name)
+
+    def __repr__(self):
+        return _accessor_repr_text(type(self))
+
+    def _repr_html_(self):
+        return _accessor_repr_html(type(self))
 
     # ---- Plot ----
 
@@ -998,17 +1242,54 @@ class XrsSpatialDataArrayAccessor:
 
     # ---- Interpolation ----
 
-    def idw(self, x, y, z, **kwargs):
+    def kde(self, x, y=None, *, coregister=False, **kwargs):
+        """Kernel density of points onto this DataArray's grid.
+
+        Pass a GeoDataFrame of Point geometries as the first argument
+        (``column`` selects per-point weights), or raw ``x``/``y`` arrays.
+        With ``coregister=True`` a GeoDataFrame's points are reprojected
+        from their CRS into this array's CRS first.  See
+        :func:`xrspatial.kde`.
+        """
+        from .kde import kde
+        return _interp_on_accessor(self._obj, kde, x, (y,),
+                                   coregister=coregister, **kwargs)
+
+    def idw(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Inverse-distance-weighted interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.idw`.
+        """
         from .interpolate import idw
-        return idw(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, idw, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
-    def kriging(self, x, y, z, **kwargs):
+    def kriging(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Ordinary-kriging interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.kriging`.
+        """
         from .interpolate import kriging
-        return kriging(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, kriging, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
-    def spline(self, x, y, z, **kwargs):
+    def spline(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Thin-plate-spline interpolation onto this grid.
+
+        Pass a GeoDataFrame (``column`` selects the value to interpolate)
+        or raw ``x``/``y``/``z`` arrays.  ``coregister=True`` reprojects a
+        GeoDataFrame's points into this array's CRS first.  See
+        :func:`xrspatial.spline`.
+        """
         from .interpolate import spline
-        return spline(x, y, z, self._obj, **kwargs)
+        return _interp_on_accessor(self._obj, spline, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
     # ---- Preview ----
 
@@ -1237,6 +1518,15 @@ class XrsSpatialDatasetAccessor:
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __getattribute__(self, name):
+        return _wrap_accessor_attr(self, name)
+
+    def __repr__(self):
+        return _accessor_repr_text(type(self))
+
+    def _repr_html_(self):
+        return _accessor_repr_html(type(self))
 
     # ---- Plot ----
 
@@ -1657,6 +1947,56 @@ class XrsSpatialDatasetAccessor:
             "Dataset has no 2D variable with 'y' and 'x' dimensions "
             "to use as rasterize template"
         )
+
+    # ---- Interpolation ----
+
+    def _interp_template(self):
+        """First 2-D y/x variable to use as an interpolation template."""
+        ds = self._obj
+        for var in ds.data_vars:
+            da = ds[var]
+            if da.ndim == 2 and 'y' in da.dims and 'x' in da.dims:
+                return da
+        raise ValueError(
+            "Dataset has no 2D variable with 'y' and 'x' dimensions "
+            "to use as an interpolation template"
+        )
+
+    def kde(self, x, y=None, *, coregister=False, **kwargs):
+        """Kernel density of points onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.kde`.
+        """
+        from .kde import kde
+        return _interp_on_accessor(self._interp_template(), kde, x, (y,),
+                                   coregister=coregister, **kwargs)
+
+    def idw(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Inverse-distance-weighted interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.idw`.
+        """
+        from .interpolate import idw
+        return _interp_on_accessor(self._interp_template(), idw, x, (y, z),
+                                   coregister=coregister, **kwargs)
+
+    def spline(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Thin-plate-spline interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.spline`.
+        """
+        from .interpolate import spline
+        return _interp_on_accessor(self._interp_template(), spline, x, (y, z),
+                                   coregister=coregister, **kwargs)
+
+    def kriging(self, x, y=None, z=None, *, coregister=False, **kwargs):
+        """Ordinary-kriging interpolation onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.kriging`.
+        """
+        from .interpolate import kriging
+        return _interp_on_accessor(self._interp_template(), kriging, x, (y, z),
+                                   coregister=coregister, **kwargs)
 
     # ---- GeoTIFF I/O ----
 

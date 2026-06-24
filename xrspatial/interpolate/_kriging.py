@@ -11,6 +11,7 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _
                              _validate_scalar)
 
 from ._validation import extract_grid_coords, validate_points
+from ._vector import resolve_xyz
 
 try:
     import cupy
@@ -479,14 +480,16 @@ def _check_kriging_memory(n_points, grid_pixels, is_dask=False):
         )
 
 
-def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
-            return_variance=False, name='kriging'):
+def kriging(x, y=None, z=None, template=None, variogram_model='spherical',
+            nlags=15, return_variance=False, name='kriging', *, column=None):
     """Ordinary Kriging interpolation.
 
     Parameters
     ----------
     x, y, z : array-like
-        Coordinates and values of scattered input points.
+        Coordinates and values of scattered input points.  Alternatively,
+        pass a GeoDataFrame of Point geometries as the first argument and
+        leave *y*/*z* unset; *template* and *column* must then be keywords.
     template : xr.DataArray
         2-D DataArray whose grid defines the output raster.
     variogram_model : str, default 'spherical'
@@ -498,6 +501,9 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
         If True, return ``(prediction, variance)`` tuple.
     name : str, default 'kriging'
         Name of the output DataArray.
+    column : str, optional
+        When the first argument is a GeoDataFrame, the column whose values
+        are interpolated.  Defaults to the first numeric column.
 
     Returns
     -------
@@ -512,6 +518,7 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
         matrix, or prediction matrix) would exceed 80% of available
         memory.
     """
+    x, y, z = resolve_xyz(x, y, z, column=column, func_name='kriging')
     _validate_raster(template, func_name='kriging', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='kriging')
 

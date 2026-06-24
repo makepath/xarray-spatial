@@ -1,0 +1,2 @@
+module,last_inspected,issue,severity_max,categories_found,notes,doc_coverage
+perlin,2026-06-23,,MEDIUM,2;5,"name param undocumented (Cat2) + float-dtype requirement/ValueError undocumented, no Raises section (Cat5); fixed in deep-sweep-documentation-perlin-2026-06-23; repo has issues disabled so no issue number; example runs and output matches; 1 public func (perlin) listed in reference/surface.rst",1/1
