@@ -689,12 +689,87 @@ def _accessor_repr_html(cls):
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-tool repr: evaluating a single tool (``da.xrs.slope``) without calling it
+# should show that tool's own signature and docstring, not the whole accessor
+# catalog. A bound method's repr is ``<bound method Cls.name of {repr(self)}>``,
+# and ``repr(self)`` routes through the accessor's catalog ``__repr__``, so
+# without intervention the full listing gets embedded (issue #3478). The
+# accessor wraps public methods in this proxy on attribute access instead.
+# ---------------------------------------------------------------------------
+
+
+def _accessor_tool_repr_text(method):
+    """Plain-text repr for a single accessor tool: signature + docstring."""
+    name = method.__name__
+    try:
+        sig = str(inspect.signature(method))
+    except (TypeError, ValueError):
+        sig = "(...)"
+    lines = [f".xrs.{name}{sig}"]
+    doc = inspect.getdoc(method)
+    if doc:
+        lines += ["", doc]
+    return "\n".join(lines)
+
+
+def _accessor_tool_repr_html(method):
+    """Jupyter HTML repr for a single tool: the text repr in a <pre> block."""
+    return (
+        "<pre style='white-space:pre-wrap'>"
+        f"{html.escape(_accessor_tool_repr_text(method))}"
+        "</pre>"
+    )
+
+
+class _AccessorTool:
+    """Callable proxy returned for a public accessor method on attribute access.
+
+    Forwards calls to the wrapped bound method unchanged, but renders its own
+    signature and docstring when evaluated in a REPL or notebook instead of the
+    bound-method repr (which would embed the whole accessor catalog via
+    ``repr(self)``; issue #3478). ``__doc__`` / ``__wrapped__`` are mirrored so
+    ``help()`` and ``inspect`` keep seeing the delegated documentation.
+    """
+
+    def __init__(self, method):
+        self._method = method
+        self.__wrapped__ = method
+        self.__name__ = method.__name__
+        self.__qualname__ = method.__qualname__
+        self.__doc__ = method.__doc__
+
+    def __call__(self, *args, **kwargs):
+        return self._method(*args, **kwargs)
+
+    def __repr__(self):
+        return _accessor_tool_repr_text(self._method)
+
+    def _repr_html_(self):
+        return _accessor_tool_repr_html(self._method)
+
+
+def _wrap_accessor_attr(accessor, name):
+    """``__getattribute__`` body shared by both accessors.
+
+    Returns public bound methods wrapped in :class:`_AccessorTool`; everything
+    else (private attributes, the catalog ``__repr__``) is returned untouched.
+    """
+    attr = object.__getattribute__(accessor, name)
+    if name.startswith("_") or not inspect.ismethod(attr):
+        return attr
+    return _AccessorTool(attr)
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __getattribute__(self, name):
+        return _wrap_accessor_attr(self, name)
 
     def __repr__(self):
         return _accessor_repr_text(type(self))
@@ -1353,6 +1428,9 @@ class XrsSpatialDatasetAccessor:
 
     def __init__(self, obj):
         self._obj = obj
+
+    def __getattribute__(self, name):
+        return _wrap_accessor_attr(self, name)
 
     def __repr__(self):
         return _accessor_repr_text(type(self))
