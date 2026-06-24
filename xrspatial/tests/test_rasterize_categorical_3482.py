@@ -223,6 +223,40 @@ class TestPamHelpers:
         from xrspatial.geotiff._pam import read_pam_sidecar
         assert read_pam_sidecar(str(tmp_path / 'nope.tif')) == {}
 
+    def test_athematic_stats_sidecar_ignored(self, tmp_path):
+        """A GDAL statistics/histogram sidecar must not yield categories."""
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'stats.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write(
+                '<PAMDataset><PAMRasterBand band="1">'
+                '<Metadata><MDI key="STATISTICS_MINIMUM">0</MDI></Metadata>'
+                '<GDALRasterAttributeTable tableType="athematic">'
+                '<FieldDefn index="0"><Name>Value</Name><Type>1</Type>'
+                '<Usage>5</Usage></FieldDefn>'
+                '<FieldDefn index="1"><Name>Count</Name><Type>0</Type>'
+                '<Usage>1</Usage></FieldDefn>'
+                '<Row index="0"><F>0.0</F><F>5</F></Row>'
+                '<Row index="1"><F>1.0</F><F>4</F></Row>'
+                '</GDALRasterAttributeTable>'
+                '</PAMRasterBand></PAMDataset>')
+        assert read_pam_sidecar(path) == {}
+
+    def test_malformed_sidecar_returns_empty(self, tmp_path):
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'bad.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write('<PAMDataset><PAMRasterBand band="1">'
+                     '<GDALRasterAttributeTable tableType="thematic">'
+                     '<FieldDefn index="0"><Name>Class</Name><Type>2</Type>'
+                     '<Usage>2</Usage></FieldDefn>'
+                     '<Row index="0"><F>ok</F></Row>'
+                     '<Row index="0"><F>bad</F><F>extra</F></Row>'
+                     'GARBAGE</GDALRasterAttributeTable>'
+                     '</PAMRasterBand></PAMDataset>')
+        # Must never raise; worst case returns {}.
+        assert isinstance(read_pam_sidecar(path), dict)
+
 
 # ---------------------------------------------------------------------------
 # GPU backend parity

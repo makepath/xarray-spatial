@@ -118,47 +118,57 @@ def read_pam_sidecar(path):
     try:
         with open(aux, 'r', encoding='utf-8') as fh:
             root = safe_fromstring(fh.read())
-    except (OSError, ValueError):
+
+        band = root.find('.//PAMRasterBand')
+        if band is None:
+            return {}
+
+        names = None
+        colors = None
+        # Only a thematic RAT with a Name column describes categories. GDAL
+        # writes an athematic histogram/statistics RAT next to many ordinary
+        # rasters; it must not masquerade as category names. Prefer the RAT
+        # (it carries colors); fall back to the <CategoryNames> element,
+        # which GDAL only writes for real categories.
+        rat = band.find('GDALRasterAttributeTable')
+        if rat is not None and rat.get('tableType') == 'thematic':
+            names, colors = _parse_rat(rat)
+        if names is None:
+            cat_el = band.find('CategoryNames')
+            if cat_el is not None:
+                names = [c.text or '' for c in cat_el.findall('Category')]
+
+        out = {}
+        if names is not None:
+            out['category_names'] = names
+        if colors is not None:
+            out['category_colors'] = colors
+        return out
+    except (OSError, ValueError, TypeError):
+        # A missing, malformed, or foreign sidecar is non-fatal auxiliary
+        # metadata, not a read error -- never let it break open_geotiff.
         return {}
-
-    band = root.find('.//PAMRasterBand')
-    if band is None:
-        return {}
-
-    out = {}
-
-    # Prefer the RAT (it carries colors); fall back to <CategoryNames>.
-    rat = band.find('GDALRasterAttributeTable')
-    names = None
-    colors = None
-    if rat is not None:
-        names, colors = _parse_rat(rat)
-    if names is None:
-        cat_el = band.find('CategoryNames')
-        if cat_el is not None:
-            names = [c.text or '' for c in cat_el.findall('Category')]
-
-    if names is not None:
-        out['category_names'] = names
-    if colors is not None:
-        out['category_colors'] = colors
-    return out
 
 
 def _parse_rat(rat):
-    """Return (names, colors) from a ``<GDALRasterAttributeTable>`` element.
+    """Return (names, colors) from a thematic ``<GDALRasterAttributeTable>``.
 
-    ``names`` is ordered by the row's Value column; ``colors`` is the RGBA
-    list when the RAT defines color columns, else ``None``.
+    Returns ``(None, None)`` when the table has no Name column, i.e. it does
+    not describe categories. ``names`` is ordered by the row's Value column;
+    ``colors`` is the RGBA list when the RAT defines color columns, else
+    ``None``.
     """
     usage_to_col = {}
     for fd in rat.findall('FieldDefn'):
-        idx = int(fd.get('index'))
         usage_el = fd.find('Usage')
-        if usage_el is not None and usage_el.text is not None:
-            usage_to_col[int(usage_el.text)] = idx
+        if fd.get('index') is None or usage_el is None \
+                or usage_el.text is None:
+            continue
+        usage_to_col[int(usage_el.text)] = int(fd.get('index'))
 
     name_col = usage_to_col.get(_USAGE_NAME)
+    if name_col is None:
+        return None, None
     value_col = usage_to_col.get(_USAGE_MINMAX)
     rgba_cols = [usage_to_col.get(u) for u in
                  (_USAGE_RED, _USAGE_GREEN, _USAGE_BLUE, _USAGE_ALPHA)]
@@ -167,9 +177,10 @@ def _parse_rat(rat):
     rows = []
     for row in rat.findall('Row'):
         fields = [f.text or '' for f in row.findall('F')]
-        value = int(fields[value_col]) if value_col is not None \
+        # Tolerate a Real-typed value cell ("0.0") as well as an integer.
+        value = int(float(fields[value_col])) if value_col is not None \
             else int(row.get('index'))
-        name = fields[name_col] if name_col is not None else ''
+        name = fields[name_col]
         color = None
         if have_colors:
             color = tuple(int(fields[c]) for c in rgba_cols)
