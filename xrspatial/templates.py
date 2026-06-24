@@ -17,7 +17,9 @@ from xrspatial._template_data import (
 )
 from xrspatial.reproject._grid import _make_output_coords
 
-# Guard against a stray fine resolution allocating an enormous array.
+# Guard against a stray fine resolution allocating an enormous array. Applied to
+# every backend, including dask: a lazy grid this large is almost always a typo,
+# and the uniform cap keeps the error identical across backends.
 _MAX_CELLS = 500_000_000
 
 
@@ -80,8 +82,9 @@ def _make_data(shape, fill, backend, chunks):
     if backend == "dask+cupy":
         import cupy
         import dask.array as da
+        meta = cupy.empty((0, 0), dtype="float32")
         return da.full(shape, fill, dtype="float32",
-                       chunks=chunks).map_blocks(cupy.asarray)
+                       chunks=chunks).map_blocks(cupy.asarray, meta=meta)
     raise ValueError(
         f"Unknown backend {backend!r}; choose from 'numpy', 'dask+numpy', "
         f"'cupy', 'dask+cupy'."

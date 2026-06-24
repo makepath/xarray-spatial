@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -175,8 +177,12 @@ def test_dask_cupy_backend():
 
 
 def test_downstream_slope_accepts_template():
-    # an empty template feeds the array contract into a real op without error
+    # an empty template feeds the array contract into a real op without error.
+    # slope on an all-NaN grid is expected to emit All-NaN slice warnings; the
+    # point here is that the contract is accepted, so silence that noise.
     agg = from_template("conus", resolution=20000)
-    out = slope(agg)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        out = slope(agg)
     assert out.dims == ("y", "x")
     assert out.shape == agg.shape
