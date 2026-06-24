@@ -250,3 +250,9 @@ def test_perlin_drops_input_coords():
     out = perlin(src)
     assert 'lat' not in out.coords
     assert 'lon' not in out.coords
+
+
+def test_perlin_docstring_documents_name():
+    # Regression for issue #3465: the docstring must document the `name`
+    # parameter that exists in the signature.
+    assert 'name : str' in perlin.__doc__
