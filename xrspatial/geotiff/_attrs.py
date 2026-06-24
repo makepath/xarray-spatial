@@ -116,6 +116,12 @@ from canonical state, otherwise dropped on round-trip):
 - ``extra_samples``: TIFF ExtraSamples tag.
 - ``colormap``: raw uint16 RGB triples from the TIFF ColorMap tag (320),
   attached to single-band paletted images.
+- ``category_names``: ordered list of class label strings (index == pixel
+  value) for a categorical raster. Written to / read from a PAM
+  ``<file>.aux.xml`` sidecar (``<CategoryNames>`` plus a thematic
+  ``<GDALRasterAttributeTable>``); see :mod:`xrspatial.geotiff._pam`.
+- ``category_colors``: list of ``(r, g, b, a)`` int tuples (0-255), one per
+  category, emitted as the RAT's Red/Green/Blue/Alpha columns.
 
 Removed in contract v2 (issue #2016):
 
