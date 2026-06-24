@@ -637,6 +637,18 @@ def _accessor_kind(cls):
     return 'Dataset' if cls.__name__.endswith('DatasetAccessor') else 'DataArray'
 
 
+# Single category used by both reprs when the source banners can't be parsed.
+_FALLBACK_CATEGORY = 'Available tools'
+
+
+def _categories_or_fallback(cls):
+    """Parsed categories, or one flat ``Available tools`` group as a fallback."""
+    categories = _accessor_categories(cls)
+    if categories:
+        return categories
+    return ((_FALLBACK_CATEGORY, _public_accessor_methods(cls)),)
+
+
 def _accessor_repr_text(cls):
     """Plain-text repr listing the accessor's operations by category."""
     lines = [
@@ -644,13 +656,8 @@ def _accessor_repr_text(cls):
         "call as: .xrs.<name>(...)",
         "",
     ]
-    categories = _accessor_categories(cls)
-    if not categories:
-        lines.append("(categories unavailable; flat method list)")
-        categories = (("", _public_accessor_methods(cls)),)
-    for name, methods in categories:
-        if name:
-            lines.append(f"{name}:")
+    for name, methods in _categories_or_fallback(cls):
+        lines.append(f"{name}:")
         for chunk in textwrap.wrap(
             ", ".join(methods), width=74,
             break_long_words=False, break_on_hyphens=False,
@@ -661,11 +668,8 @@ def _accessor_repr_text(cls):
 
 def _accessor_repr_html(cls):
     """Jupyter HTML repr: the same listing as a compact table."""
-    categories = _accessor_categories(cls)
-    if not categories:
-        categories = (("Available tools", _public_accessor_methods(cls)),)
     rows = []
-    for name, methods in categories:
+    for name, methods in _categories_or_fallback(cls):
         methods_html = ", ".join(
             f"<code>{html.escape(m)}</code>" for m in methods
         )

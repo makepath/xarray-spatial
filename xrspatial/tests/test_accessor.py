@@ -621,8 +621,10 @@ def test_categories_fallback_when_source_unavailable():
     """A class with no retrievable source yields a flat fallback listing."""
     Dummy = type('DummyAccessor', (), {'foo': lambda self: None})
     assert _accessor_categories(Dummy) == ()
+    # Both reprs fall back to the same single "Available tools" group.
     text = _accessor_repr_text(Dummy)
+    assert 'Available tools:' in text
     assert 'foo' in text
-    assert 'flat method list' in text
     html_out = _accessor_repr_html(Dummy)
+    assert 'Available tools' in html_out
     assert '<code>foo</code>' in html_out
