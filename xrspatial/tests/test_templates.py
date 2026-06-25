@@ -82,6 +82,41 @@ def test_resolution_tuple():
     assert rx > ry
 
 
+def test_resolution_honored_exactly():
+    # the nyc bbox is 52814 m tall, not a whole number of 10 m cells, so res_y
+    # used to drift to ~10.0008. The far edge is nudged so res stays exact.
+    agg = from_template("nyc", resolution=10)
+    assert agg.attrs["res"] == (10.0, 10.0)
+
+
+def test_resolution_tuple_honored_exactly():
+    agg = from_template("conus", resolution=(10000, 5000))
+    assert agg.attrs["res"] == (10000.0, 5000.0)
+
+
+def test_coords_match_requested_resolution():
+    # pixel spacing equals the requested resolution on both axes
+    agg = from_template("nyc", resolution=10)
+    np.testing.assert_allclose(np.diff(agg.x.values), 10.0, atol=1e-6)
+    np.testing.assert_allclose(-np.diff(agg.y.values), 10.0, atol=1e-6)
+
+
+def test_nudge_keeps_centers_within_bbox():
+    # nudging the far edges out by < half a cell still leaves every pixel
+    # center inside the registry bbox.
+    agg = from_template("nyc", resolution=10)
+    left, bottom, right, top = _REGIONS["nyc"]["bounds"]
+    assert left <= agg.x.values.min() and agg.x.values.max() <= right
+    assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+def test_country_resolution_honored_exactly():
+    # country codes come back in EPSG:4326 (degrees) but go through the same
+    # nudge math, so a degree resolution is honored exactly too.
+    agg = from_template("FRA", resolution=0.25)
+    assert agg.attrs["res"] == (0.25, 0.25)
+
+
 def test_fill_and_dtype():
     agg = from_template("world")
     assert agg.dtype == np.float32
@@ -144,6 +179,10 @@ def test_dask_numpy_backend():
     np.testing.assert_array_equal(agg.x.values, ref.x.values)
     np.testing.assert_array_equal(agg.y.values, ref.y.values)
     assert agg.attrs == ref.attrs
+    # resolution is honored exactly on the dask path too
+    assert from_template("nyc", resolution=10, backend="dask+numpy").attrs[
+        "res"
+    ] == (10.0, 10.0)
     # values match once computed
     assert np.isnan(agg.compute().values).all()
 
@@ -262,6 +301,11 @@ def test_preserve_resolution_control():
     coarse = from_template("conus", preserve="area", resolution=50000)
     assert coarse.size < default.size
     np.testing.assert_allclose(coarse.attrs["res"][0], 50000, rtol=0.05)
+
+
+def test_preserve_resolution_honored_exactly():
+    agg = from_template("conus", preserve="area", resolution=50000)
+    assert agg.attrs["res"] == (50000.0, 50000.0)
 
 
 def test_preserve_none_unchanged():
