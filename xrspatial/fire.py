@@ -207,7 +207,7 @@ def dnbr(pre_nbr_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import dnbr
+        >>> from xrspatial import dnbr
         >>> pre = xr.DataArray(np.array([[0.5, 0.6], [0.4, 0.3]], dtype='f4'))
         >>> post = xr.DataArray(np.array([[0.1, 0.2], [0.5, 0.1]], dtype='f4'))
         >>> dnbr(pre, post).values
@@ -318,7 +318,7 @@ def rdnbr(dnbr_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import rdnbr
+        >>> from xrspatial import rdnbr
         >>> dnbr_agg = xr.DataArray(
         ...     np.array([[0.4, 0.3], [0.1, 0.2]], dtype='f4'))
         >>> pre = xr.DataArray(
@@ -460,7 +460,7 @@ def burn_severity_class(dnbr_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import burn_severity_class
+        >>> from xrspatial import burn_severity_class
         >>> dnbr_agg = xr.DataArray(
         ...     np.array([[-0.3, 0.05], [0.3, 0.7]], dtype='f4'))
         >>> burn_severity_class(dnbr_agg).values
@@ -563,7 +563,7 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import fireline_intensity
+        >>> from xrspatial import fireline_intensity
         >>> fuel = xr.DataArray(np.array([[2.0, 0.5]], dtype='f4'))
         >>> spread = xr.DataArray(np.array([[0.1, 0.2]], dtype='f4'))
         >>> fireline_intensity(fuel, spread).values
@@ -673,7 +673,7 @@ def flame_length(intensity_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import flame_length
+        >>> from xrspatial import flame_length
         >>> intensity = xr.DataArray(np.array([[100., 500.]], dtype='f4'))
         >>> flame_length(intensity).values
         array([[0.6446169, 1.3515369]], dtype=float32)
@@ -879,7 +879,7 @@ def rate_of_spread(slope_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import rate_of_spread
+        >>> from xrspatial import rate_of_spread
         >>> slope = xr.DataArray(np.full((2, 2), 10.0, dtype='f4'))
         >>> wind = xr.DataArray(np.full((2, 2), 10.0, dtype='f4'))
         >>> moisture = xr.DataArray(np.full((2, 2), 0.06, dtype='f4'))
@@ -1065,7 +1065,7 @@ def kbdi(kbdi_prev_agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np, xarray as xr
-        >>> from xrspatial.fire import kbdi
+        >>> from xrspatial import kbdi
         >>> prev = xr.DataArray(np.full((2, 2), 100.0, dtype='f4'))
         >>> max_temp = xr.DataArray(np.full((2, 2), 30.0, dtype='f4'))
         >>> precip = xr.DataArray(np.zeros((2, 2), dtype='f4'))
