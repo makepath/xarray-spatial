@@ -504,9 +504,11 @@ def test_terrain_all_nan_template_matches_zeros_template():
 
 
 @dask_array_available
-def test_terrain_all_nan_template_dask_is_finite():
-    terrain = generate_terrain(_nan_template(backend='dask'))
-    assert np.isfinite(terrain.compute().data).all()
+def test_terrain_all_nan_template_dask_matches_numpy():
+    t_np = generate_terrain(_nan_template())
+    t_dask = generate_terrain(_nan_template(backend='dask')).compute()
+    assert np.isfinite(t_dask.data).all()
+    np.testing.assert_allclose(t_np.data, t_dask.data, rtol=1e-5, atol=1e-7)
 
 
 @cuda_and_cupy_available
@@ -520,6 +522,9 @@ def test_terrain_all_nan_template_cupy_matches_numpy():
 
 @cuda_and_cupy_available
 @dask_array_available
-def test_terrain_all_nan_template_dask_cupy_is_finite():
-    terrain = generate_terrain(_nan_template(backend='dask+cupy'))
-    assert np.isfinite(terrain.compute().data.get()).all()
+def test_terrain_all_nan_template_dask_cupy_matches_numpy():
+    t_np = generate_terrain(_nan_template())
+    t_dc = generate_terrain(_nan_template(backend='dask+cupy')).compute()
+    assert np.isfinite(t_dc.data.get()).all()
+    np.testing.assert_allclose(t_np.data, t_dc.data.get(),
+                               rtol=1e-4, atol=1e-4)
