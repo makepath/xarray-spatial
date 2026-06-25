@@ -473,7 +473,8 @@ _GENERIC_HYDRO_DOC = 'Map routing algorithm names'
     ('watershed', 'watershed_d8'),
 ])
 def test_accessor_docstring_matches_source(method_name, source):
-    func = getattr(xrspatial, source)
+    # hydro *_d8 doc sources are internal to xrspatial.hydro, not top level
+    func = getattr(xrspatial, source, None) or getattr(xrspatial.hydro, source)
     method = getattr(XrsSpatialDataArrayAccessor, method_name)
     assert inspect.getdoc(method), f'{method_name} has no docstring'
     assert inspect.getdoc(method) == inspect.getdoc(func)
