@@ -75,3 +75,13 @@ Diagnostics
     :toctree: _autosummary
 
     xrspatial.diagnostics.diagnose
+
+Validation
+==========
+Check a raster against the xarray-spatial input contract. Also available
+on the accessor as ``da.xrs.validate()`` and ``ds.xrs.validate()``.
+
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.validate.validate

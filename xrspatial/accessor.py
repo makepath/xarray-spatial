@@ -1505,6 +1505,30 @@ class XrsSpatialDataArrayAccessor:
         from .utils import multi_overlap
         return multi_overlap(self._obj, func, n_outputs, **kwargs)
 
+    # ---- Diagnostics ----
+
+    def validate(self, *, raise_on_error=False):
+        """Check this DataArray against the xarray-spatial input contract.
+
+        Returns a :class:`~xrspatial.validate.ValidationReport` listing
+        every contract violation as an error (a spatial op will fail) or
+        a warning (behavior degrades), each with a suggested fix. The
+        report is truthy when there are no error-level issues, so
+        ``if not da.xrs.validate(): ...`` reads naturally.
+
+        Parameters
+        ----------
+        raise_on_error : bool, default False
+            If True, raise :class:`~xrspatial.validate.XrsContractError`
+            when any error-level issue is found instead of only
+            recording it in the report.
+        """
+        from .validate import validate
+        report = validate(self._obj)
+        if raise_on_error:
+            report.raise_if_errors()
+        return report
+
 
 @xr.register_dataset_accessor("xrs")
 class XrsSpatialDatasetAccessor:
@@ -2115,6 +2139,28 @@ class XrsSpatialDatasetAccessor:
     def rechunk_no_shuffle(self, **kwargs):
         from .utils import rechunk_no_shuffle
         return rechunk_no_shuffle(self._obj, **kwargs)
+
+    # ---- Diagnostics ----
+
+    def validate(self, *, raise_on_error=False):
+        """Check each data variable against the xarray-spatial contract.
+
+        Returns a
+        :class:`~xrspatial.validate.DatasetValidationReport` holding a
+        per-variable :class:`~xrspatial.validate.ValidationReport`. The
+        report is truthy when every variable is compliant.
+
+        Parameters
+        ----------
+        raise_on_error : bool, default False
+            If True, raise :class:`~xrspatial.validate.XrsContractError`
+            when any variable has an error-level issue.
+        """
+        from .validate import validate_dataset
+        report = validate_dataset(self._obj)
+        if raise_on_error:
+            report.raise_if_errors()
+        return report
 
 
 # ---------------------------------------------------------------------------

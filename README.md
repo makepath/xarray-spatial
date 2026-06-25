@@ -266,6 +266,7 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 | [rechunk_no_shuffle](xrspatial/utils.py) | Rechunk dask arrays using whole-chunk multiples (no shuffle) | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [fused_overlap](xrspatial/utils.py) | Fuse sequential map_overlap calls into a single pass | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [multi_overlap](xrspatial/utils.py) | Run multi-output kernel in a single overlap pass | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
+| [validate](xrspatial/validate.py) | Check a raster against the xarray-spatial input contract (`.xrs.validate()`) | Custom | ✅ | 🔼 | 🔼 | 🔼 |
 
 -----------
 

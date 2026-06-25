@@ -120,6 +120,7 @@ from xrspatial.terrain_metrics import LANDFORM_CLASSES  # noqa
 from xrspatial.terrain_metrics import roughness  # noqa
 from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
+from xrspatial.validate import validate  # noqa
 from xrspatial.hydro import twi  # noqa: unified wrapper
 from xrspatial.hydro import twi_d8  # noqa
 from xrspatial.polygon_clip import clip_polygon  # noqa
