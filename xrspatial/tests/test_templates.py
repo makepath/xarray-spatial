@@ -339,3 +339,49 @@ def test_preserve_downstream_slope():
         warnings.simplefilter("ignore", RuntimeWarning)
         out = slope(agg)
     assert out.shape == agg.shape
+
+
+def test_crs_units_attr():
+    # crs_units mirrors the coordinate units: metres for a projected
+    # template, degrees for a country code in EPSG:4326.
+    proj = from_template("conus")
+    assert proj.attrs["crs_units"] == "m" == proj.x.attrs["units"]
+    geo = from_template("FRA")
+    assert geo.attrs["crs_units"] == "degree" == geo.x.attrs["units"]
+
+
+def test_crs_name_attr():
+    # 5070 is in the built-in LiteCRS table, so the name is deterministic
+    # regardless of whether pyproj is installed.
+    assert from_template("conus").attrs["crs_name"] == "NAD83 / Conus Albers"
+    assert from_template("FRA").attrs["crs_name"] == "WGS 84"
+
+
+def test_crs_name_preserve_path():
+    # The preserve path requires pyproj, so the chosen projection's name
+    # is always available.
+    name = from_template("conus", preserve="area").attrs["crs_name"]
+    assert name == "NAD83 / Conus Albers"
+
+
+def test_crs_name_omitted_without_pyproj(monkeypatch):
+    # When the EPSG code is outside the built-in table and pyproj can't be
+    # imported, crs_name is left off rather than raising.
+    import xrspatial.templates as templates
+
+    def _no_crs(_crs):
+        raise ImportError("pyproj not installed")
+
+    monkeypatch.setattr(templates, "_resolve_crs", _no_crs)
+    agg = from_template("conus")
+    assert "crs_name" not in agg.attrs
+    # The rest of the contract still holds.
+    assert agg.attrs["crs"] == 5070
+    assert agg.attrs["crs_units"] == "m"
+
+
+def test_lite_crs_name_property():
+    from xrspatial.reproject._lite_crs import CRS as LiteCRS
+
+    assert LiteCRS(5070).name == "NAD83 / Conus Albers"
+    assert LiteCRS(4326).name == "WGS 84"
