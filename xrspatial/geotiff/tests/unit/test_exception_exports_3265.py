@@ -38,8 +38,7 @@ def test_public_names_are_the_private_definitions_3265():
     assert g.PixelSafetyLimitError is PixelSafetyLimitError
     assert g.CloudSizeLimitError is CloudSizeLimitError
     # The historical _reader re-export surface is unchanged too.
-    from xrspatial.geotiff._reader import \
-        PixelSafetyLimitError as reader_pixel_err
+    from xrspatial.geotiff._reader import PixelSafetyLimitError as reader_pixel_err
     assert g.PixelSafetyLimitError is reader_pixel_err
 
 
