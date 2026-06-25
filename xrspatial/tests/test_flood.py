@@ -1049,3 +1049,58 @@ class TestMannigsNDataArrayValidation:
         bad_n = self._good_raster(-0.1)
         with pytest.raises(ValueError, match="mannings_n"):
             flood_depth_vegetation(hand, slope, bad_n, unit_discharge=1.0)
+
+
+# =====================================================================
+# Issue #3499: float32 input must return float64 on every backend
+# =====================================================================
+
+class TestFloat32DtypeConsistency:
+    """flood_depth and curve_number_runoff promise a float64 output.
+
+    numpy and cupy cast to float64; the dask helpers used to skip the
+    cast and leak float32 for a float32 input (#3499).
+    """
+
+    @staticmethod
+    def _hand(backend):
+        data = np.array([[0.0, 2.0], [5.0, 1.0]], dtype=np.float32)
+        return create_test_raster(data, backend=backend, name='hand',
+                                  chunks=(2, 2))
+
+    def test_flood_depth_numpy(self):
+        assert flood_depth(self._hand('numpy'), 5.0).dtype == np.float64
+
+    @dask_array_available
+    def test_flood_depth_dask(self):
+        assert flood_depth(self._hand('dask'), 5.0).data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_flood_depth_cupy(self):
+        assert flood_depth(self._hand('cupy'), 5.0).data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_flood_depth_dask_cupy(self):
+        out = flood_depth(self._hand('dask+cupy'), 5.0)
+        assert out.data.dtype == np.float64
+
+    def test_cn_runoff_numpy(self):
+        out = curve_number_runoff(self._hand('numpy'), curve_number=80.0)
+        assert out.dtype == np.float64
+
+    @dask_array_available
+    def test_cn_runoff_dask(self):
+        out = curve_number_runoff(self._hand('dask'), curve_number=80.0)
+        assert out.data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_cn_runoff_cupy(self):
+        out = curve_number_runoff(self._hand('cupy'), curve_number=80.0)
+        assert out.data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_cn_runoff_dask_cupy(self):
+        out = curve_number_runoff(self._hand('dask+cupy'), curve_number=80.0)
+        assert out.data.dtype == np.float64
