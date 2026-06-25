@@ -814,6 +814,36 @@ def _interp_on_accessor(obj, func, points, rest, *, coregister, **kwargs):
     return func(points, *rest, template=obj, **kwargs)
 
 
+def _rasterize_on_accessor(obj, geometries, *, coregister, **kwargs):
+    """Run ``rasterize`` against caller raster *obj* as the ``like`` template.
+
+    *obj* supplies the output grid, chunks, CRS, and attrs (passed as
+    ``like``).  When *geometries* is a GeoDataFrame and ``coregister=True``,
+    its geometries are reprojected into the caller's CRS before rasterizing,
+    the vector analog of ``open_geotiff(coregister=True)``.  With
+    ``coregister=False`` (default) a genuine CRS mismatch raises through
+    ``rasterize``'s own ``check_crs``.  ``coregister`` needs a CRS on both
+    sides and only applies to GeoDataFrame input.
+    """
+    from .rasterize import rasterize, _like_crs
+    from xrspatial.interpolate._vector import is_geodataframe
+
+    if coregister:
+        if not is_geodataframe(geometries):
+            raise ValueError(
+                "coregister=True requires a GeoDataFrame input carrying a CRS"
+            )
+        src = _to_pyproj_crs(geometries.crs)
+        target = _to_pyproj_crs(_like_crs(obj))
+        if src is None or target is None:
+            raise ValueError(
+                "coregister=True needs a CRS on both the geometries "
+                "(GeoDataFrame.crs) and the caller (attrs['crs'])"
+            )
+        geometries = geometries.to_crs(target)
+    return rasterize(geometries, like=obj, **kwargs)
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
@@ -1391,9 +1421,19 @@ class XrsSpatialDataArrayAccessor:
 
     # ---- Rasterize ----
 
-    def rasterize(self, geometries, **kwargs):
-        from .rasterize import rasterize
-        return rasterize(geometries, like=self._obj, **kwargs)
+    def rasterize(self, geometries, *, coregister=False, **kwargs):
+        """Rasterize *geometries* onto this DataArray's grid.
+
+        Equivalent to ``rasterize(geometries, like=self._obj, **kwargs)``.
+        With ``coregister=True`` a GeoDataFrame's geometries are reprojected
+        from their CRS into this raster's CRS before rasterizing; otherwise a
+        genuine CRS mismatch raises (see ``check_crs``).  ``coregister`` needs
+        a CRS on both sides and only applies to GeoDataFrame input.
+
+        See :func:`xrspatial.rasterize.rasterize` for full parameter docs.
+        """
+        return _rasterize_on_accessor(self._obj, geometries,
+                                      coregister=coregister, **kwargs)
 
     # ---- GeoTIFF I/O ----
 
@@ -1959,14 +1999,18 @@ class XrsSpatialDatasetAccessor:
 
     # ---- Rasterize ----
 
-    def rasterize(self, geometries, **kwargs):
-        from .rasterize import rasterize
+    def rasterize(self, geometries, *, coregister=False, **kwargs):
+        """Rasterize *geometries* onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.rasterize`.
+        """
         ds = self._obj
         # Find a 2D variable with y/x dims to use as template
         for var in ds.data_vars:
             da = ds[var]
             if da.ndim == 2 and 'y' in da.dims and 'x' in da.dims:
-                return rasterize(geometries, like=da, **kwargs)
+                return _rasterize_on_accessor(da, geometries,
+                                              coregister=coregister, **kwargs)
         raise ValueError(
             "Dataset has no 2D variable with 'y' and 'x' dimensions "
             "to use as rasterize template"
