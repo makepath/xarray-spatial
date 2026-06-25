@@ -282,6 +282,21 @@ class TestPamHelpers:
         # Must never raise; worst case returns {}.
         assert read_pam_sidecar(path) == {}
 
+    def test_non_well_formed_xml_sidecar_returns_empty(self, tmp_path):
+        """A truncated / non-well-formed .aux.xml must not crash the read.
+
+        safe_fromstring raises xml.etree.ElementTree.ParseError, which is a
+        SyntaxError subclass (not an OSError/ValueError/TypeError/IndexError),
+        so it would otherwise escape read_pam_sidecar and break the
+        open_geotiff call that reads the sidecar for any local string source.
+        """
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'truncated.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write('<PAMDataset><PAMRasterBand band="1"><Category>oops')
+        # Must never raise; worst case returns {}.
+        assert read_pam_sidecar(path) == {}
+
 
 # ---------------------------------------------------------------------------
 # GPU backend parity

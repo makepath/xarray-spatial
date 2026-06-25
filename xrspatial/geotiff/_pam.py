@@ -15,6 +15,7 @@ This module builds that sidecar from ``attrs['category_names']`` /
 from __future__ import annotations
 
 import os
+from xml.etree.ElementTree import ParseError
 from xml.sax.saxutils import escape
 
 from ._safe_xml import safe_fromstring
@@ -144,14 +145,17 @@ def read_pam_sidecar(path):
         if colors is not None:
             out['category_colors'] = colors
         return out
-    except (OSError, ValueError, TypeError, IndexError):
+    except (OSError, ValueError, TypeError, IndexError, ParseError):
         # A missing, malformed, or foreign sidecar is non-fatal auxiliary
         # metadata, not a read error -- never let it break open_geotiff.
         # IndexError covers a thematic RAT whose <Row> carries fewer <F>
         # cells than its highest column index (e.g. a Name column at index
         # 1 paired with a single-cell row), which would otherwise escape
         # _parse_rat and crash the open_geotiff call that reads the
-        # adjacent sidecar.
+        # adjacent sidecar. ParseError covers a truncated or otherwise
+        # non-well-formed sidecar: safe_fromstring raises it (a SyntaxError
+        # subclass, so not covered by the types above) and it would
+        # likewise escape and crash the read.
         return {}
 
 
