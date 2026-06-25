@@ -28,13 +28,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _dask_task_name_kwargs,
-    _validate_raster,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy)
 
 # Minimum tan(slope) clamp: tan(0.001 deg), same as TWI
 _TAN_MIN = np.tan(np.radians(0.001))
@@ -57,6 +52,7 @@ def _validate_mannings_n_dataarray(mannings_n):
             "mannings_n DataArray must contain finite, strictly positive "
             "values (no zeros, negatives, NaN, or Inf)."
         )
+
 
 # ---------------------------------------------------------------------------
 # NLCD-to-Manning's n lookup (Chow 1959; Arcement & Schneider 1989)
