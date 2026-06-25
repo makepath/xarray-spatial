@@ -58,11 +58,21 @@ class _RoutingDispatch:
     (``'d8'``, ``'dinf'``, ``'mfd'``) rather than array type.
     """
 
-    __slots__ = ('_name', '_impls')
-
-    def __init__(self, name, **impls):
+    def __init__(self, name, summary=None, **impls):
         self._name = name
         self._impls = impls
+        self.__name__ = name
+        if summary is not None:
+            keys = ', '.join(repr(k) for k in impls)
+            variants = ', '.join(f"``{fn.__name__}``" for fn in impls.values())
+            self.__doc__ = (
+                f"{summary}\n\n"
+                f"Select the routing algorithm with the ``routing`` keyword "
+                f"(default ``'d8'``). Valid values: {keys}.\n\n"
+                f"Dispatches to the matching implementation in "
+                f"``xrspatial.hydro`` ({variants}), where the full parameter "
+                f"list and algorithm references live."
+            )
 
     def __call__(self, *args, routing='d8', **kwargs):
         try:
@@ -80,37 +90,45 @@ class _RoutingDispatch:
 
 flow_direction = _RoutingDispatch(
     'flow_direction',
+    summary="Direction of steepest descent out of each cell.",
     d8=flow_direction_d8, dinf=flow_direction_dinf, mfd=flow_direction_mfd,
 )
 
 flow_accumulation = _RoutingDispatch(
     'flow_accumulation',
+    summary="Upstream cells or area draining through each cell.",
     d8=flow_accumulation_d8, dinf=flow_accumulation_dinf,
     mfd=flow_accumulation_mfd,
 )
 
 flow_length = _RoutingDispatch(
     'flow_length',
+    summary="Distance along the flow path to the outlet or from the divide.",
     d8=flow_length_d8, dinf=flow_length_dinf, mfd=flow_length_mfd,
 )
 
 flow_path = _RoutingDispatch(
     'flow_path',
+    summary="Trace downstream flow paths from a set of start points.",
     d8=flow_path_d8, dinf=flow_path_dinf, mfd=flow_path_mfd,
 )
 
 watershed = _RoutingDispatch(
     'watershed',
+    summary="Label each cell with the pour point it drains to.",
     d8=watershed_d8, dinf=watershed_dinf, mfd=watershed_mfd,
 )
 
 hand = _RoutingDispatch(
     'hand',
+    summary="Height above the nearest drainage (HAND).",
     d8=hand_d8, dinf=hand_dinf, mfd=hand_mfd,
 )
 
 stream_link = _RoutingDispatch(
     'stream_link',
+    summary="Assign unique IDs to stream segments above a flow-accumulation "
+            "threshold.",
     d8=stream_link_d8, dinf=stream_link_dinf, mfd=stream_link_mfd,
 )
 
@@ -135,15 +153,41 @@ class _StreamOrderDispatch(_RoutingDispatch):
 
 stream_order = _StreamOrderDispatch(
     'stream_order',
+    summary="Strahler or Shreve stream ordering of the stream network.",
     d8=stream_order_d8, dinf=stream_order_dinf, mfd=stream_order_mfd,
 )
 
 
 # -- 5 D8-only functions (future-proofed with routing param) --------------
 
-basin = _RoutingDispatch('basin', d8=basin_d8)
-basins = _RoutingDispatch('basins', d8=basins_d8)
-sink = _RoutingDispatch('sink', d8=sink_d8)
-snap_pour_point = _RoutingDispatch('snap_pour_point', d8=snap_pour_point_d8)
-fill = _RoutingDispatch('fill', d8=fill_d8)
-twi = _RoutingDispatch('twi', d8=twi_d8)
+basin = _RoutingDispatch(
+    'basin',
+    summary="Label each cell with the outlet of the basin it drains to.",
+    d8=basin_d8,
+)
+basins = _RoutingDispatch(
+    'basins',
+    summary="Deprecated alias for :func:`basin`.",
+    d8=basins_d8,
+)
+sink = _RoutingDispatch(
+    'sink',
+    summary="Label depression cells that have no downstream neighbor.",
+    d8=sink_d8,
+)
+snap_pour_point = _RoutingDispatch(
+    'snap_pour_point',
+    summary="Snap pour points to the nearby cell of highest flow "
+            "accumulation.",
+    d8=snap_pour_point_d8,
+)
+fill = _RoutingDispatch(
+    'fill',
+    summary="Fill depressions in a DEM so every cell can drain.",
+    d8=fill_d8,
+)
+twi = _RoutingDispatch(
+    'twi',
+    summary="Topographic wetness index, ln(a / tan(beta)).",
+    d8=twi_d8,
+)
