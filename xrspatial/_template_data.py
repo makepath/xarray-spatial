@@ -45,9 +45,12 @@ _REGIONS = {
     'nyc': dict(bounds=(558916, 4481270, 614426, 4534084), crs=32618,
                 default_resolution=30, label='New York City (UTM 18N)',
                 lonlat=(-74.30, 40.48, -73.65, 40.95)),
+    # The default (non-preserve) world grid spans the full +/-90 in EPSG:4326.
+    # The preserve path uses a +/-85 latitude band (the conventional Web
+    # Mercator limit) so 'shape' (World Mercator) does not diverge at the poles.
     'world': dict(bounds=(-180.0, -90.0, 180.0, 90.0), crs=4326,
                   default_resolution=0.5, label='World (WGS84)',
-                  lonlat=(-180.0, -90.0, 180.0, 90.0), area_epsg=8857,
+                  lonlat=(-180.0, -85.0, 180.0, 85.0), area_epsg=8857,
                   shape_epsg=3395),
 }
 
