@@ -491,7 +491,8 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     """Byram's fireline intensity.
 
     ``I = H * w * R`` where *H* is heat content (kJ/kg), *w* is fuel
-    consumed (kg/m^2), and *R* is rate of spread (m/s).
+    consumed (kg/m^2), and *R* is rate of spread in m/s (see
+    ``spread_rate_units`` for the accepted input unit).
 
     The spread rate is accepted in m/min by default so that the output of
     :func:`rate_of_spread` can be passed straight in. Byram's equation
