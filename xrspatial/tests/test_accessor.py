@@ -100,6 +100,7 @@ def test_dataarray_accessor_has_expected_methods(elevation):
         'rechunk_no_shuffle',
         'fused_overlap',
         'multi_overlap',
+        'validate',
     ]
     for name in expected:
         assert name in names, f"Missing method: {name}"
@@ -118,6 +119,7 @@ def test_dataset_accessor_has_expected_methods():
         'proximity', 'allocation', 'direction', 'cost_distance',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
+        'validate',
     ]
     for name in expected:
         assert name in names, f"Missing method: {name}"
