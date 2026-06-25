@@ -1252,3 +1252,47 @@ def test_generate_sample_indices_large_is_deterministic():
     a = _generate_sample_indices(20_000_000, 20_000)
     b = _generate_sample_indices(20_000_000, 20_000)
     np.testing.assert_array_equal(a, b)
+
+
+# ===================================================================
+# Degenerate all-NaN input for the remaining classifiers
+# ===================================================================
+# equal_interval and natural_breaks already cover all-NaN. The other
+# classifiers were not exercised on an all-non-finite raster, where the
+# finite mask removes every element. std_mean and maximum_breaks degrade
+# to an all-NaN result; head_tail_breaks, percentiles, and box_plot
+# currently raise an opaque reduction error (issue #3510), so their tests
+# are xfail until that is fixed. Flip them to plain assertions when #3510
+# lands. strict=False so a concurrent fix does not break main via XPASS.
+
+def test_std_mean_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = std_mean(agg)
+    assert np.all(np.isnan(result.data))
+
+
+def test_maximum_breaks_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = maximum_breaks(agg, k=5)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_head_tail_breaks_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = head_tail_breaks(agg)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_percentiles_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = percentiles(agg)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_box_plot_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = box_plot(agg)
+    assert np.all(np.isnan(result.data))
