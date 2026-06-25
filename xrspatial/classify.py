@@ -848,8 +848,11 @@ def natural_breaks(agg: xr.DataArray,
         where n is the total number of data points, i.e: `agg.size`
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
-        ``None`` means use all data (safe for numpy/cupy,
-        automatically capped for dask).
+        ``None`` means fit on all data instead of a sub-sample. That is
+        the full O(n²) case described above, so it may be slow and raises
+        ``MemoryError`` if the Jenks matrices would exceed half of the
+        available RAM. For dask the full sample is drawn lazily via
+        indexed access.
     name : str, default='natural_breaks'
         Name of output aggregate.
 
