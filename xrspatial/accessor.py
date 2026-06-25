@@ -829,16 +829,22 @@ def _rasterize_on_accessor(obj, geometries, *, coregister, **kwargs):
     from xrspatial.interpolate._vector import is_geodataframe
 
     if coregister:
+        # is_geodataframe matches the interpolation accessor (#3481): plain
+        # geopandas only, not dask_geopandas, even though standalone
+        # rasterize._parse_input accepts dask_geopandas.  Reprojecting a
+        # dask_geopandas frame under coregister is left for a follow-up.
         if not is_geodataframe(geometries):
             raise ValueError(
                 "coregister=True requires a GeoDataFrame input carrying a CRS"
             )
         src = _to_pyproj_crs(geometries.crs)
+        # _like_crs detects the caller CRS the same way rasterize's check_crs
+        # does, so the reprojected frame compares equal to the template.
         target = _to_pyproj_crs(_like_crs(obj))
         if src is None or target is None:
             raise ValueError(
                 "coregister=True needs a CRS on both the geometries "
-                "(GeoDataFrame.crs) and the caller (attrs['crs'])"
+                "(GeoDataFrame.crs) and the caller (its detected raster CRS)"
             )
         geometries = geometries.to_crs(target)
     return rasterize(geometries, like=obj, **kwargs)
