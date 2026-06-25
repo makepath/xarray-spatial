@@ -182,6 +182,12 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     (north-up, descending ``y``) and ``res``/``crs`` attributes. It covers the
     study area's rectangular bounding box and is meant as a starting canvas.
 
+    The requested ``resolution`` is honored exactly. The study-area box is
+    rarely a whole number of cells wide, so the far edges (right, top) are
+    nudged out by up to half a cell to land on an exact multiple of the cell
+    size, anchoring the lower-left corner. ``attrs['res']`` therefore matches
+    the ``resolution`` you pass.
+
     Parameters
     ----------
     name : str
@@ -268,10 +274,14 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
             f"Use a coarser resolution."
         )
 
-    ys, xs = _make_output_coords(bounds, (height, width))
-    # Realized cell size from the integer grid (may differ slightly from input).
-    actual_res_x = (right - left) / width
-    actual_res_y = (top - bottom) / height
+    # Honor the requested resolution exactly: anchor the lower-left corner and
+    # nudge the far edges to an exact multiple of the cell size, so res comes
+    # back as (res_x, res_y) instead of drifting when the bbox extent isn't a
+    # whole number of cells. Mirrors the reproject grid path
+    # (_compute_output_grid in reproject/_grid.py).
+    right = left + width * res_x
+    top = bottom + height * res_y
+    ys, xs = _make_output_coords((left, bottom, right, top), (height, width))
 
     data = _make_data((height, width), fill, backend, chunks)
     unit = "degree" if crs == 4326 else "m"
@@ -281,7 +291,7 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         name=key,
         coords={"y": ys, "x": xs},
         dims=["y", "x"],
-        attrs={"res": (actual_res_x, actual_res_y), "crs": crs},
+        attrs={"res": (res_x, res_y), "crs": crs},
     )
     template["x"].attrs["units"] = unit
     template["y"].attrs["units"] = unit

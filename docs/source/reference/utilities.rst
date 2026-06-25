@@ -32,6 +32,17 @@ Rasterize
 
     xrspatial.rasterize.rasterize
 
+.. note::
+
+   ``rasterize`` is also on the ``.xrs`` accessor, where the caller raster
+   supplies the output grid, chunks, and CRS (the ``like`` template)::
+
+       dem.xrs.rasterize(geometries_gdf, column="value")
+       dem.xrs.rasterize(geometries_gdf, column="value", coregister=True)
+
+   ``coregister=True`` reprojects a GeoDataFrame's geometries from their CRS
+   into the caller's CRS before rasterizing.
+
 Contours
 ========
 .. autosummary::
