@@ -44,7 +44,7 @@ def test_binary_numpy(result_binary):
     values, expected_result = result_binary
     numpy_agg = input_data()
     numpy_result = binary(numpy_agg, values)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -52,7 +52,7 @@ def test_binary_dask_numpy(result_binary):
     values, expected_result = result_binary
     dask_agg = input_data(backend='dask')
     dask_result = binary(dask_agg, values)
-    general_output_checks(dask_agg, dask_result, expected_result)
+    general_output_checks(dask_agg, dask_result, expected_result, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -60,7 +60,7 @@ def test_binary_cupy(result_binary):
     values, expected_result = result_binary
     cupy_agg = input_data(backend='cupy')
     cupy_result = binary(cupy_agg, values)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -69,7 +69,7 @@ def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
     dask_cupy_agg = input_data(backend='dask+cupy')
     dask_cupy_result = binary(dask_cupy_agg, values)
-    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result, verify_dtype=True)
 
 
 def test_binary_output_dtype_float32():
