@@ -110,6 +110,13 @@ def test_nudge_keeps_centers_within_bbox():
     assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
 
 
+def test_country_resolution_honored_exactly():
+    # country codes come back in EPSG:4326 (degrees) but go through the same
+    # nudge math, so a degree resolution is honored exactly too.
+    agg = from_template("FRA", resolution=0.25)
+    assert agg.attrs["res"] == (0.25, 0.25)
+
+
 def test_fill_and_dtype():
     agg = from_template("world")
     assert agg.dtype == np.float32
@@ -172,6 +179,10 @@ def test_dask_numpy_backend():
     np.testing.assert_array_equal(agg.x.values, ref.x.values)
     np.testing.assert_array_equal(agg.y.values, ref.y.values)
     assert agg.attrs == ref.attrs
+    # resolution is honored exactly on the dask path too
+    assert from_template("nyc", resolution=10, backend="dask+numpy").attrs[
+        "res"
+    ] == (10.0, 10.0)
     # values match once computed
     assert np.isnan(agg.compute().values).all()
 
