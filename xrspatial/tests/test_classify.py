@@ -72,6 +72,24 @@ def test_binary_dask_cupy(result_binary):
     general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
 
 
+def test_binary_output_dtype_float32():
+    # binary() must emit float32 regardless of input dtype so its result
+    # dtype matches the cupy/dask+cupy backends and the other classifiers
+    # (regression for the numpy/dask paths returning the input dtype).
+    for in_dtype in (np.float64, np.float32, np.int32):
+        data = np.array([[1, 2, 3], [4, 5, 6]], dtype=in_dtype)
+        result = binary(xr.DataArray(data), [2, 5])
+        assert result.data.dtype == np.float32
+
+
+@dask_array_available
+def test_binary_dask_output_dtype_float32():
+    data = np.array([[1., 2., 3.], [4., 5., 6.]], dtype=np.float64)
+    dask_agg = xr.DataArray(da.from_array(data, chunks=(1, 3)))
+    result = binary(dask_agg, [2, 5])
+    assert result.data.compute().dtype == np.float32
+
+
 @pytest.fixture
 def result_reclassify():
     bins = [10, 15, np.inf]

@@ -48,7 +48,13 @@ def _available_memory_bytes():
 
 @ngjit
 def _cpu_binary(data, values):
-    out = np.empty(data.shape, dtype=data.dtype)
+    # Output float32 to match the cupy/dask+cupy backends (which always
+    # allocate 'f4') and the other classifiers, which route through _cpu_bin
+    # and likewise emit float32. Preserving the input dtype here made binary()
+    # the lone op whose result dtype diverged across backends (float64 on
+    # numpy/dask vs float32 on cupy) and could not hold the NaN sentinel for
+    # integer input.
+    out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):
