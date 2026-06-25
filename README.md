@@ -150,7 +150,7 @@ Each cell shows the **feature tier** for that function on that backend (see [iss
 
 ✅ stable · 🔼 advanced · 🧪 experimental · 🔧 internal · 🚫 unsupported
 
-[GeoTIFF / COG I/O](#geotiff--cog-io) · [Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
+[GeoTIFF / COG I/O](#geotiff--cog-io) · [Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Templates](#templates) · [Utilities](#utilities)
 
 -------
 ### **GeoTIFF / COG I/O**
@@ -267,6 +267,14 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 | [fused_overlap](xrspatial/utils.py) | Fuse sequential map_overlap calls into a single pass | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [multi_overlap](xrspatial/utils.py) | Run multi-output kernel in a single overlap pass | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [validate](xrspatial/validate.py) | Check a raster against the xarray-spatial input contract (`.xrs.validate()`) | Custom | ✅ | 🔼 | 🔼 | 🔼 |
+
+-----------
+
+### **Templates**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [from_template](xrspatial/templates.py) | Empty study-area grid for a named region (CONUS, NYC, ...) or country code; `preserve='area'/'shape'` picks an EPSG projection by property | Custom | ✅ | 🔼 | 🔼 | 🔼 |
 
 -----------
 
