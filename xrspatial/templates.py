@@ -292,6 +292,8 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     actual_res_y = (top - bottom) / height
 
     data = _make_data((height, width), fill, backend, chunks)
+    # Every template emits either EPSG:4326 (country codes, degrees) or a
+    # metre-based projected CRS (curated regions and all preserve paths).
     unit = "degree" if crs == 4326 else "m"
 
     attrs = {"res": (actual_res_x, actual_res_y), "crs": crs, "crs_units": unit}
