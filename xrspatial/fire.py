@@ -486,20 +486,30 @@ def _fli_dask_cupy(fuel_data, spread_data, heat_content):
 def fireline_intensity(fuel_consumed_agg: xr.DataArray,
                        spread_rate_agg: xr.DataArray,
                        heat_content: float = 18000.0,
+                       spread_rate_units: str = 'm/min',
                        name: str = 'fireline_intensity') -> xr.DataArray:
     """Byram's fireline intensity.
 
     ``I = H * w * R`` where *H* is heat content (kJ/kg), *w* is fuel
     consumed (kg/m^2), and *R* is rate of spread (m/s).
 
+    The spread rate is accepted in m/min by default so that the output of
+    :func:`rate_of_spread` can be passed straight in. Byram's equation
+    needs *R* in m/s, so m/min inputs are divided by 60 internally. Pass
+    ``spread_rate_units='m/s'`` if you already hold spread rates in m/s.
+
     Parameters
     ----------
     fuel_consumed_agg : xr.DataArray
         Fuel consumed per unit area (kg/m^2).
     spread_rate_agg : xr.DataArray
-        Rate of spread (m/s).
+        Rate of spread, in the unit given by ``spread_rate_units``.
+        :func:`rate_of_spread` produces m/min.
     heat_content : float, default=18000
         Heat content of fuel (kJ/kg).
+    spread_rate_units : str, default='m/min'
+        Unit of ``spread_rate_agg``: ``'m/min'`` (matches
+        :func:`rate_of_spread`) or ``'m/s'``.
     name : str, default='fireline_intensity'
         Name of output DataArray.
 
@@ -515,6 +525,16 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     validate_arrays(fuel_consumed_agg, spread_rate_agg)
     _validate_scalar(heat_content, func_name='fireline_intensity',
                      name='heat_content', dtype=(int, float), min_val=0)
+    if spread_rate_units not in ('m/min', 'm/s'):
+        raise ValueError(
+            "fireline_intensity: spread_rate_units must be 'm/min' or "
+            f"'m/s', got {spread_rate_units!r}"
+        )
+
+    # Byram's equation needs R in m/s; convert from m/min when needed.
+    spread_data = spread_rate_agg.data.astype('f4')
+    if spread_rate_units == 'm/min':
+        spread_data = spread_data / 60.0
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_fli_cpu,
@@ -524,7 +544,7 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     )
     out = mapper(fuel_consumed_agg)(
         fuel_consumed_agg.data.astype('f4'),
-        spread_rate_agg.data.astype('f4'),
+        spread_data,
         float(heat_content),
     )
     return xr.DataArray(out, name=name,
@@ -795,7 +815,9 @@ def rate_of_spread(slope_agg: xr.DataArray,
     Returns
     -------
     xr.DataArray
-        Rate of spread in m/min (float32).
+        Rate of spread in m/min (float32). This is the default input unit
+        of :func:`fireline_intensity`, so the result can be passed there
+        directly.
     """
     _validate_raster(slope_agg, func_name='rate_of_spread',
                      name='slope_agg')
