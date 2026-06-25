@@ -2,6 +2,33 @@
 -----------
 
 
+### Version 0.10.12 - 2026-06-25
+
+#### New features
+- templates: add from_template() for empty study-area DataArrays over common regions (#3484) (#3487)
+- accessor: add .xrs.validate() to check a raster against the xarray-spatial contract (#3486)
+- accessor: add a categorized repr to the .xrs accessor (#3476) (#3477)
+- accessor: forward per-tool repr to the accessed tool (#3478) (#3479)
+- interpolation: accept GeoDataFrames and expose on the .xrs accessor with coregister (#3481)
+- rasterize: support string/categorical columns with QGIS-visible labels (#3483)
+
+#### Bug fixes and improvements
+- proximity: fix EUCLIDEAN proximity/allocation/direction dropping targets at exact max_distance (#3443)
+- perlin: preserve input x/y coordinates on the output (#3470)
+- perlin: preserve input dtype on the dask backends (#3471)
+- perlin: fix dask OOM by dropping a redundant dask.persist (#3469) (#3473)
+- perlin: document the name parameter in the docstring (#3468)
+- perlin: document name param, float-dtype requirement, and ValueError (#3467)
+- perlin: drop unused not_implemented_func import, fix isort wrap (#3466)
+- perlin: add test coverage for params, degenerate shapes, and metadata (#3472)
+- perlin: fix stale test_perlin coords assertion after coords preservation (#3489)
+- generate_terrain: preserve caller coords/res/crs (#3474) (#3475)
+- least_cost_corridor: propagate friction geo-attrs (#3446) (#3449)
+- corridor: validate matching shapes for precomputed surfaces (#3447)
+- corridor: add strip, cross-backend, param, and metadata test coverage (#3448)
+- fire: add test coverage for dask+cupy dispatch and metadata preservation (#3444)
+
+
 ### Version 0.10.11 - 2026-06-21
 
 #### Bug fixes and improvements
