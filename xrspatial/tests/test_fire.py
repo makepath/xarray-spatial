@@ -918,6 +918,9 @@ _INF_CONTRACTS = [
     (_fli_inf_call, np.array([[np.inf, np.inf, np.inf]], dtype='f4')),
     (_fl_inf_call, np.array([[np.inf, 0.0]], dtype='f4')),
     (_ros_inf_call, np.array([[np.nan, np.inf, np.nan]], dtype='f4')),
+    # kbdi: prev=inf and temp=inf both saturate the 800 clamp; precip=inf
+    # zeroes the deficit, which then re-accumulates the drought factor to
+    # ~43.96 at temp=30, annual_precip=1500.
     (_kbdi_inf_call, np.array([[800.0, 800.0, 43.95906]], dtype='f4')),
 ]
 
