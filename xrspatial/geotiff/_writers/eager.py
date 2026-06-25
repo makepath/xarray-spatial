@@ -430,6 +430,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``col``). A leading non-band dim such as ``time`` is rejected
         because the writer cannot infer the band axis from arbitrary
         names and used to silently treat the leading axis as ``y``.
+
+    Examples
+    --------
+    Write a DataArray to a plain GeoTIFF and read it back:
+
+    >>> from xrspatial.geotiff import open_geotiff, to_geotiff
+    >>> to_geotiff(data, 'elevation.tif')  # doctest: +SKIP
+    >>> da = open_geotiff('elevation.tif')  # doctest: +SKIP
+
+    Write a Cloud Optimized GeoTIFF (tiled, with internal overviews):
+
+    >>> to_geotiff(data, 'elevation_cog.tif', cog=True)  # doctest: +SKIP
+
+    Write a VRT mosaic. A ``.vrt`` output path tiles the array and emits
+    the index that references the tiles:
+
+    >>> to_geotiff(data, 'mosaic.vrt')  # doctest: +SKIP
     """
     from .._reader import _coerce_path
 
