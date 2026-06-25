@@ -82,6 +82,41 @@ def test_resolution_tuple():
     assert rx > ry
 
 
+def test_resolution_honored_exactly():
+    # the nyc bbox is 52814 m tall, not a whole number of 10 m cells, so res_y
+    # used to drift to ~10.0008. The far edge is nudged so res stays exact.
+    agg = from_template("nyc", resolution=10)
+    assert agg.attrs["res"] == (10.0, 10.0)
+
+
+def test_resolution_tuple_honored_exactly():
+    agg = from_template("conus", resolution=(10000, 5000))
+    assert agg.attrs["res"] == (10000.0, 5000.0)
+
+
+def test_coords_match_requested_resolution():
+    # pixel spacing equals the requested resolution on both axes
+    agg = from_template("nyc", resolution=10)
+    np.testing.assert_allclose(np.diff(agg.x.values), 10.0, atol=1e-6)
+    np.testing.assert_allclose(-np.diff(agg.y.values), 10.0, atol=1e-6)
+
+
+def test_nudge_keeps_centers_within_bbox():
+    # nudging the far edges out by < half a cell still leaves every pixel
+    # center inside the registry bbox.
+    agg = from_template("nyc", resolution=10)
+    left, bottom, right, top = _REGIONS["nyc"]["bounds"]
+    assert left <= agg.x.values.min() and agg.x.values.max() <= right
+    assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+def test_country_resolution_honored_exactly():
+    # country codes come back in EPSG:4326 (degrees) but go through the same
+    # nudge math, so a degree resolution is honored exactly too.
+    agg = from_template("FRA", resolution=0.25)
+    assert agg.attrs["res"] == (0.25, 0.25)
+
+
 def test_fill_and_dtype():
     agg = from_template("world")
     assert agg.dtype == np.float32
@@ -144,6 +179,10 @@ def test_dask_numpy_backend():
     np.testing.assert_array_equal(agg.x.values, ref.x.values)
     np.testing.assert_array_equal(agg.y.values, ref.y.values)
     assert agg.attrs == ref.attrs
+    # resolution is honored exactly on the dask path too
+    assert from_template("nyc", resolution=10, backend="dask+numpy").attrs[
+        "res"
+    ] == (10.0, 10.0)
     # values match once computed
     assert np.isnan(agg.compute().values).all()
 
@@ -264,6 +303,11 @@ def test_preserve_resolution_control():
     np.testing.assert_allclose(coarse.attrs["res"][0], 50000, rtol=0.05)
 
 
+def test_preserve_resolution_honored_exactly():
+    agg = from_template("conus", preserve="area", resolution=50000)
+    assert agg.attrs["res"] == (50000.0, 50000.0)
+
+
 def test_preserve_none_unchanged():
     a = from_template("conus")
     b = from_template("conus", preserve=None)
@@ -295,3 +339,49 @@ def test_preserve_downstream_slope():
         warnings.simplefilter("ignore", RuntimeWarning)
         out = slope(agg)
     assert out.shape == agg.shape
+
+
+def test_crs_units_attr():
+    # crs_units mirrors the coordinate units: metres for a projected
+    # template, degrees for a country code in EPSG:4326.
+    proj = from_template("conus")
+    assert proj.attrs["crs_units"] == "m" == proj.x.attrs["units"]
+    geo = from_template("FRA")
+    assert geo.attrs["crs_units"] == "degree" == geo.x.attrs["units"]
+
+
+def test_crs_name_attr():
+    # 5070 is in the built-in LiteCRS table, so the name is deterministic
+    # regardless of whether pyproj is installed.
+    assert from_template("conus").attrs["crs_name"] == "NAD83 / Conus Albers"
+    assert from_template("FRA").attrs["crs_name"] == "WGS 84"
+
+
+def test_crs_name_preserve_path():
+    # The preserve path requires pyproj, so the chosen projection's name
+    # is always available.
+    name = from_template("conus", preserve="area").attrs["crs_name"]
+    assert name == "NAD83 / Conus Albers"
+
+
+def test_crs_name_omitted_without_pyproj(monkeypatch):
+    # When the EPSG code is outside the built-in table and pyproj can't be
+    # imported, crs_name is left off rather than raising.
+    import xrspatial.templates as templates
+
+    def _no_crs(_crs):
+        raise ImportError("pyproj not installed")
+
+    monkeypatch.setattr(templates, "_resolve_crs", _no_crs)
+    agg = from_template("conus")
+    assert "crs_name" not in agg.attrs
+    # The rest of the contract still holds.
+    assert agg.attrs["crs"] == 5070
+    assert agg.attrs["crs_units"] == "m"
+
+
+def test_lite_crs_name_property():
+    from xrspatial.reproject._lite_crs import CRS as LiteCRS
+
+    assert LiteCRS(5070).name == "NAD83 / Conus Albers"
+    assert LiteCRS(4326).name == "WGS 84"

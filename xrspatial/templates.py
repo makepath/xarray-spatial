@@ -173,6 +173,20 @@ def _make_data(shape, fill, backend, chunks):
     )
 
 
+def _crs_name(crs):
+    """Best-effort human-readable name for an EPSG code.
+
+    Resolves through the same two-tier path as the rest of the library
+    (built-in ``LiteCRS`` table first, pyproj fallback). Returns ``None``
+    when the code is outside the built-in table and pyproj is not
+    installed, so the default (non-reproject) path stays dependency-free.
+    """
+    try:
+        return _resolve_crs(crs).name
+    except (ImportError, ValueError, TypeError):
+        return None
+
+
 def from_template(name, resolution=None, *, preserve=None, backend="numpy",
                   fill=np.nan, chunks="auto"):
     """Create an empty DataArray for a common study area.
@@ -181,6 +195,12 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     contract: a 2-D ``['y', 'x']`` grid with pixel-center 1-D coordinates
     (north-up, descending ``y``) and ``res``/``crs`` attributes. It covers the
     study area's rectangular bounding box and is meant as a starting canvas.
+
+    The requested ``resolution`` is honored exactly. The study-area box is
+    rarely a whole number of cells wide, so the far edges (right, top) are
+    nudged out by up to half a cell to land on an exact multiple of the cell
+    size, anchoring the lower-left corner. ``attrs['res']`` therefore matches
+    the ``resolution`` you pass.
 
     Parameters
     ----------
@@ -214,7 +234,11 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     -------
     template : xarray.DataArray
         Empty 2-D raster with ``dims=('y', 'x')``, pixel-center coordinates,
-        and ``attrs`` carrying ``res`` and ``crs``.
+        and ``attrs`` carrying ``res``, ``crs``, ``crs_units`` (``'m'`` or
+        ``'degree'``), and ``crs_name`` (the projection's human-readable
+        name, e.g. ``'NAD83 / Conus Albers'``). ``crs_name`` is omitted only
+        when the EPSG code is outside the built-in table and pyproj is not
+        installed.
 
     Examples
     --------
@@ -268,20 +292,31 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
             f"Use a coarser resolution."
         )
 
-    ys, xs = _make_output_coords(bounds, (height, width))
-    # Realized cell size from the integer grid (may differ slightly from input).
-    actual_res_x = (right - left) / width
-    actual_res_y = (top - bottom) / height
+    # Honor the requested resolution exactly: anchor the lower-left corner and
+    # nudge the far edges to an exact multiple of the cell size, so res comes
+    # back as (res_x, res_y) instead of drifting when the bbox extent isn't a
+    # whole number of cells. Mirrors the reproject grid path
+    # (_compute_output_grid in reproject/_grid.py).
+    right = left + width * res_x
+    top = bottom + height * res_y
+    ys, xs = _make_output_coords((left, bottom, right, top), (height, width))
 
     data = _make_data((height, width), fill, backend, chunks)
+    # Every template emits either EPSG:4326 (country codes, degrees) or a
+    # metre-based projected CRS (curated regions and all preserve paths).
     unit = "degree" if crs == 4326 else "m"
+
+    attrs = {"res": (res_x, res_y), "crs": crs, "crs_units": unit}
+    crs_name = _crs_name(crs)
+    if crs_name is not None:
+        attrs["crs_name"] = crs_name
 
     template = xr.DataArray(
         data,
         name=key,
         coords={"y": ys, "x": xs},
         dims=["y", "x"],
-        attrs={"res": (actual_res_x, actual_res_y), "crs": crs},
+        attrs=attrs,
     )
     template["x"].attrs["units"] = unit
     template["y"].attrs["units"] = unit
