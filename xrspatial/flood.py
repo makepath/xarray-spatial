@@ -176,6 +176,7 @@ def _flood_depth_cupy(hand, wl):
 
 def _flood_depth_dask(hand, wl):
     import dask.array as _da
+    hand = hand.astype(np.float64)
     depth = _da.where(hand <= wl, wl - hand, np.nan)
     depth = _da.where(_da.isnan(hand), np.nan, depth)
     return depth
@@ -366,6 +367,8 @@ def _cn_runoff_cupy(p, cn):
 
 def _cn_runoff_dask(p, cn):
     import dask.array as _da
+    p = p.astype(np.float64)
+    cn = cn.astype(np.float64) if hasattr(cn, 'astype') else float(cn)
     s = (25400.0 / cn) - 254.0
     ia = 0.2 * s
     q = _da.where(p > ia, (p - ia) ** 2 / (p + 0.8 * s), 0.0)
