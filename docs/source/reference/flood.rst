@@ -31,3 +31,24 @@ Travel Time
     :toctree: _autosummary
 
     xrspatial.flood.travel_time
+
+Vegetation Roughness
+====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flood.vegetation_roughness
+
+Vegetation Curve Number
+=======================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flood.vegetation_curve_number
+
+Flood Depth Vegetation
+======================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flood.flood_depth_vegetation
