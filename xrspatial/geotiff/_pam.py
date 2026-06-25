@@ -144,9 +144,14 @@ def read_pam_sidecar(path):
         if colors is not None:
             out['category_colors'] = colors
         return out
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, IndexError):
         # A missing, malformed, or foreign sidecar is non-fatal auxiliary
         # metadata, not a read error -- never let it break open_geotiff.
+        # IndexError covers a thematic RAT whose <Row> carries fewer <F>
+        # cells than its highest column index (e.g. a Name column at index
+        # 1 paired with a single-cell row), which would otherwise escape
+        # _parse_rat and crash the open_geotiff call that reads the
+        # adjacent sidecar.
         return {}
 
 
