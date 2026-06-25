@@ -20,23 +20,45 @@ Two registries back ``from_template``:
     antimeridian (e.g. Russia, Fiji), keeping those bounding boxes contiguous.
 """
 
-# Curated named regions. Bounds are in the region's native projected CRS.
+# Curated named regions. ``bounds`` are in the region's native projected CRS.
+# ``lonlat`` is the region's (lon_min, lat_min, lon_max, lat_max) in EPSG:4326,
+# used by the ``preserve`` path to pick and project into an EPSG-coded CRS.
+# ``area_epsg`` / ``shape_epsg`` override the equal-area / conformal EPSG the
+# ``preserve`` path would otherwise derive (Equal Earth fallback / UTM zone).
 _REGIONS = {
     'conus': dict(bounds=(-2917619, 152524, 2947060, 3257588), crs=5070,
-                  default_resolution=5000, label='CONUS (Albers Equal-Area)'),
+                  default_resolution=5000, label='CONUS (Albers Equal-Area)',
+                  lonlat=(-124.8, 24.4, -66.9, 49.4), area_epsg=5070),
     'alaska': dict(bounds=(-1784455, 110372, 1725461, 2570024), crs=3338,
-                   default_resolution=5000, label='Alaska (Albers)'),
+                   default_resolution=5000, label='Alaska (Albers)',
+                   lonlat=(-179.9, 51.0, -129.0, 71.5), area_epsg=3338),
     'hawaii': dict(bounds=(363084, 2089763, 942628, 2472061), crs=32604,
-                   default_resolution=1000, label='Hawaii (UTM 4N)'),
+                   default_resolution=1000, label='Hawaii (UTM 4N)',
+                   lonlat=(-160.3, 18.9, -154.8, 22.3)),
     'california': dict(bounds=(-423462, -612396, 555056, 457663), crs=3310,
-                       default_resolution=1000, label='California (Albers)'),
+                       default_resolution=1000, label='California (Albers)',
+                       lonlat=(-124.5, 32.5, -114.1, 42.0), area_epsg=3310),
     'europe': dict(bounds=(1172449, 1218199, 7469551, 5735170), crs=3035,
-                   default_resolution=10000, label='Europe (LAEA)'),
+                   default_resolution=10000, label='Europe (LAEA)',
+                   lonlat=(-25.0, 34.0, 45.0, 72.0), area_epsg=3035,
+                   shape_epsg=3034),
     'nyc': dict(bounds=(558916, 4481270, 614426, 4534084), crs=32618,
-                default_resolution=30, label='New York City (UTM 18N)'),
+                default_resolution=30, label='New York City (UTM 18N)',
+                lonlat=(-74.30, 40.48, -73.65, 40.95)),
     'world': dict(bounds=(-180.0, -90.0, 180.0, 90.0), crs=4326,
-                  default_resolution=0.5, label='World (WGS84)'),
+                  default_resolution=0.5, label='World (WGS84)',
+                  lonlat=(-180.0, -90.0, 180.0, 90.0), area_epsg=8857,
+                  shape_epsg=3395),
 }
+
+# Equal-area fallback when a template has no curated ``area_epsg``
+# (all country codes, plus regions like hawaii/nyc): EPSG:8857 Equal Earth.
+_EQUAL_AREA_FALLBACK_EPSG = 8857
+
+# Polar conformal fallback for the ``shape`` path when |lat| exceeds the UTM
+# usable range: EPSG:5041 (UPS North) / 5042 (UPS South).
+_UPS_NORTH_EPSG = 5041
+_UPS_SOUTH_EPSG = 5042
 
 # Default cell size (degrees) for country-code templates returned in EPSG:4326.
 _COUNTRY_DEFAULT_RESOLUTION = 0.1

@@ -186,3 +186,112 @@ def test_downstream_slope_accepts_template():
         out = slope(agg)
     assert out.dims == ("y", "x")
     assert out.shape == agg.shape
+
+
+# ---------------------------------------------------------------------------
+# preserve (EPSG-coded projection by property)
+# ---------------------------------------------------------------------------
+
+pyproj = pytest.importorskip("pyproj")
+
+
+def _proj(crs):
+    return pyproj.CRS.from_epsg(crs).to_dict().get("proj")
+
+
+@pytest.mark.parametrize("preserve", ["area", "shape"])
+def test_preserve_contract(preserve):
+    agg = from_template("conus", preserve=preserve)
+    assert isinstance(agg.attrs["crs"], int)
+    assert agg.dims == ("y", "x")
+    assert agg.x.attrs["units"] == "m"
+    assert np.isnan(agg.values).all()
+    assert agg.dtype == np.float32
+
+
+def test_preserve_area_curated_and_property():
+    agg = from_template("conus", preserve="area")
+    assert agg.attrs["crs"] == 5070            # curated US Albers
+    assert _proj(agg.attrs["crs"]) == "aea"    # equal-area
+    assert from_template("europe", preserve="area").attrs["crs"] == 3035
+
+
+def test_preserve_area_country_equal_earth_fallback():
+    agg = from_template("FRA", preserve="area")
+    assert agg.attrs["crs"] == 8857            # Equal Earth fallback
+    assert _proj(agg.attrs["crs"]) == "eqearth"
+
+
+def test_preserve_shape_utm_zone():
+    # conus centroid (~-95.85 lon) -> UTM zone 15N
+    assert from_template("conus", preserve="shape").attrs["crs"] == 32615
+    # Japan -> UTM 53N
+    assert from_template("JPN", preserve="shape").attrs["crs"] == 32653
+    # any northern UTM zone for France's (overseas-spanning) centroid
+    fra = from_template("FRA", preserve="shape").attrs["crs"]
+    assert 32601 <= fra <= 32660
+    assert _proj(fra) == "utm"
+
+
+def test_preserve_shape_region_override():
+    # europe carries a curated conformal override (ETRS89 LCC Europe)
+    assert from_template("europe", preserve="shape").attrs["crs"] == 3034
+    assert _proj(3034) == "lcc"
+
+
+def test_preserve_antimeridian_countries_build():
+    for code in ("USA", "RUS", "FJI"):
+        for preserve in ("area", "shape"):
+            agg = from_template(code, preserve=preserve)
+            assert isinstance(agg.attrs["crs"], int)
+            assert agg.ndim == 2
+
+
+def test_preserve_case_insensitive():
+    assert from_template("conus", preserve="AREA").attrs["crs"] == 5070
+
+
+@pytest.mark.parametrize("bad", ["distance", "direction", "bogus", "equalarea"])
+def test_preserve_invalid_raises(bad):
+    with pytest.raises(ValueError, match="preserve must be one of"):
+        from_template("conus", preserve=bad)
+
+
+def test_preserve_resolution_control():
+    default = from_template("conus", preserve="area")
+    coarse = from_template("conus", preserve="area", resolution=50000)
+    assert coarse.size < default.size
+    np.testing.assert_allclose(coarse.attrs["res"][0], 50000, rtol=0.05)
+
+
+def test_preserve_none_unchanged():
+    a = from_template("conus")
+    b = from_template("conus", preserve=None)
+    assert a.attrs["crs"] == b.attrs["crs"] == 5070
+    np.testing.assert_array_equal(a.x.values, b.x.values)
+
+
+@dask_array_available
+def test_preserve_dask_backend():
+    import dask.array as da
+    agg = from_template("FRA", preserve="shape", backend="dask+numpy")
+    assert isinstance(agg.data, da.Array)
+    ref = from_template("FRA", preserve="shape")
+    np.testing.assert_array_equal(agg.x.values, ref.x.values)
+    assert agg.attrs == ref.attrs
+
+
+@cuda_and_cupy_available
+def test_preserve_cupy_backend():
+    import cupy
+    agg = from_template("conus", preserve="area", backend="cupy")
+    assert isinstance(agg.data, cupy.ndarray)
+    assert agg.attrs == from_template("conus", preserve="area").attrs
+
+
+def test_preserve_downstream_slope():
+    agg = from_template("conus", preserve="area", resolution=20000)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        out = slope(agg)
+    assert out.shape == agg.shape
