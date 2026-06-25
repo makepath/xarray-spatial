@@ -173,6 +173,20 @@ def _make_data(shape, fill, backend, chunks):
     )
 
 
+def _crs_name(crs):
+    """Best-effort human-readable name for an EPSG code.
+
+    Resolves through the same two-tier path as the rest of the library
+    (built-in ``LiteCRS`` table first, pyproj fallback). Returns ``None``
+    when the code is outside the built-in table and pyproj is not
+    installed, so the default (non-reproject) path stays dependency-free.
+    """
+    try:
+        return _resolve_crs(crs).name
+    except (ImportError, ValueError, TypeError):
+        return None
+
+
 def from_template(name, resolution=None, *, preserve=None, backend="numpy",
                   fill=np.nan, chunks="auto"):
     """Create an empty DataArray for a common study area.
@@ -214,7 +228,11 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     -------
     template : xarray.DataArray
         Empty 2-D raster with ``dims=('y', 'x')``, pixel-center coordinates,
-        and ``attrs`` carrying ``res`` and ``crs``.
+        and ``attrs`` carrying ``res``, ``crs``, ``crs_units`` (``'m'`` or
+        ``'degree'``), and ``crs_name`` (the projection's human-readable
+        name, e.g. ``'NAD83 / Conus Albers'``). ``crs_name`` is omitted only
+        when the EPSG code is outside the built-in table and pyproj is not
+        installed.
 
     Examples
     --------
@@ -276,12 +294,17 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     data = _make_data((height, width), fill, backend, chunks)
     unit = "degree" if crs == 4326 else "m"
 
+    attrs = {"res": (actual_res_x, actual_res_y), "crs": crs, "crs_units": unit}
+    crs_name = _crs_name(crs)
+    if crs_name is not None:
+        attrs["crs_name"] = crs_name
+
     template = xr.DataArray(
         data,
         name=key,
         coords={"y": ys, "x": xs},
         dims=["y", "x"],
-        attrs={"res": (actual_res_x, actual_res_y), "crs": crs},
+        attrs=attrs,
     )
     template["x"].attrs["units"] = unit
     template["y"].attrs["units"] = unit
