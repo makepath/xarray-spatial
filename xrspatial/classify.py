@@ -366,12 +366,12 @@ def reclassify(agg: xr.DataArray,
         >>> agg_da = xr.DataArray(data_da, name='agg_da')
         >>> print(agg_da)
         <xarray.DataArray 'agg_da' (dim_0: 4, dim_1: 5)>
-        dask.array<array, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<array, shape=(4, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         >>> agg_reclassify_da = reclassify(agg_da, bins=bins, new_values=new_values)  # noqa
         >>> print(agg_reclassify_da)
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
-        dask.array<_run_numpy_bin, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<xrspatial.reclassify, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         >>> print(agg_reclassify_da.compute())  # print the computed the results
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
@@ -390,7 +390,7 @@ def reclassify(agg: xr.DataArray,
         >>> agg_cupy = xr.DataArray(data_cupy)
         >>> agg_reclassify_cupy = reclassify(agg_cupy, bins, new_values)
         >>> print(type(agg_reclassify_cupy.data))
-        <class 'cupy.core.core.ndarray'>
+        <class 'cupy.ndarray'>
         >>> print(agg_reclassify_cupy)
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
