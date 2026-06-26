@@ -9,8 +9,6 @@ from xrspatial import (
     aspect,
     bilateral,
     curvature,
-    flow_direction_mfd,
-    flow_length_mfd,
     generate_terrain,
     hillshade,
     preview,
@@ -19,6 +17,7 @@ from xrspatial import (
     surface_direction,
     surface_distance,
 )
+from xrspatial.hydro import flow_direction_mfd, flow_length_mfd
 from xrspatial.convolution import convolve_2d
 from xrspatial.tests.general_checks import create_test_raster
 
