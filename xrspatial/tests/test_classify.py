@@ -44,7 +44,7 @@ def test_binary_numpy(result_binary):
     values, expected_result = result_binary
     numpy_agg = input_data()
     numpy_result = binary(numpy_agg, values)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -52,7 +52,7 @@ def test_binary_dask_numpy(result_binary):
     values, expected_result = result_binary
     dask_agg = input_data(backend='dask')
     dask_result = binary(dask_agg, values)
-    general_output_checks(dask_agg, dask_result, expected_result)
+    general_output_checks(dask_agg, dask_result, expected_result, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -60,7 +60,7 @@ def test_binary_cupy(result_binary):
     values, expected_result = result_binary
     cupy_agg = input_data(backend='cupy')
     cupy_result = binary(cupy_agg, values)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -69,7 +69,25 @@ def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
     dask_cupy_agg = input_data(backend='dask+cupy')
     dask_cupy_result = binary(dask_cupy_agg, values)
-    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result, verify_dtype=True)
+
+
+def test_binary_output_dtype_float32():
+    # binary() must emit float32 regardless of input dtype so its result
+    # dtype matches the cupy/dask+cupy backends and the other classifiers
+    # (regression for the numpy/dask paths returning the input dtype).
+    for in_dtype in (np.float64, np.float32, np.int32):
+        data = np.array([[1, 2, 3], [4, 5, 6]], dtype=in_dtype)
+        result = binary(xr.DataArray(data), [2, 5])
+        assert result.data.dtype == np.float32
+
+
+@dask_array_available
+def test_binary_dask_output_dtype_float32():
+    data = np.array([[1., 2., 3.], [4., 5., 6.]], dtype=np.float64)
+    dask_agg = xr.DataArray(da.from_array(data, chunks=(1, 3)))
+    result = binary(dask_agg, [2, 5])
+    assert result.data.compute().dtype == np.float32
 
 
 @pytest.fixture
