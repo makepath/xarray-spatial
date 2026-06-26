@@ -111,6 +111,8 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                        allow_unparseable_crs: bool = False,
                        drop_rotation: bool = False,
                        pack: bool = False,
+                       color_ramp: str | bool | None = None,
+                       color_ramp_range: tuple[float, float] | None = None,
                        ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
@@ -310,6 +312,13 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         parity with ``to_geotiff``, which applies the ``pack`` re-pack
         transform before dispatching here. See ``to_geotiff`` for the
         behaviour.
+    color_ramp : str, bool, or None, default None
+        [advanced] No-op on the GPU writer: it exists for signature parity
+        with ``to_geotiff``, which writes the symbology sidecars from the
+        shared sidecar closure after this writer returns. See ``to_geotiff``.
+    color_ramp_range : tuple of (float, float) or None, default None
+        [advanced] No-op on the GPU writer; signature parity with
+        ``to_geotiff``. See ``to_geotiff``.
 
     Returns
     -------
@@ -512,8 +521,10 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             f"method, got {type(path).__name__}")
     # ``pack`` is a no-op here: ``to_geotiff`` applies the
     # re-pack transform before dispatching to this writer, so the kwarg
-    # only needs to exist for signature parity (#3064).
-    del pack
+    # only needs to exist for signature parity (#3064). ``color_ramp`` /
+    # ``color_ramp_range`` are likewise wrapper-only: the symbology sidecars
+    # are written by ``to_geotiff``'s sidecar closure, not here.
+    del pack, color_ramp, color_ramp_range
     try:
         import cupy
     except ImportError:

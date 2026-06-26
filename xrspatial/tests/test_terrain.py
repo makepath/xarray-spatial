@@ -470,3 +470,61 @@ def test_generate_terrain_dask_cupy_preserves_coords_attrs():
     np.testing.assert_array_equal(terrain.x.data, src.x.data)
     assert terrain.attrs['crs'] == 'EPSG:5070'
     assert terrain.attrs['res'] == (30, 30)
+
+
+# =====================================================================
+# Issue #3525: an all-NaN template (e.g. from_template) must be filled,
+# not propagated.  data * 0 left NaN * 0 == NaN on numpy / cupy.
+# =====================================================================
+
+def _nan_template(backend='numpy'):
+    """An empty all-NaN grid, like from_template() returns."""
+    data = np.full((50, 50), np.nan, dtype=np.float32)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(10, 10))
+    return raster
+
+
+def test_terrain_all_nan_template_is_finite():
+    """All-NaN input must produce all-finite terrain, not all-NaN."""
+    terrain = generate_terrain(_nan_template())
+    assert np.isfinite(terrain.data).all()
+
+
+def test_terrain_all_nan_template_matches_zeros_template():
+    """generate_terrain ignores input values: an all-NaN template and an
+    all-zeros template must yield identical terrain."""
+    from_nan = generate_terrain(_nan_template())
+    from_zeros = generate_terrain(create_test_arr())
+    np.testing.assert_array_equal(from_nan.data, from_zeros.data)
+
+
+@dask_array_available
+def test_terrain_all_nan_template_dask_matches_numpy():
+    t_np = generate_terrain(_nan_template())
+    t_dask = generate_terrain(_nan_template(backend='dask')).compute()
+    assert np.isfinite(t_dask.data).all()
+    np.testing.assert_allclose(t_np.data, t_dask.data, rtol=1e-5, atol=1e-7)
+
+
+@cuda_and_cupy_available
+def test_terrain_all_nan_template_cupy_matches_numpy():
+    t_np = generate_terrain(_nan_template())
+    t_cupy = generate_terrain(_nan_template(backend='cupy'))
+    assert np.isfinite(t_cupy.data.get()).all()
+    np.testing.assert_allclose(t_np.data, t_cupy.data.get(),
+                               rtol=1e-5, atol=1e-7)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_terrain_all_nan_template_dask_cupy_matches_numpy():
+    t_np = generate_terrain(_nan_template())
+    t_dc = generate_terrain(_nan_template(backend='dask+cupy')).compute()
+    assert np.isfinite(t_dc.data.get()).all()
+    np.testing.assert_allclose(t_np.data, t_dc.data.get(),
+                               rtol=1e-4, atol=1e-4)

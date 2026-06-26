@@ -185,6 +185,9 @@ def dnbr(pre_nbr_agg: xr.DataArray,
     Computes ``pre_nbr - post_nbr``.  Higher values indicate greater
     burn severity.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     pre_nbr_agg : xr.DataArray
@@ -198,6 +201,18 @@ def dnbr(pre_nbr_agg: xr.DataArray,
     -------
     xr.DataArray
         dNBR values (float32).
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import dnbr
+        >>> pre = xr.DataArray(np.array([[0.5, 0.6], [0.4, 0.3]], dtype='f4'))
+        >>> post = xr.DataArray(np.array([[0.1, 0.2], [0.5, 0.1]], dtype='f4'))
+        >>> dnbr(pre, post).values
+        array([[ 0.4       ,  0.40000004],
+               [-0.09999999,  0.20000002]], dtype=float32)
     """
     _validate_raster(pre_nbr_agg, func_name='dnbr', name='pre_nbr_agg')
     _validate_raster(post_nbr_agg, func_name='dnbr', name='post_nbr_agg')
@@ -280,6 +295,9 @@ def rdnbr(dnbr_agg: xr.DataArray,
     pre-fire vegetation density so that burn severity is comparable
     across different vegetation types.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     dnbr_agg : xr.DataArray
@@ -294,6 +312,20 @@ def rdnbr(dnbr_agg: xr.DataArray,
     xr.DataArray
         RdNBR values (float32).  Pixels where ``abs(pre_NBR) < 1e-7``
         are set to NaN to avoid division by near-zero.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import rdnbr
+        >>> dnbr_agg = xr.DataArray(
+        ...     np.array([[0.4, 0.3], [0.1, 0.2]], dtype='f4'))
+        >>> pre = xr.DataArray(
+        ...     np.array([[500., 200.], [300., 400.]], dtype='f4'))
+        >>> rdnbr(dnbr_agg, pre).values
+        array([[0.56568545, 0.6708204 ],
+               [0.18257418, 0.31622776]], dtype=float32)
     """
     _validate_raster(dnbr_agg, func_name='rdnbr', name='dnbr_agg')
     _validate_raster(pre_nbr_agg, func_name='rdnbr', name='pre_nbr_agg')
@@ -408,6 +440,9 @@ def burn_severity_class(dnbr_agg: xr.DataArray,
         3 = unburned, 4 = low severity, 5 = moderate-low,
         6 = moderate-high, 7 = high severity.  0 = nodata.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     dnbr_agg : xr.DataArray or xr.Dataset
@@ -419,6 +454,18 @@ def burn_severity_class(dnbr_agg: xr.DataArray,
     -------
     xr.DataArray
         int8 class labels (0-7).
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import burn_severity_class
+        >>> dnbr_agg = xr.DataArray(
+        ...     np.array([[-0.3, 0.05], [0.3, 0.7]], dtype='f4'))
+        >>> burn_severity_class(dnbr_agg).values
+        array([[1, 3],
+               [5, 7]], dtype=int8)
     """
     _validate_raster(dnbr_agg, func_name='burn_severity_class',
                      name='dnbr_agg')
@@ -486,20 +533,34 @@ def _fli_dask_cupy(fuel_data, spread_data, heat_content):
 def fireline_intensity(fuel_consumed_agg: xr.DataArray,
                        spread_rate_agg: xr.DataArray,
                        heat_content: float = 18000.0,
+                       spread_rate_units: str = 'm/min',
                        name: str = 'fireline_intensity') -> xr.DataArray:
     """Byram's fireline intensity.
 
     ``I = H * w * R`` where *H* is heat content (kJ/kg), *w* is fuel
-    consumed (kg/m^2), and *R* is rate of spread (m/s).
+    consumed (kg/m^2), and *R* is rate of spread in m/s (see
+    ``spread_rate_units`` for the accepted input unit).
+
+    The spread rate is accepted in m/min by default so that the output of
+    :func:`rate_of_spread` can be passed straight in. Byram's equation
+    needs *R* in m/s, so m/min inputs are divided by 60 internally. Pass
+    ``spread_rate_units='m/s'`` if you already hold spread rates in m/s.
+
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
 
     Parameters
     ----------
     fuel_consumed_agg : xr.DataArray
         Fuel consumed per unit area (kg/m^2).
     spread_rate_agg : xr.DataArray
-        Rate of spread (m/s).
+        Rate of spread, in the unit given by ``spread_rate_units``.
+        :func:`rate_of_spread` produces m/min.
     heat_content : float, default=18000
         Heat content of fuel (kJ/kg).
+    spread_rate_units : str, default='m/min'
+        Unit of ``spread_rate_agg``: ``'m/min'`` (matches
+        :func:`rate_of_spread`) or ``'m/s'``.
     name : str, default='fireline_intensity'
         Name of output DataArray.
 
@@ -507,6 +568,17 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     -------
     xr.DataArray
         Fireline intensity in kW/m (float32).
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import fireline_intensity
+        >>> fuel = xr.DataArray(np.array([[2.0, 0.5]], dtype='f4'))
+        >>> spread = xr.DataArray(np.array([[0.1, 0.2]], dtype='f4'))
+        >>> fireline_intensity(fuel, spread, spread_rate_units='m/s').values
+        array([[3600., 1800.]], dtype=float32)
     """
     _validate_raster(fuel_consumed_agg, func_name='fireline_intensity',
                      name='fuel_consumed_agg')
@@ -515,6 +587,16 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     validate_arrays(fuel_consumed_agg, spread_rate_agg)
     _validate_scalar(heat_content, func_name='fireline_intensity',
                      name='heat_content', dtype=(int, float), min_val=0)
+    if spread_rate_units not in ('m/min', 'm/s'):
+        raise ValueError(
+            "fireline_intensity: spread_rate_units must be 'm/min' or "
+            f"'m/s', got {spread_rate_units!r}"
+        )
+
+    # Byram's equation needs R in m/s; convert from m/min when needed.
+    spread_data = spread_rate_agg.data.astype('f4')
+    if spread_rate_units == 'm/min':
+        spread_data = spread_data / 60.0
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_fli_cpu,
@@ -524,7 +606,7 @@ def fireline_intensity(fuel_consumed_agg: xr.DataArray,
     )
     out = mapper(fuel_consumed_agg)(
         fuel_consumed_agg.data.astype('f4'),
-        spread_rate_agg.data.astype('f4'),
+        spread_data,
         float(heat_content),
     )
     return xr.DataArray(out, name=name,
@@ -592,6 +674,9 @@ def flame_length(intensity_agg: xr.DataArray,
     Uses Byram's equation: ``L = 0.0775 * I^0.46``.
     Negative or zero intensity yields zero flame length.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     intensity_agg : xr.DataArray or xr.Dataset
@@ -603,6 +688,16 @@ def flame_length(intensity_agg: xr.DataArray,
     -------
     xr.DataArray
         Flame length in metres (float32).
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import flame_length
+        >>> intensity = xr.DataArray(np.array([[100., 500.]], dtype='f4'))
+        >>> flame_length(intensity).values
+        array([[0.6446169, 1.3515369]], dtype=float32)
     """
     _validate_raster(intensity_agg, func_name='flame_length',
                      name='intensity_agg')
@@ -779,6 +874,9 @@ def rate_of_spread(slope_agg: xr.DataArray,
     Uses the Anderson 13 fuel model lookup table and computes per-pixel
     spread rate from slope, wind speed, and fuel moisture.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     slope_agg : xr.DataArray
@@ -795,7 +893,22 @@ def rate_of_spread(slope_agg: xr.DataArray,
     Returns
     -------
     xr.DataArray
-        Rate of spread in m/min (float32).
+        Rate of spread in m/min (float32). This is the default input unit
+        of :func:`fireline_intensity`, so the result can be passed there
+        directly.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import rate_of_spread
+        >>> slope = xr.DataArray(np.full((2, 2), 10.0, dtype='f4'))
+        >>> wind = xr.DataArray(np.full((2, 2), 10.0, dtype='f4'))
+        >>> moisture = xr.DataArray(np.full((2, 2), 0.06, dtype='f4'))
+        >>> rate_of_spread(slope, wind, moisture, fuel_model=1).values
+        array([[106.6344, 106.6344],
+               [106.6344, 106.6344]], dtype=float32)
     """
     _validate_raster(slope_agg, func_name='rate_of_spread',
                      name='slope_agg')
@@ -949,6 +1062,9 @@ def kbdi(kbdi_prev_agg: xr.DataArray,
     Advances the KBDI by one day given previous KBDI, daily max
     temperature, and daily precipitation.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    xarray DataArrays; the output backend matches the input.
+
     Parameters
     ----------
     kbdi_prev_agg : xr.DataArray
@@ -966,6 +1082,19 @@ def kbdi(kbdi_prev_agg: xr.DataArray,
     -------
     xr.DataArray
         Updated KBDI values (float32), clamped to 0-800.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial import kbdi
+        >>> prev = xr.DataArray(np.full((2, 2), 100.0, dtype='f4'))
+        >>> max_temp = xr.DataArray(np.full((2, 2), 30.0, dtype='f4'))
+        >>> precip = xr.DataArray(np.zeros((2, 2), dtype='f4'))
+        >>> kbdi(prev, max_temp, precip, annual_precip=1000.0).values
+        array([[138.4605, 138.4605],
+               [138.4605, 138.4605]], dtype=float32)
     """
     _validate_raster(kbdi_prev_agg, func_name='kbdi', name='kbdi_prev_agg')
     _validate_raster(max_temp_agg, func_name='kbdi', name='max_temp_agg')

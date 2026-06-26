@@ -28,13 +28,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _dask_task_name_kwargs,
-    _validate_raster,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy)
 
 # Minimum tan(slope) clamp: tan(0.001 deg), same as TWI
 _TAN_MIN = np.tan(np.radians(0.001))
@@ -49,7 +44,28 @@ def _validate_mannings_n_dataarray(mannings_n):
     """
     _validate_raster(mannings_n, func_name='flood',
                      name='mannings_n', ndim=2)
-    arr = np.asarray(mannings_n.values)
+    data = mannings_n.data
+
+    # Lazy-safe: never call .values, which would materialize the whole
+    # array into host memory (a full graph compute for dask, a full
+    # device->host copy for cupy) and OOM the client on large rasters.
+    if da is not None and isinstance(data, da.Array):
+        # Values cannot be checked without computing the graph; defer to
+        # the lazy path where invalid roughness surfaces as inf/NaN.
+        return
+
+    if is_cupy_array(data):
+        import cupy as cp
+        if data.size and (
+            not bool(cp.isfinite(data).all()) or not bool((data > 0).all())
+        ):
+            raise ValueError(
+                "mannings_n DataArray must contain finite, strictly positive "
+                "values (no zeros, negatives, NaN, or Inf)."
+            )
+        return
+
+    arr = np.asarray(data)
     if arr.size and (
         not np.isfinite(arr).all() or not (arr > 0).all()
     ):
@@ -57,6 +73,7 @@ def _validate_mannings_n_dataarray(mannings_n):
             "mannings_n DataArray must contain finite, strictly positive "
             "values (no zeros, negatives, NaN, or Inf)."
         )
+
 
 # ---------------------------------------------------------------------------
 # NLCD-to-Manning's n lookup (Chow 1959; Arcement & Schneider 1989)
@@ -192,6 +209,7 @@ def _flood_depth_cupy(hand, wl):
 
 def _flood_depth_dask(hand, wl):
     import dask.array as _da
+    hand = hand.astype(np.float64)
     depth = _da.where(hand <= wl, wl - hand, np.nan)
     depth = _da.where(_da.isnan(hand), np.nan, depth)
     return depth
@@ -415,6 +433,8 @@ def _cn_runoff_cupy(p, cn):
 
 def _cn_runoff_dask(p, cn):
     import dask.array as _da
+    p = p.astype(np.float64)
+    cn = cn.astype(np.float64) if hasattr(cn, 'astype') else float(cn)
     s = (25400.0 / cn) - 254.0
     ia = 0.2 * s
     q = _da.where(p > ia, (p - ia) ** 2 / (p + 0.8 * s), 0.0)

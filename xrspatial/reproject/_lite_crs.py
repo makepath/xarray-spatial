@@ -286,6 +286,15 @@ class CRS:
         """True if this CRS is geographic (lat/lon), False if projected."""
         return self._entry["_is_geographic"]
 
+    @property
+    def name(self) -> str:
+        """Human-readable CRS name, e.g. ``"NAD83 / Conus Albers"``.
+
+        Mirrors ``pyproj.CRS.name``. Falls back to ``"EPSG:<code>"`` for
+        table entries without a curated name.
+        """
+        return self._entry.get("_name", f"EPSG:{self._epsg}")
+
     # -- output methods ------------------------------------------------
 
     def to_epsg(self) -> int:
