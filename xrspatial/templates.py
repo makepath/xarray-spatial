@@ -67,9 +67,9 @@ def _resolve(name):
     raise ValueError(
         f"Unknown template {name!r}. Available named regions: {regions}. "
         f"{len(_CITIES)} world cities are also supported (lowercase name, e.g. "
-        f"'london', 'tokyo'; see the templates reference). Countries must be an "
-        f"ISO-3166 / GADM alpha-3 code (e.g. 'USA', 'FRA', 'JPN'); "
-        f"{len(_COUNTRY_BBOXES)} are supported."
+        f"'london', 'tokyo'). Countries must be an ISO-3166 / GADM alpha-3 code "
+        f"(e.g. 'USA', 'FRA', 'JPN'); {len(_COUNTRY_BBOXES)} are supported. "
+        f"Call xrspatial.templates.list_templates() to list every accepted name."
     )
 
 
@@ -197,6 +197,56 @@ def _cf_crs_attrs(crs):
     cf = pyproj.CRS.from_epsg(int(crs)).to_cf()
     return {k: cf[k] for k in ("grid_mapping_name", "crs_wkt")
             if cf.get(k) is not None}
+
+
+_TEMPLATE_KINDS = ("regions", "cities", "countries")
+
+
+def list_templates(kind=None):
+    """List the template names ``from_template`` accepts.
+
+    Every name in the result is a valid ``from_template`` argument: region and
+    city names are lowercase, country codes are uppercase ISO-3166 / GADM
+    alpha-3.
+
+    Parameters
+    ----------
+    kind : {'regions', 'cities', 'countries'}, optional
+        Return just one group as a sorted list. When omitted (the default),
+        return a dict mapping each group to its sorted list of names.
+
+    Returns
+    -------
+    dict of str to list of str, or list of str
+        With ``kind=None``, ``{'regions': [...], 'cities': [...],
+        'countries': [...]}``. With ``kind`` set, the sorted list for that
+        group.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> from xrspatial.templates import list_templates
+        >>> names = list_templates()
+        >>> sorted(names)
+        ['cities', 'countries', 'regions']
+        >>> 'conus' in names['regions']
+        True
+        >>> 'london' in list_templates('cities')
+        True
+    """
+    groups = {
+        "regions": sorted(_REGIONS),
+        "cities": sorted(_CITIES),
+        "countries": sorted(_COUNTRY_BBOXES),
+    }
+    if kind is None:
+        return groups
+    if kind not in groups:
+        raise ValueError(
+            f"kind must be one of {_TEMPLATE_KINDS} or None, got {kind!r}."
+        )
+    return groups[kind]
 
 
 def from_template(name, resolution=None, *, preserve=None, backend="numpy",

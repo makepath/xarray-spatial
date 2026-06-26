@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial import from_template, slope
+from xrspatial import from_template, list_templates, slope
 from xrspatial._template_data import _CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES, _REGIONS
 from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 
@@ -132,6 +132,43 @@ def test_world_grid():
 def test_unknown_name_raises(bad):
     with pytest.raises(ValueError, match="Unknown template"):
         from_template(bad)
+
+
+def test_unknown_name_points_to_list_templates():
+    # the error tells the user how to discover valid names
+    with pytest.raises(ValueError, match="list_templates"):
+        from_template("does-not-exist")
+
+
+def test_list_templates_grouped():
+    names = list_templates()
+    assert set(names) == {"regions", "cities", "countries"}
+    # each group lists exactly its registry keys, sorted
+    assert names["regions"] == sorted(_REGIONS)
+    assert names["cities"] == sorted(_CITIES)
+    assert names["countries"] == sorted(_COUNTRY_BBOXES)
+
+
+@pytest.mark.parametrize(
+    "kind,registry",
+    [("regions", _REGIONS), ("cities", _CITIES), ("countries", _COUNTRY_BBOXES)],
+)
+def test_list_templates_kind_filter(kind, registry):
+    assert list_templates(kind) == sorted(registry)
+
+
+def test_list_templates_bad_kind_raises():
+    with pytest.raises(ValueError, match="kind must be one of"):
+        list_templates("city")
+
+
+def test_list_templates_names_resolve():
+    # every advertised name is a valid from_template argument; build one from
+    # each group to confirm the listed names map straight to a template
+    names = list_templates()
+    for kind in ("regions", "cities", "countries"):
+        agg = from_template(names[kind][0])
+        assert agg.dims == ("y", "x")
 
 
 def test_nonpositive_resolution_raises():
