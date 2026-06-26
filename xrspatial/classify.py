@@ -104,7 +104,8 @@ def _run_cupy_binary(data, values):
 
 
 def _run_dask_cupy_binary(data, values_cupy):
-    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()),
+    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy),
+                          meta=cupy.array((), dtype='f4'),
                           **_dask_task_name_kwargs('xrspatial.binary'))
     return out
 
