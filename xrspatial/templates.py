@@ -327,8 +327,8 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         4326
         >>> from_template("london").attrs["crs"]    # greater London, UTM 30N
         32630
-        >>> from_template("FRA", preserve="shape").attrs["crs"]   # UTM 31N
-        32631
+        >>> from_template("FRA", preserve="shape").attrs["crs"]   # UTM 30N
+        32630
         >>> from_template("FRA", preserve="area").attrs["crs"]    # Equal Earth
         8857
     """
