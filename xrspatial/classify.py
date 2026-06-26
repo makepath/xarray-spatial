@@ -48,7 +48,13 @@ def _available_memory_bytes():
 
 @ngjit
 def _cpu_binary(data, values):
-    out = np.empty(data.shape, dtype=data.dtype)
+    # Output float32 to match the cupy/dask+cupy backends (which always
+    # allocate 'f4') and the other classifiers, which route through _cpu_bin
+    # and likewise emit float32. Preserving the input dtype here made binary()
+    # the lone op whose result dtype diverged across backends (float64 on
+    # numpy/dask vs float32 on cupy) and could not hold the NaN sentinel for
+    # integer input.
+    out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):
@@ -98,7 +104,8 @@ def _run_cupy_binary(data, values):
 
 
 def _run_dask_cupy_binary(data, values_cupy):
-    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()),
+    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy),
+                          meta=cupy.array((), dtype='f4'),
                           **_dask_task_name_kwargs('xrspatial.binary'))
     return out
 
@@ -149,10 +156,10 @@ def binary(agg: xr.DataArray, values, name: Optional[str] = 'binary') -> xr.Data
         >>> agg_binary = binary(agg, values)
         >>> print(agg_binary)
         <xarray.DataArray 'binary' (dim_0: 4, dim_1: 5)>
-        array([[np.nan,  1.,  1.,  1.,  0.],
-               [0.,  0.,  0.,  0.,  0.],
-               [0.,  0.,  0.,  0.,  0.],
-               [0.,  0.,  0.,  0.,  np.nan]], dtype=float32)
+        array([[nan,  1.,  1.,  1.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
     _validate_raster(agg, func_name='binary', name='agg', ndim=None)
@@ -353,9 +360,9 @@ def reclassify(agg: xr.DataArray,
         >>> print(agg_reclassify)
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
                [ 1.,  2.,  2.,  2.,  2.],
-               [ 2.,  2.,  2.,  2.,  2.],
-               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
 
     Reclassify works with Dask with NumPy backed xarray DataArray
@@ -366,19 +373,19 @@ def reclassify(agg: xr.DataArray,
         >>> agg_da = xr.DataArray(data_da, name='agg_da')
         >>> print(agg_da)
         <xarray.DataArray 'agg_da' (dim_0: 4, dim_1: 5)>
-        dask.array<array, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<array, shape=(4, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         >>> agg_reclassify_da = reclassify(agg_da, bins=bins, new_values=new_values)  # noqa
         >>> print(agg_reclassify_da)
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
-        dask.array<_run_numpy_bin, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<xrspatial.reclassify, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         >>> print(agg_reclassify_da.compute())  # print the computed the results
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
                [ 1.,  2.,  2.,  2.,  2.],
-               [ 2.,  2.,  2.,  2.,  2.],
-               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
 
     Reclassify works with CuPy backed xarray DataArray.
@@ -390,13 +397,13 @@ def reclassify(agg: xr.DataArray,
         >>> agg_cupy = xr.DataArray(data_cupy)
         >>> agg_reclassify_cupy = reclassify(agg_cupy, bins, new_values)
         >>> print(type(agg_reclassify_cupy.data))
-        <class 'cupy.core.core.ndarray'>
+        <class 'cupy.ndarray'>
         >>> print(agg_reclassify_cupy)
         <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
                [ 1.,  2.,  2.,  2.,  2.],
-               [ 2.,  2.,  2.,  2.,  2.],
-               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
 
     Reclassify works with Dask with CuPy backed xarray DataArray.
@@ -842,12 +849,17 @@ def natural_breaks(agg: xr.DataArray,
         of values to be reclassified.
     k : int, default=5
         Number of classes to be produced.
-    num_sample : int, default=20000
+    num_sample : int or None, default=20000
         Number of sample data points used to fit the model.
         Natural Breaks (Jenks) classification is indeed O(n²) complexity,
         where n is the total number of data points, i.e: `agg.size`
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
+        ``None`` means fit on all data instead of a sub-sample. That is
+        the full O(n²) case described above, so it may be slow and raises
+        ``MemoryError`` if the Jenks matrices would exceed half of the
+        available RAM. For dask the full sample is drawn lazily via
+        indexed access.
     name : str, default='natural_breaks'
         Name of output aggregate.
 
@@ -1021,10 +1033,10 @@ def equal_interval(agg: xr.DataArray,
         >>> print(numpy_equal_interval)
         <xarray.DataArray 'equal_interval' (dim_0: 5, dim_1: 5)>
         array([[nan,  0.,  0.,  0.,  0.],
-               [ 0.,  0.,  0.,  0.,  1.],
-               [ 1.,  1.,  1.,  1.,  1.],
-               [ 1.,  2.,  2.,  2.,  2.],
-               [ 2.,  2.,  2.,  2., nan]], dtype=float32)
+               [ 0.,  1.,  1.,  1.,  1.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 3.,  3.,  3.,  3.,  4.],
+               [ 4.,  4.,  4.,  4., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
         Attributes:
             res:      (10.0, 10.0)
@@ -1101,6 +1113,33 @@ def std_mean(agg: xr.DataArray,
     References
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#StdMean
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import std_mean
+        >>> elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_std_mean = std_mean(agg_numpy)
+        >>> print(numpy_std_mean)
+        <xarray.DataArray 'std_mean' (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  3.],
+               [ 3.,  3.,  3.,  3., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10.0, 10.0)
     """
     _validate_raster(agg, func_name='std_mean', name='agg', ndim=None)
 
@@ -1212,6 +1251,33 @@ def head_tail_breaks(agg: xr.DataArray,
     References
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#HeadTailBreaks
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import head_tail_breaks
+        >>> elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_head_tail_breaks = head_tail_breaks(agg_numpy)
+        >>> print(numpy_head_tail_breaks)
+        <xarray.DataArray 'head_tail_breaks' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10.0, 10.0)
     """
     _validate_raster(agg, func_name='head_tail_breaks', name='agg', ndim=None)
 
@@ -1293,6 +1359,33 @@ def percentiles(agg: xr.DataArray,
     References
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Percentiles
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import percentiles
+        >>> elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_percentiles = percentiles(agg_numpy)
+        >>> print(numpy_percentiles)
+        <xarray.DataArray 'percentiles' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  1.,  1.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  3.,  3.],
+               [ 3.,  3.,  3.,  3.,  3.],
+               [ 3.,  4.,  4.,  5., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10.0, 10.0)
     """
     _validate_raster(agg, func_name='percentiles', name='agg', ndim=None)
 
@@ -1432,6 +1525,33 @@ def maximum_breaks(agg: xr.DataArray,
     References
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#MaximumBreaks
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import maximum_breaks
+        >>> elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_maximum_breaks = maximum_breaks(agg_numpy)
+        >>> print(numpy_maximum_breaks)
+        <xarray.DataArray 'maximum_breaks' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  0.],
+               [ 1.,  2.,  3.,  4., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10.0, 10.0)
     """
     _validate_raster(agg, func_name='maximum_breaks', name='agg', ndim=None)
     _validate_scalar(k, func_name='maximum_breaks', name='k', dtype=int, min_val=2)
@@ -1566,6 +1686,33 @@ def box_plot(agg: xr.DataArray,
     References
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#BoxPlot
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import box_plot
+        >>> elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_box_plot = box_plot(agg_numpy)
+        >>> print(numpy_box_plot)
+        <xarray.DataArray 'box_plot' (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  3.,  3.],
+               [ 3.,  3.,  3.,  4.,  4.],
+               [ 4.,  4.,  4.,  4., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10.0, 10.0)
     """
     _validate_raster(agg, func_name='box_plot', name='agg', ndim=None)
 

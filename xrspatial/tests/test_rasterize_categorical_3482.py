@@ -257,6 +257,46 @@ class TestPamHelpers:
         # Must never raise; worst case returns {}.
         assert isinstance(read_pam_sidecar(path), dict)
 
+    def test_short_row_thematic_rat_returns_empty(self, tmp_path):
+        """A thematic RAT row with fewer <F> cells than the Name column
+        index must not crash read_pam_sidecar.
+
+        The Name column sits at index 1 (after a Value column at index 0),
+        but the row carries a single cell, so indexing the name cell raises
+        IndexError inside _parse_rat. read_pam_sidecar must swallow it and
+        fall back to {} like every other malformed-sidecar case, since
+        open_geotiff reads this sidecar for any local string source.
+        """
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'short_row.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write('<PAMDataset><PAMRasterBand band="1">'
+                     '<GDALRasterAttributeTable tableType="thematic">'
+                     '<FieldDefn index="0"><Name>Value</Name><Type>0</Type>'
+                     '<Usage>5</Usage></FieldDefn>'
+                     '<FieldDefn index="1"><Name>Class</Name><Type>2</Type>'
+                     '<Usage>2</Usage></FieldDefn>'
+                     '<Row index="0"><F>0</F></Row>'
+                     '</GDALRasterAttributeTable>'
+                     '</PAMRasterBand></PAMDataset>')
+        # Must never raise; worst case returns {}.
+        assert read_pam_sidecar(path) == {}
+
+    def test_non_well_formed_xml_sidecar_returns_empty(self, tmp_path):
+        """A truncated / non-well-formed .aux.xml must not crash the read.
+
+        safe_fromstring raises xml.etree.ElementTree.ParseError, which is a
+        SyntaxError subclass (not an OSError/ValueError/TypeError/IndexError),
+        so it would otherwise escape read_pam_sidecar and break the
+        open_geotiff call that reads the sidecar for any local string source.
+        """
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'truncated.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write('<PAMDataset><PAMRasterBand band="1"><Category>oops')
+        # Must never raise; worst case returns {}.
+        assert read_pam_sidecar(path) == {}
+
 
 # ---------------------------------------------------------------------------
 # GPU backend parity

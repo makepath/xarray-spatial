@@ -686,6 +686,16 @@ class TestVegRoughnessDaskCuPy:
         general_output_checks(r_dc, result_dc,
                               expected_results=result_np.data)
 
+    def test_ndvi_numpy_equals_dask_cupy(self):
+        data = np.array([[0.0, 0.5], [np.nan, 1.0]], dtype=np.float64)
+        r_np = create_test_raster(data, backend='numpy', name='ndvi')
+        r_dc = create_test_raster(data, backend='dask+cupy', name='ndvi',
+                                  chunks=(2, 2))
+        result_np = vegetation_roughness(r_np, mode='ndvi')
+        result_dc = vegetation_roughness(r_dc, mode='ndvi')
+        general_output_checks(r_dc, result_dc,
+                              expected_results=result_np.data)
+
 
 # ===================================================================
 # vegetation_curve_number
@@ -1113,3 +1123,127 @@ class TestMannigsNDataArrayLazyValidation:
             "validation eagerly materialized the dask mannings_n raster"
         )
         assert hasattr(result.data, 'dask')
+
+
+# =====================================================================
+# Issue #3499: float32 input must return float64 on every backend
+# =====================================================================
+
+class TestFloat32DtypeConsistency:
+    """flood_depth and curve_number_runoff promise a float64 output.
+
+    numpy and cupy cast to float64; the dask helpers used to skip the
+    cast and leak float32 for a float32 input (#3499).
+    """
+
+    @staticmethod
+    def _hand(backend):
+        data = np.array([[0.0, 2.0], [5.0, 1.0]], dtype=np.float32)
+        return create_test_raster(data, backend=backend, name='hand',
+                                  chunks=(2, 2))
+
+    def test_flood_depth_numpy(self):
+        assert flood_depth(self._hand('numpy'), 5.0).dtype == np.float64
+
+    @dask_array_available
+    def test_flood_depth_dask(self):
+        assert flood_depth(self._hand('dask'), 5.0).data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_flood_depth_cupy(self):
+        assert flood_depth(self._hand('cupy'), 5.0).data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_flood_depth_dask_cupy(self):
+        out = flood_depth(self._hand('dask+cupy'), 5.0)
+        assert out.data.dtype == np.float64
+
+    def test_cn_runoff_numpy(self):
+        out = curve_number_runoff(self._hand('numpy'), curve_number=80.0)
+        assert out.dtype == np.float64
+
+    @dask_array_available
+    def test_cn_runoff_dask(self):
+        out = curve_number_runoff(self._hand('dask'), curve_number=80.0)
+        assert out.data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_cn_runoff_cupy(self):
+        out = curve_number_runoff(self._hand('cupy'), curve_number=80.0)
+        assert out.data.dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_cn_runoff_dask_cupy(self):
+        out = curve_number_runoff(self._hand('dask+cupy'), curve_number=80.0)
+        assert out.data.dtype == np.float64
+
+
+# ===================================================================
+# Output dtype is float64 across all backends (issue #3496)
+# ===================================================================
+
+class TestFloat64OutputAcrossBackends:
+    """float32 input must still produce float64 output on every backend.
+
+    The numpy/cupy backends force float64; the dask backends previously
+    inherited the float32 input dtype, so output dtype depended on the
+    backend.
+    """
+
+    def test_flood_depth_numpy_float32_input(self):
+        hand_data = np.array([[0.0, 2.0], [5.0, 10.0]], dtype=np.float32)
+        hand = create_test_raster(hand_data, backend='numpy', name='hand')
+        assert flood_depth(hand, water_level=5.0).dtype == np.float64
+
+    @dask_array_available
+    def test_flood_depth_dask_float32_input(self):
+        hand_data = np.array([[0.0, 2.0], [5.0, 10.0]], dtype=np.float32)
+        hand = create_test_raster(hand_data, backend='dask', name='hand')
+        assert flood_depth(hand, water_level=5.0).dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_flood_depth_cupy_float32_input(self):
+        hand_data = np.array([[0.0, 2.0], [5.0, 10.0]], dtype=np.float32)
+        hand = create_test_raster(hand_data, backend='cupy', name='hand')
+        assert flood_depth(hand, water_level=5.0).dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_flood_depth_dask_cupy_float32_input(self):
+        hand_data = np.array([[0.0, 2.0], [5.0, 10.0]], dtype=np.float32)
+        hand = create_test_raster(hand_data, backend='dask+cupy', name='hand')
+        assert flood_depth(hand, water_level=5.0).dtype == np.float64
+
+    def test_curve_number_runoff_numpy_float32_input(self):
+        p_data = np.array([[10.0, 100.0]], dtype=np.float32)
+        rainfall = create_test_raster(p_data, backend='numpy', name='rain')
+        assert curve_number_runoff(rainfall, 80.0).dtype == np.float64
+
+    @dask_array_available
+    def test_curve_number_runoff_dask_float32_input(self):
+        p_data = np.array([[10.0, 100.0]], dtype=np.float32)
+        rainfall = create_test_raster(p_data, backend='dask', name='rain')
+        assert curve_number_runoff(rainfall, 80.0).dtype == np.float64
+
+    @dask_array_available
+    def test_curve_number_runoff_dask_float32_cn_dataarray(self):
+        p_data = np.array([[10.0, 100.0]], dtype=np.float32)
+        cn_data = np.array([[80.0, 90.0]], dtype=np.float32)
+        rainfall = create_test_raster(p_data, backend='dask', name='rain')
+        cn = create_test_raster(cn_data, backend='dask', name='cn')
+        assert curve_number_runoff(rainfall, cn).dtype == np.float64
+
+    @cuda_and_cupy_available
+    def test_curve_number_runoff_cupy_float32_input(self):
+        p_data = np.array([[10.0, 100.0]], dtype=np.float32)
+        rainfall = create_test_raster(p_data, backend='cupy', name='rain')
+        assert curve_number_runoff(rainfall, 80.0).dtype == np.float64
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_curve_number_runoff_dask_cupy_float32_input(self):
+        p_data = np.array([[10.0, 100.0]], dtype=np.float32)
+        rainfall = create_test_raster(p_data, backend='dask+cupy', name='rain')
+        assert curve_number_runoff(rainfall, 80.0).dtype == np.float64
