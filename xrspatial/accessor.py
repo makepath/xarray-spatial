@@ -2218,8 +2218,9 @@ class XrsSpatialDatasetAccessor:
 # ``help(da.xrs.slope)`` shows the same documentation as ``help(slope)``.
 # ---------------------------------------------------------------------------
 
-# Accessor method name -> name of the standalone function (in the top-level
-# ``xrspatial`` namespace) whose docstring should be surfaced. Only needed
+# Accessor method name -> name of the standalone function whose docstring
+# should be surfaced (resolved from the top-level ``xrspatial`` namespace, or
+# from ``xrspatial.hydro`` for the internal ``*_d8`` variants). Only needed
 # when the method name differs from the function name, or when the direct
 # delegate's docstring is a generic dispatcher: the hydrology unified wrappers
 # route by ``routing=`` and carry only a stub docstring, so their help text is
@@ -2252,6 +2253,11 @@ def _delegated_doc(method_name):
     import xrspatial
     source_name = _DOC_SOURCE_OVERRIDES.get(method_name, method_name)
     func = getattr(xrspatial, source_name, None)
+    if func is None:
+        # The hydrology ``*_d8`` doc sources are internal to xrspatial.hydro;
+        # only the routing wrappers are exported at the top level.
+        from . import hydro
+        func = getattr(hydro, source_name, None)
     return func.__doc__ if func is not None else None
 
 

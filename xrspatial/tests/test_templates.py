@@ -4,12 +4,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial import from_template, slope
-from xrspatial._template_data import _COUNTRY_BBOXES, _REGIONS
-from xrspatial.tests.general_checks import (
-    cuda_and_cupy_available,
-    dask_array_available,
-)
+from xrspatial import from_template, list_templates, slope
+from xrspatial._template_data import _CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES, _REGIONS
+from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 
 
 def test_contract():
@@ -55,7 +52,7 @@ def test_nyc_resolves():
 def test_country_code():
     agg = from_template("FRA")
     assert agg.attrs["crs"] == 4326
-    assert agg.x.attrs["units"] == "degree"
+    assert agg.x.attrs["units"] == "degrees_east"
     assert np.isnan(agg.values).all()
     assert agg.shape[0] > 1 and agg.shape[1] > 1
     assert agg.name == "FRA"
@@ -137,6 +134,43 @@ def test_unknown_name_raises(bad):
         from_template(bad)
 
 
+def test_unknown_name_points_to_list_templates():
+    # the error tells the user how to discover valid names
+    with pytest.raises(ValueError, match="list_templates"):
+        from_template("does-not-exist")
+
+
+def test_list_templates_grouped():
+    names = list_templates()
+    assert set(names) == {"regions", "cities", "countries"}
+    # each group lists exactly its registry keys, sorted
+    assert names["regions"] == sorted(_REGIONS)
+    assert names["cities"] == sorted(_CITIES)
+    assert names["countries"] == sorted(_COUNTRY_BBOXES)
+
+
+@pytest.mark.parametrize(
+    "kind,registry",
+    [("regions", _REGIONS), ("cities", _CITIES), ("countries", _COUNTRY_BBOXES)],
+)
+def test_list_templates_kind_filter(kind, registry):
+    assert list_templates(kind) == sorted(registry)
+
+
+def test_list_templates_bad_kind_raises():
+    with pytest.raises(ValueError, match="kind must be one of"):
+        list_templates("city")
+
+
+def test_list_templates_names_resolve():
+    # every advertised name is a valid from_template argument; build one from
+    # each group to confirm the listed names map straight to a template
+    names = list_templates()
+    for kind in ("regions", "cities", "countries"):
+        agg = from_template(names[kind][0])
+        assert agg.dims == ("y", "x")
+
+
 def test_nonpositive_resolution_raises():
     with pytest.raises(ValueError, match="positive"):
         from_template("conus", resolution=0)
@@ -168,6 +202,68 @@ def test_registry_codes_resolve():
         assert code in _COUNTRY_BBOXES
         agg = from_template(code)
         assert agg.attrs["crs"] == 4326
+
+
+def test_city_registry_integrity():
+    # the _CITIES block is generated; guard the shape of every entry so a bad
+    # regeneration is caught here rather than at from_template() call time.
+    for key, entry in _CITIES.items():
+        assert key == key.lower() and key.isascii(), key
+        assert set(entry) == {"bounds", "crs", "lonlat", "label"}, key
+        crs = entry["crs"]
+        assert 32601 <= crs <= 32660 or 32701 <= crs <= 32760, (key, crs)
+        lon_min, lat_min, lon_max, lat_max = entry["lonlat"]
+        assert lon_min < lon_max and lat_min < lat_max, key
+        left, bottom, right, top = entry["bounds"]
+        assert left < right and bottom < top, key
+        assert all(np.isfinite(v) for v in entry["bounds"]), key
+    # the curated regions own their names; cities must not shadow them
+    assert not set(_CITIES) & set(_REGIONS)
+
+
+def test_city_sample_builds():
+    # a slice of the registry builds and obeys the array contract; include a
+    # couple of southern-hemisphere cities so the 327xx build path is exercised
+    sample = sorted(_CITIES)[:20] + ["sao_paulo", "sydney"]
+    for name in sample:
+        agg = from_template(name)
+        assert agg.dims == ("y", "x")
+        # projected (UTM) coords carry CF metre units
+        assert agg.x.attrs["units"] == "m"
+        assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
+        assert agg.attrs["res"] == (_CITY_DEFAULT_RESOLUTION,
+                                    _CITY_DEFAULT_RESOLUTION)
+        # north-up, ascending x
+        assert agg.y.values[0] > agg.y.values[-1]
+        assert agg.x.values[0] < agg.x.values[-1]
+        # every pixel center stays inside the registry bbox
+        left, bottom, right, top = _CITIES[name]["bounds"]
+        assert left <= agg.x.values.min() and agg.x.values.max() <= right
+        assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+def test_city_utm_spot_checks():
+    # cities resolve to their UTM zone (a standard EPSG code, not a custom one)
+    assert from_template("london").attrs["crs"] == 32630   # UTM 30N
+    assert from_template("tokyo").attrs["crs"] == 32654     # UTM 54N
+    # southern hemisphere -> 327xx
+    assert 32701 <= from_template("sao_paulo").attrs["crs"] <= 32760
+
+
+def test_city_case_insensitive():
+    a = from_template("tokyo")
+    b = from_template("TOKYO")
+    np.testing.assert_array_equal(a.x.values, b.x.values)
+    assert a.attrs == b.attrs
+
+
+def test_city_name_collision_disambiguated():
+    # same slug, different cities: the larger keeps the bare name, the other
+    # gets an iso2 suffix, and the two resolve to distinct UTM zones
+    assert "hyderabad" in _CITIES and "hyderabad_pk" in _CITIES
+    bare = from_template("hyderabad").attrs["crs"]
+    suffixed = from_template("hyderabad_pk").attrs["crs"]
+    assert bare != suffixed
 
 
 @dask_array_available
@@ -341,43 +437,67 @@ def test_preserve_downstream_slope():
     assert out.shape == agg.shape
 
 
-def test_crs_units_attr():
-    # crs_units mirrors the coordinate units: metres for a projected
-    # template, degrees for a country code in EPSG:4326.
+def test_cf_coordinate_units():
+    # Units live on the coordinates (CF Conventions sec. 4), not on a
+    # crs_units attr. Projected templates use metres; EPSG:4326 uses the
+    # CF degree spellings.
     proj = from_template("conus")
-    assert proj.attrs["crs_units"] == "m" == proj.x.attrs["units"]
+    assert "crs_units" not in proj.attrs
+    assert proj.x.attrs["units"] == "m"
+    assert proj.x.attrs["standard_name"] == "projection_x_coordinate"
+    assert proj.y.attrs["units"] == "m"
+    assert proj.y.attrs["standard_name"] == "projection_y_coordinate"
+
     geo = from_template("FRA")
-    assert geo.attrs["crs_units"] == "degree" == geo.x.attrs["units"]
+    assert "crs_units" not in geo.attrs
+    assert geo.x.attrs["units"] == "degrees_east"
+    assert geo.x.attrs["standard_name"] == "longitude"
+    assert geo.y.attrs["units"] == "degrees_north"
+    assert geo.y.attrs["standard_name"] == "latitude"
 
 
-def test_crs_name_attr():
-    # 5070 is in the built-in LiteCRS table, so the name is deterministic
-    # regardless of whether pyproj is installed.
-    assert from_template("conus").attrs["crs_name"] == "NAD83 / Conus Albers"
-    assert from_template("FRA").attrs["crs_name"] == "WGS 84"
+def test_cf_grid_mapping_attrs():
+    # crs_name is gone; the CF grid-mapping keys identify the projection.
+    proj = from_template("conus")
+    assert "crs_name" not in proj.attrs
+    assert proj.attrs["grid_mapping_name"] == "albers_conical_equal_area"
+    assert "NAD83 / Conus Albers" in proj.attrs["crs_wkt"]
+
+    geo = from_template("FRA")
+    assert geo.attrs["grid_mapping_name"] == "latitude_longitude"
+    assert "WGS 84" in geo.attrs["crs_wkt"]
 
 
-def test_crs_name_preserve_path():
-    # The preserve path requires pyproj, so the chosen projection's name
-    # is always available.
-    name = from_template("conus", preserve="area").attrs["crs_name"]
-    assert name == "NAD83 / Conus Albers"
+def test_cf_grid_mapping_preserve_path():
+    # The preserve path requires pyproj, so the CF keys are always present.
+    agg = from_template("conus", preserve="area")
+    assert agg.attrs["grid_mapping_name"] == "albers_conical_equal_area"
+    assert "Conus Albers" in agg.attrs["crs_wkt"]
 
 
-def test_crs_name_omitted_without_pyproj(monkeypatch):
-    # When the EPSG code is outside the built-in table and pyproj can't be
-    # imported, crs_name is left off rather than raising.
-    import xrspatial.templates as templates
+def test_grid_mapping_omitted_for_equal_earth():
+    # Equal Earth (the preserve='area' fallback for the world bbox) has no
+    # CF grid mapping, so grid_mapping_name is left off and crs_wkt stands
+    # alone.
+    agg = from_template("world", preserve="area")
+    assert agg.attrs["crs"] == 8857
+    assert "grid_mapping_name" not in agg.attrs
+    assert "Equal Earth" in agg.attrs["crs_wkt"]
 
-    def _no_crs(_crs):
-        raise ImportError("pyproj not installed")
 
-    monkeypatch.setattr(templates, "_resolve_crs", _no_crs)
+def test_cf_attrs_omitted_without_pyproj(monkeypatch):
+    # Without pyproj the default (non-reproject) path stays dependency-free:
+    # the CF grid-mapping keys are left off rather than raising.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pyproj", None)
     agg = from_template("conus")
-    assert "crs_name" not in agg.attrs
+    assert "grid_mapping_name" not in agg.attrs
+    assert "crs_wkt" not in agg.attrs
     # The rest of the contract still holds.
     assert agg.attrs["crs"] == 5070
-    assert agg.attrs["crs_units"] == "m"
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
 
 
 def test_lite_crs_name_property():

@@ -10,20 +10,11 @@ array contract (2-D ``['y', 'x']`` grid with pixel-center coordinates and
 import numpy as np
 import xarray as xr
 
-from xrspatial._template_data import (
-    _COUNTRY_BBOXES,
-    _COUNTRY_DEFAULT_RESOLUTION,
-    _EQUAL_AREA_FALLBACK_EPSG,
-    _REGIONS,
-    _UPS_NORTH_EPSG,
-    _UPS_SOUTH_EPSG,
-)
+from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
+                                      _COUNTRY_DEFAULT_RESOLUTION, _EQUAL_AREA_FALLBACK_EPSG,
+                                      _REGIONS, _UPS_NORTH_EPSG, _UPS_SOUTH_EPSG)
 from xrspatial.reproject._crs_utils import _require_pyproj, _resolve_crs
-from xrspatial.reproject._grid import (
-    _edge_samples,
-    _make_output_coords,
-    _transform_boundary,
-)
+from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _transform_boundary
 
 _PRESERVE_OPTIONS = ("area", "shape")
 
@@ -55,6 +46,14 @@ def _resolve(name):
             shape_epsg=region.get("shape_epsg"),
         )
 
+    city = _CITIES.get(name.lower())
+    if city is not None:
+        return dict(
+            bounds=city["bounds"], crs=city["crs"],
+            default_resolution=_CITY_DEFAULT_RESOLUTION, key=name.lower(),
+            lonlat=city["lonlat"], area_epsg=None, shape_epsg=None,
+        )
+
     code = name.upper()
     bbox = _COUNTRY_BBOXES.get(code)
     if bbox is not None:
@@ -67,8 +66,10 @@ def _resolve(name):
     regions = ", ".join(sorted(_REGIONS))
     raise ValueError(
         f"Unknown template {name!r}. Available named regions: {regions}. "
-        f"Countries must be an ISO-3166 / GADM alpha-3 code "
-        f"(e.g. 'USA', 'FRA', 'JPN'); {len(_COUNTRY_BBOXES)} are supported."
+        f"{len(_CITIES)} world cities are also supported (lowercase name, e.g. "
+        f"'london', 'tokyo'). Countries must be an ISO-3166 / GADM alpha-3 code "
+        f"(e.g. 'USA', 'FRA', 'JPN'); {len(_COUNTRY_BBOXES)} are supported. "
+        f"Call xrspatial.templates.list_templates() to list every accepted name."
     )
 
 
@@ -173,18 +174,76 @@ def _make_data(shape, fill, backend, chunks):
     )
 
 
-def _crs_name(crs):
-    """Best-effort human-readable name for an EPSG code.
+def _cf_crs_attrs(crs):
+    """CF Conventions grid-mapping attributes for an EPSG code.
 
-    Resolves through the same two-tier path as the rest of the library
-    (built-in ``LiteCRS`` table first, pyproj fallback). Returns ``None``
-    when the code is outside the built-in table and pyproj is not
-    installed, so the default (non-reproject) path stays dependency-free.
+    Emits the two canonical CF-1.7 identifiers via :meth:`pyproj.CRS.to_cf`:
+    ``grid_mapping_name`` (the controlled-vocabulary projection token, e.g.
+    ``'albers_conical_equal_area'``) and ``crs_wkt`` (the full WKT, which
+    carries the human-readable CRS name). This mirrors the rest of the
+    library, which identifies a CRS by ``crs`` / ``crs_wkt`` and derives
+    anything else with pyproj on demand.
+
+    Best-effort: without pyproj installed the mapping is empty, so the
+    default (non-reproject) path stays dependency-free, same as the old
+    ``crs_name`` behaviour. ``grid_mapping_name`` is also left out for
+    projections CF does not define (e.g. Equal Earth), where ``to_cf``
+    returns ``crs_wkt`` alone.
     """
     try:
-        return _resolve_crs(crs).name
-    except (ImportError, ValueError, TypeError):
-        return None
+        import pyproj
+    except ImportError:
+        return {}
+    cf = pyproj.CRS.from_epsg(int(crs)).to_cf()
+    return {k: cf[k] for k in ("grid_mapping_name", "crs_wkt")
+            if cf.get(k) is not None}
+
+
+def list_templates(kind=None):
+    """List the template names ``from_template`` accepts.
+
+    Every name in the result is a valid ``from_template`` argument: region and
+    city names are lowercase, country codes are uppercase ISO-3166 / GADM
+    alpha-3.
+
+    Parameters
+    ----------
+    kind : {'regions', 'cities', 'countries'}, optional
+        Return just one group as a sorted list. When omitted (the default),
+        return a dict mapping each group to its sorted list of names.
+
+    Returns
+    -------
+    dict of str to list of str, or list of str
+        With ``kind=None``, ``{'regions': [...], 'cities': [...],
+        'countries': [...]}``. With ``kind`` set, the sorted list for that
+        group.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> from xrspatial.templates import list_templates
+        >>> names = list_templates()
+        >>> sorted(names)
+        ['cities', 'countries', 'regions']
+        >>> 'conus' in names['regions']
+        True
+        >>> 'london' in list_templates('cities')
+        True
+    """
+    groups = {
+        "regions": sorted(_REGIONS),
+        "cities": sorted(_CITIES),
+        "countries": sorted(_COUNTRY_BBOXES),
+    }
+    if kind is None:
+        return groups
+    if kind not in groups:
+        raise ValueError(
+            f"kind must be one of {tuple(groups)} or None, got {kind!r}."
+        )
+    return groups[kind]
 
 
 def from_template(name, resolution=None, *, preserve=None, backend="numpy",
@@ -206,9 +265,13 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     ----------
     name : str
         A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'world'``; or an ISO-3166 / GADM alpha-3 country code,
-        e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions come back in a
-        projected CRS; country codes come back in EPSG:4326.
+        ``'europe'``, ``'world'``; a world-city name (case-insensitive), e.g.
+        ``'london'``, ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3
+        country code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and
+        cities come back in a projected CRS (cities in their UTM zone); country
+        codes come back in EPSG:4326. Where two cities share a name the larger
+        keeps the bare name and the others take a ``_<iso2>`` suffix
+        (e.g. ``'hyderabad'`` vs ``'hyderabad_pk'``).
     resolution : float or tuple of float, optional
         Cell size in the template's CRS units (metres for projected regions,
         degrees for country codes). A scalar gives square cells; a
@@ -233,12 +296,22 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     Returns
     -------
     template : xarray.DataArray
-        Empty 2-D raster with ``dims=('y', 'x')``, pixel-center coordinates,
-        and ``attrs`` carrying ``res``, ``crs``, ``crs_units`` (``'m'`` or
-        ``'degree'``), and ``crs_name`` (the projection's human-readable
-        name, e.g. ``'NAD83 / Conus Albers'``). ``crs_name`` is omitted only
-        when the EPSG code is outside the built-in table and pyproj is not
-        installed.
+        Empty 2-D raster with ``dims=('y', 'x')`` and pixel-center
+        coordinates. ``attrs`` carries ``res`` and ``crs`` plus the CF
+        Conventions grid-mapping keys ``grid_mapping_name`` (the projection
+        token, e.g. ``'albers_conical_equal_area'``) and ``crs_wkt`` (full
+        WKT, which carries the human-readable CRS name). The ``x`` / ``y``
+        coordinates follow CF axis conventions: ``units`` ``'m'`` with
+        ``standard_name`` ``'projection_x_coordinate'`` /
+        ``'projection_y_coordinate'`` for projected templates, or
+        ``'degrees_east'`` / ``'degrees_north'`` with ``standard_name``
+        ``'longitude'`` / ``'latitude'`` for EPSG:4326. The grid-mapping keys
+        require pyproj; without it they are omitted (the default,
+        dependency-free path), and ``grid_mapping_name`` is also omitted for
+        projections CF does not define (e.g. Equal Earth), leaving
+        ``crs_wkt`` alone. These keys sit directly on ``attrs`` (the library's
+        flat CRS convention), not on a separate CF grid-mapping variable, so a
+        strict CF reader will not auto-detect them as a grid mapping.
 
     Examples
     --------
@@ -252,6 +325,8 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         >>> agg = from_template("FRA")              # France bbox in EPSG:4326
         >>> agg.attrs["crs"]
         4326
+        >>> from_template("london").attrs["crs"]    # greater London, UTM 30N
+        32630
         >>> from_template("FRA", preserve="shape").attrs["crs"]   # UTM 31N
         32631
         >>> from_template("FRA", preserve="area").attrs["crs"]    # Equal Earth
@@ -302,14 +377,9 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     ys, xs = _make_output_coords((left, bottom, right, top), (height, width))
 
     data = _make_data((height, width), fill, backend, chunks)
-    # Every template emits either EPSG:4326 (country codes, degrees) or a
-    # metre-based projected CRS (curated regions and all preserve paths).
-    unit = "degree" if crs == 4326 else "m"
 
-    attrs = {"res": (res_x, res_y), "crs": crs, "crs_units": unit}
-    crs_name = _crs_name(crs)
-    if crs_name is not None:
-        attrs["crs_name"] = crs_name
+    attrs = {"res": (res_x, res_y), "crs": crs}
+    attrs.update(_cf_crs_attrs(crs))
 
     template = xr.DataArray(
         data,
@@ -318,6 +388,13 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         dims=["y", "x"],
         attrs=attrs,
     )
-    template["x"].attrs["units"] = unit
-    template["y"].attrs["units"] = unit
+    # CF coordinate metadata (CF Conventions sec. 4). Every template emits
+    # either EPSG:4326 (country codes) or a metre-based projected CRS
+    # (curated regions and all preserve paths).
+    if crs == 4326:
+        template["x"].attrs.update(units="degrees_east", standard_name="longitude")
+        template["y"].attrs.update(units="degrees_north", standard_name="latitude")
+    else:
+        template["x"].attrs.update(units="m", standard_name="projection_x_coordinate")
+        template["y"].attrs.update(units="m", standard_name="projection_y_coordinate")
     return template
