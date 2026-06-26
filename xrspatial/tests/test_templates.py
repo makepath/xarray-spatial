@@ -191,7 +191,9 @@ def test_city_sample_builds():
     for name in sample:
         agg = from_template(name)
         assert agg.dims == ("y", "x")
-        assert agg.attrs["crs_units"] == "m"
+        # projected (UTM) coords carry CF metre units
+        assert agg.x.attrs["units"] == "m"
+        assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
         assert agg.attrs["res"] == (_CITY_DEFAULT_RESOLUTION,
                                     _CITY_DEFAULT_RESOLUTION)
         # north-up, ascending x
