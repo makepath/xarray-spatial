@@ -257,7 +257,9 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         require pyproj; without it they are omitted (the default,
         dependency-free path), and ``grid_mapping_name`` is also omitted for
         projections CF does not define (e.g. Equal Earth), leaving
-        ``crs_wkt`` alone.
+        ``crs_wkt`` alone. These keys sit directly on ``attrs`` (the library's
+        flat CRS convention), not on a separate CF grid-mapping variable, so a
+        strict CF reader will not auto-detect them as a grid mapping.
 
     Examples
     --------
@@ -339,8 +341,6 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         template["x"].attrs.update(units="degrees_east", standard_name="longitude")
         template["y"].attrs.update(units="degrees_north", standard_name="latitude")
     else:
-        template["x"].attrs.update(
-            units="m", standard_name="projection_x_coordinate")
-        template["y"].attrs.update(
-            units="m", standard_name="projection_y_coordinate")
+        template["x"].attrs.update(units="m", standard_name="projection_x_coordinate")
+        template["y"].attrs.update(units="m", standard_name="projection_y_coordinate")
     return template
