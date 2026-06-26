@@ -10,20 +10,11 @@ array contract (2-D ``['y', 'x']`` grid with pixel-center coordinates and
 import numpy as np
 import xarray as xr
 
-from xrspatial._template_data import (
-    _COUNTRY_BBOXES,
-    _COUNTRY_DEFAULT_RESOLUTION,
-    _EQUAL_AREA_FALLBACK_EPSG,
-    _REGIONS,
-    _UPS_NORTH_EPSG,
-    _UPS_SOUTH_EPSG,
-)
+from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
+                                      _COUNTRY_DEFAULT_RESOLUTION, _EQUAL_AREA_FALLBACK_EPSG,
+                                      _REGIONS, _UPS_NORTH_EPSG, _UPS_SOUTH_EPSG)
 from xrspatial.reproject._crs_utils import _require_pyproj, _resolve_crs
-from xrspatial.reproject._grid import (
-    _edge_samples,
-    _make_output_coords,
-    _transform_boundary,
-)
+from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _transform_boundary
 
 _PRESERVE_OPTIONS = ("area", "shape")
 
@@ -55,6 +46,14 @@ def _resolve(name):
             shape_epsg=region.get("shape_epsg"),
         )
 
+    city = _CITIES.get(name.lower())
+    if city is not None:
+        return dict(
+            bounds=city["bounds"], crs=city["crs"],
+            default_resolution=_CITY_DEFAULT_RESOLUTION, key=name.lower(),
+            lonlat=city["lonlat"], area_epsg=None, shape_epsg=None,
+        )
+
     code = name.upper()
     bbox = _COUNTRY_BBOXES.get(code)
     if bbox is not None:
@@ -67,8 +66,10 @@ def _resolve(name):
     regions = ", ".join(sorted(_REGIONS))
     raise ValueError(
         f"Unknown template {name!r}. Available named regions: {regions}. "
-        f"Countries must be an ISO-3166 / GADM alpha-3 code "
-        f"(e.g. 'USA', 'FRA', 'JPN'); {len(_COUNTRY_BBOXES)} are supported."
+        f"{len(_CITIES)} world cities are also supported (lowercase name, e.g. "
+        f"'london', 'tokyo'; see the templates reference). Countries must be an "
+        f"ISO-3166 / GADM alpha-3 code (e.g. 'USA', 'FRA', 'JPN'); "
+        f"{len(_COUNTRY_BBOXES)} are supported."
     )
 
 
@@ -217,9 +218,13 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
     ----------
     name : str
         A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'world'``; or an ISO-3166 / GADM alpha-3 country code,
-        e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions come back in a
-        projected CRS; country codes come back in EPSG:4326.
+        ``'europe'``, ``'world'``; a world-city name (case-insensitive), e.g.
+        ``'london'``, ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3
+        country code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and
+        cities come back in a projected CRS (cities in their UTM zone); country
+        codes come back in EPSG:4326. Where two cities share a name the larger
+        keeps the bare name and the others take a ``_<iso2>`` suffix
+        (e.g. ``'hyderabad'`` vs ``'hyderabad_pk'``).
     resolution : float or tuple of float, optional
         Cell size in the template's CRS units (metres for projected regions,
         degrees for country codes). A scalar gives square cells; a
@@ -273,6 +278,8 @@ def from_template(name, resolution=None, *, preserve=None, backend="numpy",
         >>> agg = from_template("FRA")              # France bbox in EPSG:4326
         >>> agg.attrs["crs"]
         4326
+        >>> from_template("london").attrs["crs"]    # greater London, UTM 30N
+        32630
         >>> from_template("FRA", preserve="shape").attrs["crs"]   # UTM 31N
         32631
         >>> from_template("FRA", preserve="area").attrs["crs"]    # Equal Earth
