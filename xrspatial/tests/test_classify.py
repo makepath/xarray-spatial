@@ -69,6 +69,9 @@ def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
     dask_cupy_agg = input_data(backend='dask+cupy')
     dask_cupy_result = binary(dask_cupy_agg, values)
+    # the lazy dask array must advertise the same dtype it computes, otherwise
+    # a downstream consumer reads float64 metadata for a float32 result
+    assert dask_cupy_result.data.dtype == np.float32
     general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result, verify_dtype=True)
 
 
