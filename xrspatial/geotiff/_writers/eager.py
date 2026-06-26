@@ -407,7 +407,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         grayscale stretch. Pass a ramp name (``'viridis'`` -- the default --
         ``'plasma'``, ``'magma'``, ``'inferno'``, ``'cividis'``, ``'greys'``,
         ``'spectral'``, ``'terrain'``) or ``True`` for viridis; an unknown name
-        raises ``ValueError``. Two sidecars are written next to the file: a
+        raises ``ValueError``. ``'greys'`` follows matplotlib's light-to-dark
+        orientation (low values render light). Two sidecars are written: a
         QGIS ``.qml`` style (``<base>.qml``) with a ``singlebandpseudocolor``
         renderer, and ``STATISTICS_MINIMUM/MAXIMUM/MEAN/STDDEV`` in the PAM
         ``<file>.aux.xml``. No-op for a categorical raster (one with
@@ -415,7 +416,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         multiband array, a file-like destination, or data with no finite
         values. Computing the statistics is a separate reduction pass over the
         data; for a dask source that means reading the graph once more (see
-        ``color_ramp_range`` to skip it).
+        ``color_ramp_range`` to skip it). Ignored when ``pack=True``, whose
+        on-disk packed values would not match a ramp built from the logical
+        values.
     color_ramp_range : tuple of (float, float) or None, default None
         [advanced] Explicit ``(min, max)`` for the ``color_ramp`` stretch.
         Skips the statistics reduction -- useful for large dask graphs -- so
@@ -474,7 +477,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     if isinstance(path, str) and isinstance(data, xr.DataArray):
         _cat_names = data.attrs.get('category_names')
         _cat_colors = data.attrs.get('category_colors')
-        if color_ramp and not _cat_names:
+        # ``pack`` rewrites ``data`` to on-disk packed values below, so the
+        # symbology statistics (taken from the logical values here) would
+        # describe a different range than the stored pixels. Skip symbology
+        # when packing rather than emit a mismatched ramp.
+        if color_ramp and not _cat_names and not pack:
             from .._symbology import resolve_ramp
             # Validate the ramp name now so a typo fails before any bytes.
             _sym_stops = resolve_ramp(color_ramp)

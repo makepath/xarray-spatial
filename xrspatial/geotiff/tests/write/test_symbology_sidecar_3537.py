@@ -248,6 +248,32 @@ def test_constant_raster_writes_stats_skips_qml(tmp_path):
     assert not os.path.exists(str(tmp_path / "flat.qml"))  # degenerate ramp
 
 
+def test_pack_skips_symbology(tmp_path):
+    """``pack=True`` rewrites pixels, so symbology is skipped (would mismatch)."""
+    arr = np.linspace(0.0, 10.0, 8 * 8).reshape(8, 8).astype("float32")
+    da = xr.DataArray(
+        arr, dims=("y", "x"),
+        coords={"y": np.arange(8.0), "x": np.arange(8.0)},
+        attrs={"crs": 4326, "scale_factor": 0.1, "add_offset": 0.0,
+               "mask_and_scale_dtype": "int16", "nodata": -1},
+    )
+    path = str(tmp_path / "packed.tif")
+    to_geotiff(da, path, pack=True, color_ramp="viridis")
+    assert not os.path.exists(str(tmp_path / "packed.qml"))
+    assert not os.path.exists(path + ".aux.xml")
+
+
+def test_vrt_write_emits_sidecars(tmp_path):
+    """The .vrt write path also emits symbology via the shared closure."""
+    import dask.array as dsa
+
+    path = str(tmp_path / "mosaic.vrt")
+    to_geotiff(_continuous_da(dsa.from_array(_BASE, chunks=(8, 8))),
+               path, color_ramp="cividis")
+    assert os.path.exists(str(tmp_path / "mosaic.qml"))
+    assert os.path.exists(path + ".aux.xml")
+
+
 def test_color_ramp_range_sets_bounds(tmp_path):
     path = str(tmp_path / "rng.tif")
     to_geotiff(_continuous_da(_BASE), path,
