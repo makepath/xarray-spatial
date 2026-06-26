@@ -185,8 +185,10 @@ def test_city_registry_integrity():
 
 
 def test_city_sample_builds():
-    # a slice of the registry builds and obeys the array contract
-    for name in sorted(_CITIES)[:20]:
+    # a slice of the registry builds and obeys the array contract; include a
+    # couple of southern-hemisphere cities so the 327xx build path is exercised
+    sample = sorted(_CITIES)[:20] + ["sao_paulo", "sydney"]
+    for name in sample:
         agg = from_template(name)
         assert agg.dims == ("y", "x")
         assert agg.attrs["crs_units"] == "m"
