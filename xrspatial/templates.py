@@ -7,6 +7,8 @@ array contract (2-D ``['y', 'x']`` grid with pixel-center coordinates and
 ``res``/``crs`` attributes), so it feeds straight into ``slope``, ``hillshade``,
 ``rasterize``, and the rest of the library.
 """
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import xarray as xr
 
@@ -199,7 +201,7 @@ def _cf_crs_attrs(crs):
             if cf.get(k) is not None}
 
 
-def list_templates(kind=None):
+def list_templates(kind: Optional[str] = None) -> Union[Dict[str, List[str]], List[str]]:
     """List the template names ``from_template`` accepts.
 
     Every name in the result is a valid ``from_template`` argument: region and
@@ -246,8 +248,11 @@ def list_templates(kind=None):
     return groups[kind]
 
 
-def from_template(name, resolution=None, *, preserve=None, backend="numpy",
-                  fill=np.nan, chunks="auto"):
+def from_template(name: str,
+                  resolution: Optional[Union[float, Tuple[float, float]]] = None,
+                  *, preserve: Optional[str] = None, backend: str = "numpy",
+                  fill: float = np.nan,
+                  chunks: Union[int, str, Tuple] = "auto") -> xr.DataArray:
     """Create an empty DataArray for a common study area.
 
     The returned raster is NaN-filled and obeys the xarray-spatial array
