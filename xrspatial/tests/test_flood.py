@@ -686,6 +686,16 @@ class TestVegRoughnessDaskCuPy:
         general_output_checks(r_dc, result_dc,
                               expected_results=result_np.data)
 
+    def test_ndvi_numpy_equals_dask_cupy(self):
+        data = np.array([[0.0, 0.5], [np.nan, 1.0]], dtype=np.float64)
+        r_np = create_test_raster(data, backend='numpy', name='ndvi')
+        r_dc = create_test_raster(data, backend='dask+cupy', name='ndvi',
+                                  chunks=(2, 2))
+        result_np = vegetation_roughness(r_np, mode='ndvi')
+        result_dc = vegetation_roughness(r_dc, mode='ndvi')
+        general_output_checks(r_dc, result_dc,
+                              expected_results=result_np.data)
+
 
 # ===================================================================
 # vegetation_curve_number

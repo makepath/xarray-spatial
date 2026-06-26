@@ -212,11 +212,10 @@ heat_content_kj = float(ANDERSON_13[FUEL_MODEL - 1, 4])
 fuel_consumed_da = template.copy(
     data=(fuel_load_kg_m2 * fuel_density).astype(np.float32),
 )
-ros_m_s_da = template.copy(data=(ros_vals / 60.0).astype(np.float32))
 
 print("Computing fireline intensity & flame length ...")
 intensity_da = fireline_intensity(
-    fuel_consumed_da, ros_m_s_da, heat_content=heat_content_kj,
+    fuel_consumed_da, ros_da, heat_content=heat_content_kj,
 )
 flame_len_da = flame_length(intensity_da)
 flame_len_vals = flame_len_da.values

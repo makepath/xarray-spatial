@@ -314,7 +314,8 @@ class TestFirelineIntensity:
         spread = np.array([[0.1, 0.2], [np.nan, 0.3]], dtype=np.float32)
         result = fireline_intensity(create_test_raster(fuel),
                                     create_test_raster(spread),
-                                    heat_content=18000)
+                                    heat_content=18000,
+                                    spread_rate_units='m/s')
         expected = np.array([
             [18000 * 2.0 * 0.1, 18000 * 0.5 * 0.2],
             [np.nan, np.nan],
@@ -327,8 +328,52 @@ class TestFirelineIntensity:
         spread = np.array([[1.0]], dtype=np.float32)
         result = fireline_intensity(create_test_raster(fuel),
                                     create_test_raster(spread),
+                                    heat_content=20000,
+                                    spread_rate_units='m/s')
+        np.testing.assert_allclose(result.data[0, 0], 20000.0, rtol=1e-5)
+
+    def test_default_units_are_m_per_min(self):
+        # Default spread_rate_units='m/min' divides by 60 before Byram's
+        # equation, so chaining rate_of_spread (m/min) is correct.
+        fuel = np.array([[1.0]], dtype=np.float32)
+        spread = np.array([[60.0]], dtype=np.float32)  # m/min == 1 m/s
+        result = fireline_intensity(create_test_raster(fuel),
+                                    create_test_raster(spread),
                                     heat_content=20000)
         np.testing.assert_allclose(result.data[0, 0], 20000.0, rtol=1e-5)
+
+    def test_m_per_min_is_sixty_times_m_per_s(self):
+        fuel = np.array([[2.0, 0.5]], dtype=np.float32)
+        spread = np.array([[6.0, 12.0]], dtype=np.float32)
+        f_agg = create_test_raster(fuel)
+        s_agg = create_test_raster(spread)
+        as_min = fireline_intensity(f_agg, s_agg, spread_rate_units='m/min')
+        as_sec = fireline_intensity(f_agg, s_agg, spread_rate_units='m/s')
+        np.testing.assert_allclose(as_sec.data, as_min.data * 60.0,
+                                   rtol=1e-5)
+
+    def test_invalid_units_raises(self):
+        fuel = create_test_raster(np.array([[1.0]], dtype=np.float32))
+        spread = create_test_raster(np.array([[1.0]], dtype=np.float32))
+        with pytest.raises(ValueError):
+            fireline_intensity(fuel, spread, spread_rate_units='ft/s')
+
+    def test_chaining_rate_of_spread(self):
+        # The footgun: feeding rate_of_spread (m/min) straight into
+        # fireline_intensity must match an explicit m/min conversion.
+        slope = create_test_raster(np.full((3, 3), 10.0, dtype=np.float32))
+        wind = create_test_raster(np.full((3, 3), 8.0, dtype=np.float32))
+        moist = create_test_raster(np.full((3, 3), 0.08, dtype=np.float32))
+        ros = rate_of_spread(slope, wind, moist, fuel_model=2)
+        fuel = create_test_raster(np.full((3, 3), 1.5, dtype=np.float32))
+        chained = fireline_intensity(fuel, ros)
+        expected = fireline_intensity(fuel, ros, spread_rate_units='m/min')
+        np.testing.assert_allclose(chained.data, expected.data, rtol=1e-5,
+                                   equal_nan=True)
+        # And 60x the m/s interpretation of the same numbers.
+        as_sec = fireline_intensity(fuel, ros, spread_rate_units='m/s')
+        np.testing.assert_allclose(as_sec.data, chained.data * 60.0,
+                                   rtol=1e-5, equal_nan=True)
 
     def test_nan_propagation(self):
         fuel = np.array([[np.nan, 1.0]], dtype=np.float32)
