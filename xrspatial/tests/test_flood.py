@@ -1061,6 +1061,70 @@ class TestMannigsNDataArrayValidation:
             flood_depth_vegetation(hand, slope, bad_n, unit_discharge=1.0)
 
 
+@dask_array_available
+class TestMannigsNDataArrayLazyValidation:
+    """mannings_n DataArray validation must not materialize dask rasters.
+
+    Regression: `_validate_mannings_n_dataarray` previously called
+    `.values`, which computes the whole dask graph into host memory during
+    validation and OOMs the client on large roughness rasters.
+    """
+
+    def _dask_grid(self, value):
+        import dask.array as da
+        return xr.DataArray(
+            da.full((512, 512), value, chunks=(128, 128), dtype=np.float64),
+            dims=('y', 'x'),
+        )
+
+    def test_travel_time_dask_mannings_n_not_materialized(self):
+        import dask.array as da
+        from xrspatial.flood import travel_time
+
+        called = {'n': 0}
+
+        def tripwire(block):
+            called['n'] += 1
+            return block
+
+        base = da.full((512, 512), 0.05, chunks=(128, 128), dtype=np.float64)
+        mannings = xr.DataArray(base.map_blocks(tripwire, dtype=np.float64),
+                                dims=('y', 'x'))
+        fl = self._dask_grid(10.0)
+        slope = self._dask_grid(5.0)
+
+        called['n'] = 0  # ignore one-time meta inference at construction
+        result = travel_time(fl, slope, mannings)
+        assert called['n'] == 0, (
+            "validation eagerly materialized the dask mannings_n raster"
+        )
+        assert hasattr(result.data, 'dask')
+
+    def test_flood_depth_vegetation_dask_mannings_n_not_materialized(self):
+        import dask.array as da
+        from xrspatial.flood import flood_depth_vegetation
+
+        called = {'n': 0}
+
+        def tripwire(block):
+            called['n'] += 1
+            return block
+
+        base = da.full((512, 512), 0.05, chunks=(128, 128), dtype=np.float64)
+        mannings = xr.DataArray(base.map_blocks(tripwire, dtype=np.float64),
+                                dims=('y', 'x'))
+        hand = self._dask_grid(2.0)
+        slope = self._dask_grid(0.5)
+
+        called['n'] = 0  # ignore one-time meta inference at construction
+        result = flood_depth_vegetation(hand, slope, mannings,
+                                        unit_discharge=1.0)
+        assert called['n'] == 0, (
+            "validation eagerly materialized the dask mannings_n raster"
+        )
+        assert hasattr(result.data, 'dask')
+
+
 # =====================================================================
 # Issue #3499: float32 input must return float64 on every backend
 # =====================================================================

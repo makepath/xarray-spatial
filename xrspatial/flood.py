@@ -44,7 +44,28 @@ def _validate_mannings_n_dataarray(mannings_n):
     """
     _validate_raster(mannings_n, func_name='flood',
                      name='mannings_n', ndim=2)
-    arr = np.asarray(mannings_n.values)
+    data = mannings_n.data
+
+    # Lazy-safe: never call .values, which would materialize the whole
+    # array into host memory (a full graph compute for dask, a full
+    # device->host copy for cupy) and OOM the client on large rasters.
+    if da is not None and isinstance(data, da.Array):
+        # Values cannot be checked without computing the graph; defer to
+        # the lazy path where invalid roughness surfaces as inf/NaN.
+        return
+
+    if is_cupy_array(data):
+        import cupy as cp
+        if data.size and (
+            not bool(cp.isfinite(data).all()) or not bool((data > 0).all())
+        ):
+            raise ValueError(
+                "mannings_n DataArray must contain finite, strictly positive "
+                "values (no zeros, negatives, NaN, or Inf)."
+            )
+        return
+
+    arr = np.asarray(data)
     if arr.size and (
         not np.isfinite(arr).all() or not (arr > 0).all()
     ):
