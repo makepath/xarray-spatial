@@ -814,6 +814,42 @@ def _interp_on_accessor(obj, func, points, rest, *, coregister, **kwargs):
     return func(points, *rest, template=obj, **kwargs)
 
 
+def _rasterize_on_accessor(obj, geometries, *, coregister, **kwargs):
+    """Run ``rasterize`` against caller raster *obj* as the ``like`` template.
+
+    *obj* supplies the output grid, chunks, CRS, and attrs (passed as
+    ``like``).  When *geometries* is a GeoDataFrame and ``coregister=True``,
+    its geometries are reprojected into the caller's CRS before rasterizing,
+    the vector analog of ``open_geotiff(coregister=True)``.  With
+    ``coregister=False`` (default) a genuine CRS mismatch raises through
+    ``rasterize``'s own ``check_crs``.  ``coregister`` needs a CRS on both
+    sides and only applies to GeoDataFrame input.
+    """
+    from .rasterize import rasterize, _like_crs
+    from xrspatial.interpolate._vector import is_geodataframe
+
+    if coregister:
+        # is_geodataframe matches the interpolation accessor (#3481): plain
+        # geopandas only, not dask_geopandas, even though standalone
+        # rasterize._parse_input accepts dask_geopandas.  Reprojecting a
+        # dask_geopandas frame under coregister is left for a follow-up.
+        if not is_geodataframe(geometries):
+            raise ValueError(
+                "coregister=True requires a GeoDataFrame input carrying a CRS"
+            )
+        src = _to_pyproj_crs(geometries.crs)
+        # _like_crs detects the caller CRS the same way rasterize's check_crs
+        # does, so the reprojected frame compares equal to the template.
+        target = _to_pyproj_crs(_like_crs(obj))
+        if src is None or target is None:
+            raise ValueError(
+                "coregister=True needs a CRS on both the geometries "
+                "(GeoDataFrame.crs) and the caller (its detected raster CRS)"
+            )
+        geometries = geometries.to_crs(target)
+    return rasterize(geometries, like=obj, **kwargs)
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
@@ -1391,9 +1427,19 @@ class XrsSpatialDataArrayAccessor:
 
     # ---- Rasterize ----
 
-    def rasterize(self, geometries, **kwargs):
-        from .rasterize import rasterize
-        return rasterize(geometries, like=self._obj, **kwargs)
+    def rasterize(self, geometries, *, coregister=False, **kwargs):
+        """Rasterize *geometries* onto this DataArray's grid.
+
+        Equivalent to ``rasterize(geometries, like=self._obj, **kwargs)``.
+        With ``coregister=True`` a GeoDataFrame's geometries are reprojected
+        from their CRS into this raster's CRS before rasterizing; otherwise a
+        genuine CRS mismatch raises (see ``check_crs``).  ``coregister`` needs
+        a CRS on both sides and only applies to GeoDataFrame input.
+
+        See :func:`xrspatial.rasterize.rasterize` for full parameter docs.
+        """
+        return _rasterize_on_accessor(self._obj, geometries,
+                                      coregister=coregister, **kwargs)
 
     # ---- GeoTIFF I/O ----
 
@@ -1959,14 +2005,18 @@ class XrsSpatialDatasetAccessor:
 
     # ---- Rasterize ----
 
-    def rasterize(self, geometries, **kwargs):
-        from .rasterize import rasterize
+    def rasterize(self, geometries, *, coregister=False, **kwargs):
+        """Rasterize *geometries* onto a 2-D variable's grid.
+
+        See :meth:`XrsSpatialDataArrayAccessor.rasterize`.
+        """
         ds = self._obj
         # Find a 2D variable with y/x dims to use as template
         for var in ds.data_vars:
             da = ds[var]
             if da.ndim == 2 and 'y' in da.dims and 'x' in da.dims:
-                return rasterize(geometries, like=da, **kwargs)
+                return _rasterize_on_accessor(da, geometries,
+                                              coregister=coregister, **kwargs)
         raise ValueError(
             "Dataset has no 2D variable with 'y' and 'x' dimensions "
             "to use as rasterize template"
@@ -2168,8 +2218,9 @@ class XrsSpatialDatasetAccessor:
 # ``help(da.xrs.slope)`` shows the same documentation as ``help(slope)``.
 # ---------------------------------------------------------------------------
 
-# Accessor method name -> name of the standalone function (in the top-level
-# ``xrspatial`` namespace) whose docstring should be surfaced. Only needed
+# Accessor method name -> name of the standalone function whose docstring
+# should be surfaced (resolved from the top-level ``xrspatial`` namespace, or
+# from ``xrspatial.hydro`` for the internal ``*_d8`` variants). Only needed
 # when the method name differs from the function name, or when the direct
 # delegate's docstring is a generic dispatcher: the hydrology unified wrappers
 # route by ``routing=`` and carry only a stub docstring, so their help text is
@@ -2202,6 +2253,11 @@ def _delegated_doc(method_name):
     import xrspatial
     source_name = _DOC_SOURCE_OVERRIDES.get(method_name, method_name)
     func = getattr(xrspatial, source_name, None)
+    if func is None:
+        # The hydrology ``*_d8`` doc sources are internal to xrspatial.hydro;
+        # only the routing wrappers are exported at the top level.
+        from . import hydro
+        func = getattr(hydro, source_name, None)
     return func.__doc__ if func is not None else None
 
 
