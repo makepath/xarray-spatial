@@ -317,7 +317,9 @@ _COUNTRY_BBOXES = {
 
 # Major world cities and important regional metros, generated
 # from Natural Earth 10m populated places (public domain):
-# national capitals plus places with POP_MAX >= 1.2 million.
+# national capitals, places with POP_MAX >= 1.2 million, and a
+# curated set of recognizable US secondary cities (Austin, New
+# Orleans, ... -- NE's POP_MAX/SCALERANK underrate US metros).
 # Each city's CRS is its UTM zone (EPSG:326xx north / 327xx south),
 # picked from the centroid -- a standard EPSG projection, never a
 # synthesized one. The bounding box is a metro-scale lon/lat box
@@ -354,6 +356,12 @@ _CITIES = {
     'ahmedabad': dict(
         bounds=(221141, 2518711, 282343, 2579590), crs=32643,
         lonlat=(72.2844, 22.7617, 72.8717, 23.3023), label='Ahmedabad (UTM 43N)'),
+    'albany': dict(
+        bounds=(584501, 4712683, 608936, 4737028), crs=32618,
+        lonlat=(-73.967, 42.5619, -73.6729, 42.7781), label='Albany (UTM 18N)'),
+    'albuquerque': dict(
+        bounds=(338150, 3873740, 362636, 3898116), crs=32613,
+        lonlat=(-106.7735, 34.9969, -106.5092, 35.2131), label='Albuquerque (UTM 13N)'),
     'aleppo': dict(
         bounds=(314869, 3990880, 355773, 4031620), crs=32637,
         lonlat=(36.9447, 36.0517, 37.3914, 36.4121), label='Aleppo (UTM 37N)'),
@@ -381,6 +389,9 @@ _CITIES = {
     'amsterdam': dict(
         bounds=(609866, 5781372, 651107, 5822517), crs=32631,
         lonlat=(4.6197, 52.1717, 5.2097, 52.5321), label='Amsterdam (UTM 31N)'),
+    'anchorage': dict(
+        bounds=(331632, 6778200, 356806, 6803336), crs=32606,
+        lonlat=(-150.1248, 61.1119, -149.6757, 61.3281), label='Anchorage (UTM 6N)'),
     'andorra': dict(
         bounds=(365829, 4694156, 390341, 4718584), crs=32631,
         lonlat=(1.3699, 42.3919, 1.6631, 42.6081), label='Andorra (UTM 31N)'),
@@ -420,6 +431,9 @@ _CITIES = {
     'auckland': dict(
         bounds=(279963, 5899165, 321054, 5940082), crs=32760,
         lonlat=(174.5379, -37.0282, 174.9882, -36.6679), label='Auckland (UTM 60S)'),
+    'austin': dict(
+        bounds=(600497, 3329076, 641072, 3369461), crs=32614,
+        lonlat=(-97.9533, 30.0887, -97.5361, 30.4491), label='Austin (UTM 14N)'),
     'baghdad': dict(
         bounds=(413041, 3659116, 473599, 3719404), crs=32638,
         lonlat=(44.0684, 33.0703, 44.7154, 33.6109), label='Baghdad (UTM 38N)'),
@@ -459,6 +473,9 @@ _CITIES = {
     'basseterre': dict(
         bounds=(518034, 1901013, 542129, 1924967), crs=32620,
         lonlat=(-62.8302, 17.1939, -62.6038, 17.4101), label='Basseterre (UTM 20N)'),
+    'baton_rouge': dict(
+        bounds=(666334, 3358822, 690821, 3383194), crs=32615,
+        lonlat=(-91.2656, 30.3498, -91.0147, 30.5661), label='Baton Rouge (UTM 15N)'),
     'beijing': dict(
         bounds=(417126, 4390121, 477770, 4450525), crs=32650,
         lonlat=(116.0339, 39.6606, 116.7388, 40.2011), label='Beijing (UTM 50N)'),
@@ -498,6 +515,9 @@ _CITIES = {
     'birmingham': dict(
         bounds=(552908, 5794327, 593692, 5835013), crs=32630,
         lonlat=(-2.2178, 52.2967, -1.6261, 52.6571), label='Birmingham (UTM 30N)'),
+    'birmingham_us': dict(
+        bounds=(496176, 3690067, 536400, 3730093), crs=32616,
+        lonlat=(-87.0411, 33.3498, -86.6088, 33.7102), label='Birmingham (UTM 16N)'),
     'bishkek': dict(
         bounds=(453831, 4734965, 478052, 4759093), crs=32643,
         lonlat=(74.4357, 42.7669, 74.7308, 42.9831), label='Bishkek (UTM 43N)'),
@@ -510,6 +530,9 @@ _CITIES = {
     'bogota': dict(
         bounds=(571361, 478424, 631597, 538255), crs=32618,
         lonlat=(-74.3564, 4.3281, -73.8141, 4.8686), label='Bogota (UTM 18N)'),
+    'boise': dict(
+        bounds=(550202, 4816586, 574522, 4840821), crs=32611,
+        lonlat=(-116.3768, 43.5005, -116.0782, 43.7167), label='Boise (UTM 11N)'),
     'boston': dict(
         bounds=(308670, 4668237, 349811, 4709235), crs=32619,
         lonlat=(-71.3157, 42.1517, -70.8282, 42.5121), label='Boston (UTM 19N)'),
@@ -540,6 +563,9 @@ _CITIES = {
     'buenos_aires': dict(
         bounds=(341053, 6139923, 402105, 6200701), crs=32721,
         lonlat=(-58.7278, -34.8708, -58.0711, -34.3303), label='Buenos Aires (UTM 21S)'),
+    'buffalo': dict(
+        bounds=(652448, 4729389, 693612, 4770423), crs=32617,
+        lonlat=(-79.1278, 42.7017, -78.6361, 43.0621), label='Buffalo (UTM 17N)'),
     'bujumbura': dict(
         bounds=(750162, 9614527, 774301, 9638503), crs=32735,
         lonlat=(29.2517, -3.4842, 29.4683, -3.268), label='Bujumbura (UTM 35S)'),
@@ -585,6 +611,12 @@ _CITIES = {
     'changzhou': dict(
         bounds=(760480, 3499586, 801730, 3540653), crs=32650,
         lonlat=(119.7561, 31.6017, 120.18, 31.9621), label='Changzhou (UTM 50N)'),
+    'charleston': dict(
+        bounds=(582234, 3616631, 606547, 3640829), crs=32617,
+        lonlat=(-80.1207, 32.6843, -79.8635, 32.9005), label='Charleston (UTM 17N)'),
+    'charlotte': dict(
+        bounds=(503245, 3884000, 527370, 3908018), crs=32617,
+        lonlat=(-80.9643, 35.0988, -80.6997, 35.315), label='Charlotte (UTM 17N)'),
     'chattogram': dict(
         bounds=(355965, 2449973, 396410, 2490182), crs=32646,
         lonlat=(91.6032, 22.1518, 91.9928, 22.5121), label='Chattogram (UTM 46N)'),
@@ -621,6 +653,9 @@ _CITIES = {
     'colombo': dict(
         bounds=(361742, 754404, 385875, 778367), crs=32644,
         lonlat=(79.7488, 6.8239, 79.9667, 7.0401), label='Colombo (UTM 44N)'),
+    'colorado_springs': dict(
+        bounds=(505995, 4289580, 530142, 4313627), crs=32613,
+        lonlat=(-104.9308, 38.7549, -104.6531, 38.9711), label='Colorado Springs (UTM 13N)'),
     'columbus': dict(
         bounds=(309338, 4407224, 350391, 4448127), crs=32617,
         lonlat=(-83.2271, 39.8017, -82.7568, 40.1621), label='Columbus (UTM 17N)'),
@@ -666,12 +701,18 @@ _CITIES = {
     'davao': dict(
         bounds=(770127, 766906, 810490, 807006), crs=32651,
         lonlat=(125.4465, 6.9318, 125.8096, 7.2921), label='Davao (UTM 51N)'),
+    'dayton': dict(
+        bounds=(727319, 4391643, 752164, 4416397), crs=32616,
+        lonlat=(-84.3425, 39.6442, -84.0613, 39.8604), label='Dayton (UTM 16N)'),
     'delhi': dict(
         bounds=(687131, 3143201, 748470, 3204231), crs=32643,
         lonlat=(76.92, 28.4017, 77.5361, 28.9422), label='Delhi (UTM 43N)'),
     'denver': dict(
         bounds=(481075, 4379034, 521339, 4419052), crs=32613,
         lonlat=(-105.2203, 39.561, -104.7516, 39.9213), label='Denver (UTM 13N)'),
+    'des_moines': dict(
+        bounds=(436165, 4591254, 460428, 4615430), crs=32615,
+        lonlat=(-93.7645, 41.4719, -93.4755, 41.6881), label='Des Moines (UTM 15N)'),
     'detroit': dict(
         bounds=(307844, 4668255, 348981, 4709258), crs=32617,
         lonlat=(-83.3257, 42.1517, -82.8383, 42.5121), label='Detroit (UTM 17N)'),
@@ -717,6 +758,9 @@ _CITIES = {
     'el_giza': dict(
         bounds=(305007, 3301002, 345786, 3341582), crs=32636,
         lonlat=(30.9819, 29.8298, 31.3981, 30.1902), label='El Giza (UTM 36N)'),
+    'el_paso': dict(
+        bounds=(344623, 3505113, 369037, 3529415), crs=32613,
+        lonlat=(-106.6391, 31.6738, -106.3848, 31.89), label='El Paso (UTM 13N)'),
     'essen': dict(
         bounds=(341475, 5681192, 382733, 5722355), crs=32632,
         lonlat=(6.7275, 51.2698, 7.3057, 51.6302), label='Essen (UTM 32N)'),
@@ -741,6 +785,9 @@ _CITIES = {
     'freetown': dict(
         bounds=(682082, 924900, 706262, 948933), crs=32628,
         lonlat=(-13.3455, 8.3638, -13.1269, 8.5801), label='Freetown (UTM 28N)'),
+    'fresno': dict(
+        bounds=(240018, 4058135, 264806, 4082824), crs=32611,
+        lonlat=(-119.9079, 36.6396, -119.6381, 36.8558), label='Fresno (UTM 11N)'),
     'ft_worth': dict(
         bounds=(635188, 3603410, 675957, 3643998), crs=32614,
         lonlat=(-97.5542, 32.5598, -97.1258, 32.9202), label='Ft. Worth (UTM 14N)'),
@@ -777,6 +824,9 @@ _CITIES = {
     'goiania': dict(
         bounds=(660821, 8130734, 701289, 8170959), crs=32722,
         lonlat=(-49.4901, -16.8983, -49.1138, -16.5379), label='Goiania (UTM 22S)'),
+    'grand_rapids': dict(
+        bounds=(596256, 4745458, 620736, 4769848), crs=32616,
+        lonlat=(-85.8177, 42.8556, -85.5222, 43.0718), label='Grand Rapids (UTM 16N)'),
     'guadalajara': dict(
         bounds=(653500, 2266599, 694043, 2306898), crs=32613,
         lonlat=(-103.5246, 20.4918, -103.1394, 20.8521), label='Guadalajara (UTM 13N)'),
@@ -831,6 +881,9 @@ _CITIES = {
     'hargeysa': dict(
         bounds=(385357, 1044921, 409480, 1068892), crs=32638,
         lonlat=(43.9557, 9.4519, 44.1749, 9.6681), label='Hargeysa (UTM 38N)'),
+    'hartford': dict(
+        bounds=(680313, 4614742, 705057, 4639397), crs=32618,
+        lonlat=(-72.8269, 41.6639, -72.537, 41.8801), label='Hartford (UTM 18N)'),
     'havana': dict(
         bounds=(339845, 2538872, 380350, 2579153), crs=32617,
         lonlat=(-82.5621, 22.9537, -82.1702, 23.3141), label='Havana (UTM 17N)'),
@@ -861,6 +914,9 @@ _CITIES = {
     'honiara': dict(
         bounds=(592210, 8944593, 616342, 8968565), crs=32757,
         lonlat=(159.8402, -9.5461, 160.0594, -9.3299), label='Honiara (UTM 57S)'),
+    'honolulu': dict(
+        bounds=(606129, 2344703, 630377, 2368809), crs=32604,
+        lonlat=(-157.976, 21.2007, -157.7439, 21.4169), label='Honolulu (UTM 4N)'),
     'houston': dict(
         bounds=(253177, 3280987, 294142, 3321755), crs=32615,
         lonlat=(-95.5496, 29.6417, -95.1342, 30.0021), label='Houston (UTM 15N)'),
@@ -909,6 +965,9 @@ _CITIES = {
     'jabalpur': dict(
         bounds=(372616, 2543419, 413027, 2583609), crs=32644,
         lonlat=(79.7571, 22.9968, 80.1491, 23.3572), label='Jabalpur (UTM 44N)'),
+    'jacksonville': dict(
+        bounds=(423284, 3343722, 447506, 3367823), crs=32617,
+        lonlat=(-81.7972, 30.2239, -81.5467, 30.4401), label='Jacksonville (UTM 17N)'),
     'jaipur': dict(
         bounds=(560070, 2958103, 600447, 2998279), crs=32643,
         lonlat=(75.606, 26.7429, 76.0101, 27.1033), label='Jaipur (UTM 43N)'),
@@ -1002,6 +1061,9 @@ _CITIES = {
     'kinshasa': dict(
         bounds=(504659, 9491745, 564835, 9551517), crs=32733,
         lonlat=(15.042, -4.598, 15.5841, -4.0575), label='Kinshasa (UTM 33S)'),
+    'knoxville': dict(
+        bounds=(224266, 3972217, 249077, 3996928), crs=32617,
+        lonlat=(-84.0536, 35.8619, -83.7865, 36.0781), label='Knoxville (UTM 17N)'),
     'kobe': dict(
         bounds=(495492, 3817575, 535721, 3857609), crs=32653,
         lonlat=(134.9509, 34.4998, 135.3891, 34.8602), label='Kobe (UTM 53N)'),
@@ -1086,6 +1148,9 @@ _CITIES = {
     'los_angeles': dict(
         bounds=(360290, 3731628, 421193, 3792257), crs=32611,
         lonlat=(-118.5079, 33.7217, -117.856, 34.2622), label='Los Angeles (UTM 11N)'),
+    'louisville': dict(
+        bounds=(597160, 4219591, 621581, 4243906), crs=32616,
+        lonlat=(-85.8883, 38.1189, -85.613, 38.3351), label='Louisville (UTM 16N)'),
     'luan': dict(
         bounds=(430368, 3493049, 470697, 3533189), crs=32650,
         lonlat=(116.2662, 31.5721, 116.69, 31.9325), label='Luan (UTM 50N)'),
@@ -1200,6 +1265,9 @@ _CITIES = {
     'melekeok': dict(
         bounds=(446751, 815688, 470835, 839610), crs=32653,
         lonlat=(134.5175, 7.3793, 134.7356, 7.5955), label='Melekeok (UTM 53N)'),
+    'memphis': dict(
+        bounds=(752577, 3870113, 793937, 3911298), crs=32615,
+        lonlat=(-90.2222, 34.9418, -89.7817, 35.3021), label='Memphis (UTM 15N)'),
     'mexico_city': dict(
         bounds=(455883, 2120091, 516160, 2179965), crs=32614,
         lonlat=(-99.4196, 19.1741, -98.8463, 19.7147), label='Mexico City (UTM 14N)'),
@@ -1290,6 +1358,9 @@ _CITIES = {
     'naples': dict(
         bounds=(415884, 4501344, 456383, 4541698), crs=32633,
         lonlat=(14.0049, 40.6618, 14.4812, 41.0222), label='Naples (UTM 33N)'),
+    'nashville': dict(
+        bounds=(507553, 3991028, 531699, 4015063), crs=32616,
+        lonlat=(-86.9159, 36.0638, -86.648, 36.28), label='Nashville (UTM 16N)'),
     'nasik': dict(
         bounds=(351943, 2192135, 392356, 2232306), crs=32643,
         lonlat=(73.5863, 19.8222, 73.9698, 20.1825), label='Nasik (UTM 43N)'),
@@ -1308,6 +1379,9 @@ _CITIES = {
     'new_delhi': dict(
         bounds=(702870, 3153453, 727402, 3177857), crs=32643,
         lonlat=(77.0768, 28.4919, 77.3231, 28.7081), label='New Delhi (UTM 43N)'),
+    'new_orleans': dict(
+        bounds=(773033, 3309837, 797742, 3334443), crs=32615,
+        lonlat=(-90.1667, 29.8888, -89.9171, 30.1051), label='New Orleans (UTM 15N)'),
     'new_taipei': dict(
         bounds=(324789, 2747073, 365368, 2787444), crs=32651,
         lonlat=(121.2662, 24.8326, 121.6638, 25.193), label='New Taipei (UTM 51N)'),
@@ -1329,6 +1403,9 @@ _CITIES = {
     'nizhny_novgorod': dict(
         bounds=(417578, 6223515, 458353, 6264200), crs=32638,
         lonlat=(43.6731, 56.1548, 44.3232, 56.5151), label='Nizhny Novgorod (UTM 38N)'),
+    'norfolk': dict(
+        bounds=(365492, 4058761, 406184, 4099271), crs=32618,
+        lonlat=(-76.5052, 36.6698, -76.0548, 37.0301), label='Norfolk (UTM 18N)'),
     'nouakchott': dict(
         bounds=(384685, 1987996, 408887, 2012046), crs=32628,
         lonlat=(-16.0891, 17.9783, -15.8616, 18.1945), label='Nouakchott (UTM 28N)'),
@@ -1341,6 +1418,12 @@ _CITIES = {
     'oakland': dict(
         bounds=(548410, 4160325, 588887, 4200646), crs=32610,
         lonlat=(-122.449, 37.5887, -121.9932, 37.9491), label='Oakland (UTM 10N)'),
+    'oklahoma_city': dict(
+        bounds=(622010, 3914232, 646459, 3938573), crs=32614,
+        lonlat=(-97.6534, 35.3639, -97.3879, 35.5801), label='Oklahoma City (UTM 14N)'),
+    'omaha': dict(
+        bounds=(738119, 4557304, 763049, 4582140), crs=32614,
+        lonlat=(-96.1538, 41.1319, -95.8662, 41.3481), label='Omaha (UTM 14N)'),
     'omdurman': dict(
         bounds=(424136, 1706633, 464347, 1746597), crs=32636,
         lonlat=(32.2929, 15.4365, 32.6671, 15.7969), label='Omdurman (UTM 36N)'),
@@ -1467,6 +1550,9 @@ _CITIES = {
     'rajkot': dict(
         bounds=(664932, 2448287, 705538, 2488661), crs=32642,
         lonlat=(70.6033, 22.1318, 70.9928, 22.4921), label='Rajkot (UTM 42N)'),
+    'raleigh': dict(
+        bounds=(692268, 3945961, 733385, 3986910), crs=32617,
+        lonlat=(-78.8669, 35.6386, -78.4225, 35.999), label='Raleigh (UTM 17N)'),
     'rangoon': dict(
         bounds=(177376, 1837735, 218099, 1878219), crs=32647,
         lonlat=(95.9765, 16.6051, 96.3529, 16.9655), label='Rangoon (UTM 47N)'),
@@ -1476,9 +1562,15 @@ _CITIES = {
     'recife': dict(
         bounds=(268527, 9087024, 308830, 9127078), crs=32725,
         lonlat=(-35.0995, -8.2539, -34.7356, -7.8935), label='Recife (UTM 25S)'),
+    'reno': dict(
+        bounds=(245178, 4367024, 270034, 4391780), crs=32611,
+        lonlat=(-119.9602, 39.4219, -119.6798, 39.6381), label='Reno (UTM 11N)'),
     'reykjavik': dict(
         bounds=(441494, 7101872, 465976, 7126322), crs=32627,
         lonlat=(-22.198, 64.0419, -21.7021, 64.2581), label='Reykjavik (UTM 27N)'),
+    'richmond': dict(
+        bounds=(271028, 4146635, 295748, 4171255), crs=32618,
+        lonlat=(-77.5883, 37.4439, -77.3156, 37.6601), label='Richmond (UTM 18N)'),
     'riga': dict(
         bounds=(311024, 6303041, 336152, 6328118), crs=32635,
         lonlat=(23.9017, 56.8419, 24.2982, 57.0581), label='Riga (UTM 35N)'),
@@ -1488,6 +1580,9 @@ _CITIES = {
     'riyadh': dict(
         bounds=(658930, 2706350, 699573, 2746785), crs=32638,
         lonlat=(46.5726, 24.4626, 46.969, 24.823), label='Riyadh (UTM 38N)'),
+    'rochester': dict(
+        bounds=(274443, 4770925, 299289, 4795691), crs=32618,
+        lonlat=(-77.7701, 43.0643, -77.4737, 43.2805), label='Rochester (UTM 18N)'),
     'rome': dict(
         bounds=(270339, 4620938, 311683, 4662136), crs=32633,
         lonlat=(12.2392, 41.7177, 12.7234, 42.0781), label='Rome (UTM 33N)'),
@@ -1509,6 +1604,9 @@ _CITIES = {
     'saint_john_s': dict(
         bounds=(610232, 1880942, 634450, 1905006), crs=32620,
         lonlat=(-61.9632, 17.0099, -61.7369, 17.2261), label="Saint John's (UTM 20N)"),
+    'salt_lake_city': dict(
+        bounds=(409156, 4502302, 433512, 4526558), crs=32612,
+        lonlat=(-112.0748, 40.6689, -111.7892, 40.8851), label='Salt Lake City (UTM 12N)'),
     'salvador': dict(
         bounds=(536111, 8546369, 576300, 8586307), crs=32724,
         lonlat=(-38.6668, -13.1482, -38.297, -12.7878), label='Salvador (UTM 24S)'),
@@ -1569,6 +1667,9 @@ _CITIES = {
     'sarajevo': dict(
         bounds=(277203, 4846165, 302061, 4870941), crs=32634,
         lonlat=(18.2331, 43.7419, 18.5329, 43.9581), label='Sarajevo (UTM 34N)'),
+    'savannah': dict(
+        bounds=(477546, 3530792, 501655, 3554781), crs=32617,
+        lonlat=(-81.2375, 31.913, -80.9825, 32.1292), label='Savannah (UTM 17N)'),
     'seattle': dict(
         bounds=(529306, 5248779, 569815, 5289162), crs=32610,
         lonlat=(-122.609, 47.3918, -122.0749, 47.7521), label='Seattle (UTM 10N)'),
@@ -1620,6 +1721,9 @@ _CITIES = {
     'sofia': dict(
         bounds=(669060, 4707935, 710318, 4749058), crs=32634,
         lonlat=(23.0696, 42.5051, 23.5598, 42.8655), label='Sofia (UTM 34N)'),
+    'spokane': dict(
+        bounds=(456332, 5267642, 480567, 5291801), crs=32611,
+        lonlat=(-117.5805, 47.5619, -117.2594, 47.7781), label='Spokane (UTM 11N)'),
     'st_louis': dict(
         bounds=(719430, 4259526, 760791, 4300725), crs=32615,
         lonlat=(-90.4726, 38.4568, -90.0113, 38.8171), label='St. Louis (UTM 15N)'),
@@ -1656,6 +1760,9 @@ _CITIES = {
     'sydney': dict(
         bounds=(311584, 6225088, 352443, 6265756), crs=32756,
         lonlat=(150.9661, -34.0982, 151.4004, -33.7379), label='Sydney (UTM 56S)'),
+    'syracuse': dict(
+        bounds=(394102, 4754850, 418530, 4779189), crs=32618,
+        lonlat=(-76.298, 42.9419, -76.0021, 43.1581), label='Syracuse (UTM 18N)'),
     'tabriz': dict(
         bounds=(593636, 4196159, 634343, 4236700), crs=32638,
         lonlat=(46.0704, 37.9081, 46.5282, 38.2684), label='Tabriz (UTM 38N)'),
@@ -1674,6 +1781,9 @@ _CITIES = {
     'taiyuan': dict(
         bounds=(615349, 4172989, 656169, 4213632), crs=32649,
         lonlat=(112.3148, 37.6968, 112.7714, 38.0571), label='Taiyuan (UTM 49N)'),
+    'tallahassee': dict(
+        bounds=(748872, 3359526, 773542, 3384077), crs=32616,
+        lonlat=(-84.4054, 30.3419, -84.1546, 30.5581), label='Tallahassee (UTM 16N)'),
     'tallinn': dict(
         bounds=(358632, 6578143, 383560, 6603032), crs=32635,
         lonlat=(24.5155, 59.3258, 24.9406, 59.542), label='Tallinn (UTM 35N)'),
@@ -1731,6 +1841,12 @@ _CITIES = {
     'tripoli': dict(
         bounds=(309305, 3620533, 350145, 3661187), crs=32633,
         lonlat=(12.9654, 32.7123, 13.3946, 33.0727), label='Tripoli (UTM 33N)'),
+    'tucson': dict(
+        bounds=(498141, 3551387, 522249, 3575387), crs=32612,
+        lonlat=(-111.0197, 32.0988, -110.7642, 32.3151), label='Tucson (UTM 12N)'),
+    'tulsa': dict(
+        bounds=(223859, 3988886, 248683, 4013603), crs=32615,
+        lonlat=(-96.0639, 36.0119, -95.7962, 36.2281), label='Tulsa (UTM 15N)'),
     'tunis': dict(
         bounds=(584965, 4053432, 625603, 4093909), crs=32632,
         lonlat=(9.9547, 36.6226, 10.4047, 36.983), label='Tunis (UTM 32N)'),
@@ -1815,6 +1931,9 @@ _CITIES = {
     'west_palm_beach': dict(
         bounds=(566976, 2938411, 607376, 2978607), crs=32617,
         lonlat=(-80.3254, 26.5648, -79.9219, 26.9252), label='West Palm Beach (UTM 17N)'),
+    'wichita': dict(
+        bounds=(634937, 4163861, 659463, 4188280), crs=32614,
+        lonlat=(-97.4667, 37.6119, -97.1933, 37.8281), label='Wichita (UTM 14N)'),
     'windhoek': dict(
         bounds=(702033, 7490439, 726445, 7514719), crs=32733,
         lonlat=(16.9665, -22.6781, 17.2006, -22.4619), label='Windhoek (UTM 33S)'),
