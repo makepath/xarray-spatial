@@ -55,7 +55,7 @@ def test_nyc_resolves():
 def test_country_code():
     agg = from_template("FRA")
     assert agg.attrs["crs"] == 4326
-    assert agg.x.attrs["units"] == "degree"
+    assert agg.x.attrs["units"] == "degrees_east"
     assert np.isnan(agg.values).all()
     assert agg.shape[0] > 1 and agg.shape[1] > 1
     assert agg.name == "FRA"
@@ -341,43 +341,67 @@ def test_preserve_downstream_slope():
     assert out.shape == agg.shape
 
 
-def test_crs_units_attr():
-    # crs_units mirrors the coordinate units: metres for a projected
-    # template, degrees for a country code in EPSG:4326.
+def test_cf_coordinate_units():
+    # Units live on the coordinates (CF Conventions sec. 4), not on a
+    # crs_units attr. Projected templates use metres; EPSG:4326 uses the
+    # CF degree spellings.
     proj = from_template("conus")
-    assert proj.attrs["crs_units"] == "m" == proj.x.attrs["units"]
+    assert "crs_units" not in proj.attrs
+    assert proj.x.attrs["units"] == "m"
+    assert proj.x.attrs["standard_name"] == "projection_x_coordinate"
+    assert proj.y.attrs["units"] == "m"
+    assert proj.y.attrs["standard_name"] == "projection_y_coordinate"
+
     geo = from_template("FRA")
-    assert geo.attrs["crs_units"] == "degree" == geo.x.attrs["units"]
+    assert "crs_units" not in geo.attrs
+    assert geo.x.attrs["units"] == "degrees_east"
+    assert geo.x.attrs["standard_name"] == "longitude"
+    assert geo.y.attrs["units"] == "degrees_north"
+    assert geo.y.attrs["standard_name"] == "latitude"
 
 
-def test_crs_name_attr():
-    # 5070 is in the built-in LiteCRS table, so the name is deterministic
-    # regardless of whether pyproj is installed.
-    assert from_template("conus").attrs["crs_name"] == "NAD83 / Conus Albers"
-    assert from_template("FRA").attrs["crs_name"] == "WGS 84"
+def test_cf_grid_mapping_attrs():
+    # crs_name is gone; the CF grid-mapping keys identify the projection.
+    proj = from_template("conus")
+    assert "crs_name" not in proj.attrs
+    assert proj.attrs["grid_mapping_name"] == "albers_conical_equal_area"
+    assert "NAD83 / Conus Albers" in proj.attrs["crs_wkt"]
+
+    geo = from_template("FRA")
+    assert geo.attrs["grid_mapping_name"] == "latitude_longitude"
+    assert "WGS 84" in geo.attrs["crs_wkt"]
 
 
-def test_crs_name_preserve_path():
-    # The preserve path requires pyproj, so the chosen projection's name
-    # is always available.
-    name = from_template("conus", preserve="area").attrs["crs_name"]
-    assert name == "NAD83 / Conus Albers"
+def test_cf_grid_mapping_preserve_path():
+    # The preserve path requires pyproj, so the CF keys are always present.
+    agg = from_template("conus", preserve="area")
+    assert agg.attrs["grid_mapping_name"] == "albers_conical_equal_area"
+    assert "Conus Albers" in agg.attrs["crs_wkt"]
 
 
-def test_crs_name_omitted_without_pyproj(monkeypatch):
-    # When the EPSG code is outside the built-in table and pyproj can't be
-    # imported, crs_name is left off rather than raising.
-    import xrspatial.templates as templates
+def test_grid_mapping_omitted_for_equal_earth():
+    # Equal Earth (the preserve='area' fallback for the world bbox) has no
+    # CF grid mapping, so grid_mapping_name is left off and crs_wkt stands
+    # alone.
+    agg = from_template("world", preserve="area")
+    assert agg.attrs["crs"] == 8857
+    assert "grid_mapping_name" not in agg.attrs
+    assert "Equal Earth" in agg.attrs["crs_wkt"]
 
-    def _no_crs(_crs):
-        raise ImportError("pyproj not installed")
 
-    monkeypatch.setattr(templates, "_resolve_crs", _no_crs)
+def test_cf_attrs_omitted_without_pyproj(monkeypatch):
+    # Without pyproj the default (non-reproject) path stays dependency-free:
+    # the CF grid-mapping keys are left off rather than raising.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pyproj", None)
     agg = from_template("conus")
-    assert "crs_name" not in agg.attrs
+    assert "grid_mapping_name" not in agg.attrs
+    assert "crs_wkt" not in agg.attrs
     # The rest of the contract still holds.
     assert agg.attrs["crs"] == 5070
-    assert agg.attrs["crs_units"] == "m"
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
 
 
 def test_lite_crs_name_property():
