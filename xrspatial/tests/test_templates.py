@@ -5,11 +5,8 @@ import pytest
 import xarray as xr
 
 from xrspatial import from_template, slope
-from xrspatial._template_data import _COUNTRY_BBOXES, _REGIONS
-from xrspatial.tests.general_checks import (
-    cuda_and_cupy_available,
-    dask_array_available,
-)
+from xrspatial._template_data import _CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES, _REGIONS
+from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 
 
 def test_contract():
@@ -168,6 +165,64 @@ def test_registry_codes_resolve():
         assert code in _COUNTRY_BBOXES
         agg = from_template(code)
         assert agg.attrs["crs"] == 4326
+
+
+def test_city_registry_integrity():
+    # the _CITIES block is generated; guard the shape of every entry so a bad
+    # regeneration is caught here rather than at from_template() call time.
+    for key, entry in _CITIES.items():
+        assert key == key.lower() and key.isascii(), key
+        assert set(entry) == {"bounds", "crs", "lonlat", "label"}, key
+        crs = entry["crs"]
+        assert 32601 <= crs <= 32660 or 32701 <= crs <= 32760, (key, crs)
+        lon_min, lat_min, lon_max, lat_max = entry["lonlat"]
+        assert lon_min < lon_max and lat_min < lat_max, key
+        left, bottom, right, top = entry["bounds"]
+        assert left < right and bottom < top, key
+        assert all(np.isfinite(v) for v in entry["bounds"]), key
+    # the curated regions own their names; cities must not shadow them
+    assert not set(_CITIES) & set(_REGIONS)
+
+
+def test_city_sample_builds():
+    # a slice of the registry builds and obeys the array contract
+    for name in sorted(_CITIES)[:20]:
+        agg = from_template(name)
+        assert agg.dims == ("y", "x")
+        assert agg.attrs["crs_units"] == "m"
+        assert agg.attrs["res"] == (_CITY_DEFAULT_RESOLUTION,
+                                    _CITY_DEFAULT_RESOLUTION)
+        # north-up, ascending x
+        assert agg.y.values[0] > agg.y.values[-1]
+        assert agg.x.values[0] < agg.x.values[-1]
+        # every pixel center stays inside the registry bbox
+        left, bottom, right, top = _CITIES[name]["bounds"]
+        assert left <= agg.x.values.min() and agg.x.values.max() <= right
+        assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+def test_city_utm_spot_checks():
+    # cities resolve to their UTM zone (a standard EPSG code, not a custom one)
+    assert from_template("london").attrs["crs"] == 32630   # UTM 30N
+    assert from_template("tokyo").attrs["crs"] == 32654     # UTM 54N
+    # southern hemisphere -> 327xx
+    assert 32701 <= from_template("sao_paulo").attrs["crs"] <= 32760
+
+
+def test_city_case_insensitive():
+    a = from_template("tokyo")
+    b = from_template("TOKYO")
+    np.testing.assert_array_equal(a.x.values, b.x.values)
+    assert a.attrs == b.attrs
+
+
+def test_city_name_collision_disambiguated():
+    # same slug, different cities: the larger keeps the bare name, the other
+    # gets an iso2 suffix, and the two resolve to distinct UTM zones
+    assert "hyderabad" in _CITIES and "hyderabad_pk" in _CITIES
+    bare = from_template("hyderabad").attrs["crs"]
+    suffixed = from_template("hyderabad_pk").attrs["crs"]
+    assert bare != suffixed
 
 
 @dask_array_available

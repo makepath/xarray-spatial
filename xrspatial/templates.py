@@ -10,22 +10,11 @@ array contract (2-D ``['y', 'x']`` grid with pixel-center coordinates and
 import numpy as np
 import xarray as xr
 
-from xrspatial._template_data import (
-    _CITIES,
-    _CITY_DEFAULT_RESOLUTION,
-    _COUNTRY_BBOXES,
-    _COUNTRY_DEFAULT_RESOLUTION,
-    _EQUAL_AREA_FALLBACK_EPSG,
-    _REGIONS,
-    _UPS_NORTH_EPSG,
-    _UPS_SOUTH_EPSG,
-)
+from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
+                                      _COUNTRY_DEFAULT_RESOLUTION, _EQUAL_AREA_FALLBACK_EPSG,
+                                      _REGIONS, _UPS_NORTH_EPSG, _UPS_SOUTH_EPSG)
 from xrspatial.reproject._crs_utils import _require_pyproj, _resolve_crs
-from xrspatial.reproject._grid import (
-    _edge_samples,
-    _make_output_coords,
-    _transform_boundary,
-)
+from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _transform_boundary
 
 _PRESERVE_OPTIONS = ("area", "shape")
 
