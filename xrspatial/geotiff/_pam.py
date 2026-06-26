@@ -105,6 +105,33 @@ def write_pam_sidecar(path, category_names, category_colors=None):
     return out
 
 
+def build_stats_pam_xml(stats):
+    """Build a PAM ``.aux.xml`` document carrying band statistics.
+
+    *stats* maps GDAL ``STATISTICS_*`` keys to numeric values. GDAL tools and
+    QGIS read these from the band ``<Metadata>`` to drive a default min/max
+    stretch on a continuous raster, the way :func:`build_pam_xml` drives class
+    coloring on a categorical one.
+    """
+    lines = ['<PAMDataset>', '  <PAMRasterBand band="1">', '    <Metadata>']
+    for key, value in stats.items():
+        text = escape('{:.10g}'.format(float(value)))
+        lines.append(f'      <MDI key="{escape(str(key))}">{text}</MDI>')
+    lines.append('    </Metadata>')
+    lines.append('  </PAMRasterBand>')
+    lines.append('</PAMDataset>')
+    return '\n'.join(lines) + '\n'
+
+
+def write_stats_pam_sidecar(path, stats):
+    """Write the statistics PAM sidecar for *path* and return its path."""
+    xml = build_stats_pam_xml(stats)
+    out = sidecar_path(path)
+    with open(out, 'w', encoding='utf-8') as fh:
+        fh.write(xml)
+    return out
+
+
 def read_pam_sidecar(path):
     """Read ``category_names`` / ``category_colors`` from *path*'s sidecar.
 
