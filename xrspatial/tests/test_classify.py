@@ -44,7 +44,7 @@ def test_binary_numpy(result_binary):
     values, expected_result = result_binary
     numpy_agg = input_data()
     numpy_result = binary(numpy_agg, values)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -52,7 +52,7 @@ def test_binary_dask_numpy(result_binary):
     values, expected_result = result_binary
     dask_agg = input_data(backend='dask')
     dask_result = binary(dask_agg, values)
-    general_output_checks(dask_agg, dask_result, expected_result)
+    general_output_checks(dask_agg, dask_result, expected_result, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -60,7 +60,7 @@ def test_binary_cupy(result_binary):
     values, expected_result = result_binary
     cupy_agg = input_data(backend='cupy')
     cupy_result = binary(cupy_agg, values)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
 @dask_array_available
@@ -69,7 +69,28 @@ def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
     dask_cupy_agg = input_data(backend='dask+cupy')
     dask_cupy_result = binary(dask_cupy_agg, values)
-    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
+    # the lazy dask array must advertise the same dtype it computes, otherwise
+    # a downstream consumer reads float64 metadata for a float32 result
+    assert dask_cupy_result.data.dtype == np.float32
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result, verify_dtype=True)
+
+
+def test_binary_output_dtype_float32():
+    # binary() must emit float32 regardless of input dtype so its result
+    # dtype matches the cupy/dask+cupy backends and the other classifiers
+    # (regression for the numpy/dask paths returning the input dtype).
+    for in_dtype in (np.float64, np.float32, np.int32):
+        data = np.array([[1, 2, 3], [4, 5, 6]], dtype=in_dtype)
+        result = binary(xr.DataArray(data), [2, 5])
+        assert result.data.dtype == np.float32
+
+
+@dask_array_available
+def test_binary_dask_output_dtype_float32():
+    data = np.array([[1., 2., 3.], [4., 5., 6.]], dtype=np.float64)
+    dask_agg = xr.DataArray(da.from_array(data, chunks=(1, 3)))
+    result = binary(dask_agg, [2, 5])
+    assert result.data.compute().dtype == np.float32
 
 
 @pytest.fixture
@@ -1252,3 +1273,102 @@ def test_generate_sample_indices_large_is_deterministic():
     a = _generate_sample_indices(20_000_000, 20_000)
     b = _generate_sample_indices(20_000_000, 20_000)
     np.testing.assert_array_equal(a, b)
+
+
+# ===================================================================
+# Degenerate all-NaN input for the remaining classifiers
+# ===================================================================
+# equal_interval and natural_breaks already cover all-NaN. The other
+# classifiers were not exercised on an all-non-finite raster, where the
+# finite mask removes every element. std_mean and maximum_breaks degrade
+# to an all-NaN result; on the eager (numpy/cupy) backends head_tail_breaks,
+# percentiles, and box_plot currently raise an opaque reduction error
+# (issue #3510), so their tests are xfail until that is fixed. Flip them to
+# plain assertions when #3510 lands. strict=False so a concurrent fix does
+# not break main via XPASS. See the dask section below for the per-backend
+# split (head_tail_breaks already degrades cleanly on dask).
+
+def test_std_mean_all_nan():
+    import warnings
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = std_mean(agg)
+    assert np.all(np.isnan(result.data))
+
+
+def test_maximum_breaks_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = maximum_breaks(agg, k=5)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_head_tail_breaks_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = head_tail_breaks(agg)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_percentiles_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = percentiles(agg)
+    assert np.all(np.isnan(result.data))
+
+
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_box_plot_all_nan():
+    agg = xr.DataArray(np.full((4, 5), np.nan))
+    result = box_plot(agg)
+    assert np.all(np.isnan(result.data))
+
+
+# All-NaN on the dask backend. The dask paths are separate implementations,
+# and they do not match the eager paths on this degenerate input:
+# std_mean, maximum_breaks, and head_tail_breaks all return all-NaN on dask
+# (head_tail_breaks's dask path has a total_count == 0 guard the eager path
+# lacks, so it does not hit the #3510 crash), while percentiles and box_plot
+# crash on dask too. Pin all of it so the per-backend behaviour is explicit
+# and the #3510 fix can target only the eager paths.
+
+@dask_array_available
+def test_std_mean_all_nan_dask():
+    import warnings
+    agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = std_mean(agg)
+    assert np.all(np.isnan(result.data.compute()))
+
+
+@dask_array_available
+def test_maximum_breaks_all_nan_dask():
+    agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
+    result = maximum_breaks(agg, k=5)
+    assert np.all(np.isnan(result.data.compute()))
+
+
+@dask_array_available
+def test_head_tail_breaks_all_nan_dask():
+    # Diverges from the eager path: dask returns all-NaN cleanly (#3510 is
+    # eager-only). Plain passing test, not xfail.
+    agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
+    result = head_tail_breaks(agg)
+    assert np.all(np.isnan(result.data.compute()))
+
+
+@dask_array_available
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_percentiles_all_nan_dask():
+    agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
+    result = percentiles(agg)
+    assert np.all(np.isnan(result.data.compute()))
+
+
+@dask_array_available
+@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
+def test_box_plot_all_nan_dask():
+    agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
+    result = box_plot(agg)
+    assert np.all(np.isnan(result.data.compute()))

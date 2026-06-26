@@ -63,7 +63,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                allow_experimental_codecs: bool = False,
                allow_unparseable_crs: bool = False,
                drop_rotation: bool = False,
-               pack: bool = False) -> str | BinaryIO:
+               pack: bool = False,
+               color_ramp: str | bool | None = None,
+               color_ramp_range: tuple[float, float] | None = None,
+               ) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Release-contract tier (see
@@ -398,6 +401,30 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (issue #3260). The write itself stays atomic
         (temp file plus rename), so no partial output is left at the
         destination path.
+    color_ramp : str, bool, or None, default None
+        [advanced] Write best-practice symbology sidecars so a continuous
+        single-band raster opens in QGIS with a color ramp instead of a flat
+        grayscale stretch. Pass a ramp name (``'viridis'`` -- the default --
+        ``'plasma'``, ``'magma'``, ``'inferno'``, ``'cividis'``, ``'greys'``,
+        ``'spectral'``, ``'terrain'``) or ``True`` for viridis; an unknown name
+        raises ``ValueError``. ``'greys'`` follows matplotlib's light-to-dark
+        orientation (low values render light). Two sidecars are written: a
+        QGIS ``.qml`` style (``<base>.qml``) with a ``singlebandpseudocolor``
+        renderer, and ``STATISTICS_MINIMUM/MAXIMUM/MEAN/STDDEV`` in the PAM
+        ``<file>.aux.xml``. No-op for a categorical raster (one with
+        ``attrs['category_names']`` -- those get the RAT sidecar instead), a
+        multiband array, a file-like destination, or data with no finite
+        values. Computing the statistics is a separate reduction pass over the
+        data; for a dask source that means reading the graph once more (see
+        ``color_ramp_range`` to skip it). Ignored when ``pack=True``, whose
+        on-disk packed values would not match a ramp built from the logical
+        values.
+    color_ramp_range : tuple of (float, float) or None, default None
+        [advanced] Explicit ``(min, max)`` for the ``color_ramp`` stretch.
+        Skips the statistics reduction -- useful for large dask graphs -- so
+        only ``STATISTICS_MINIMUM`` / ``STATISTICS_MAXIMUM`` are written
+        (mean/stddev need the pass it avoids). Ignored when ``color_ramp`` is
+        not set.
 
     Returns
     -------
@@ -430,26 +457,65 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``col``). A leading non-band dim such as ``time`` is rejected
         because the writer cannot infer the band axis from arbitrary
         names and used to silently treat the leading axis as ``y``.
+
+    Examples
+    --------
+    Write a DataArray to a plain GeoTIFF and read it back:
+
+    >>> from xrspatial.geotiff import open_geotiff, to_geotiff
+    >>> to_geotiff(data, 'elevation.tif')  # doctest: +SKIP
+    >>> da = open_geotiff('elevation.tif')  # doctest: +SKIP
+
+    Write a Cloud Optimized GeoTIFF (tiled, with internal overviews):
+
+    >>> to_geotiff(data, 'elevation_cog.tif', cog=True)  # doctest: +SKIP
+
+    Write a VRT mosaic. A ``.vrt`` output path tiles the array and emits
+    the index that references the tiles:
+
+    >>> to_geotiff(data, 'mosaic.vrt')  # doctest: +SKIP
     """
     from .._reader import _coerce_path
 
     path = _coerce_path(path)
 
-    # Categorical rasters carry their value->label map in attrs. GDAL/QGIS
-    # only read category names and colors from a PAM ``<file>.aux.xml``
-    # sidecar (an embedded RAT is ignored), so capture the labels now and
-    # emit the sidecar next to the file on the way out. File-like
-    # destinations have no path to anchor a sidecar, so skip them.
+    # Categorical rasters carry their value->label map in attrs; continuous
+    # rasters opt into a color ramp via ``color_ramp``. QGIS/GDAL read both
+    # kinds of styling from sidecars next to the file (a PAM ``.aux.xml`` RAT
+    # for categories, a ``.qml`` style plus PAM statistics for a continuous
+    # ramp), so capture what we need now and emit the sidecars on the way out.
+    # Categorical wins when both are present, and the two never collide. File-
+    # like destinations have no path to anchor a sidecar, so skip them.
     _cat_names = None
     _cat_colors = None
+    _sym_data = None
+    _sym_stops = None
+    _sym_nodata = None
     if isinstance(path, str) and isinstance(data, xr.DataArray):
         _cat_names = data.attrs.get('category_names')
         _cat_colors = data.attrs.get('category_colors')
+        # ``pack`` rewrites ``data`` to on-disk packed values below, so the
+        # symbology statistics (taken from the logical values here) would
+        # describe a different range than the stored pixels. Skip symbology
+        # when packing rather than emit a mismatched ramp.
+        if color_ramp and not _cat_names and not pack:
+            from .._symbology import resolve_ramp
+            # Validate the ramp name now so a typo fails before any bytes.
+            _sym_stops = resolve_ramp(color_ramp)
+            _sym_data = data
+            _sym_nodata = (nodata if nodata is not None
+                           else _resolve_nodata_attr(data.attrs))
 
-    def _write_category_sidecar():
+    def _write_sidecars():
         if _cat_names:
             from .._pam import write_pam_sidecar
             write_pam_sidecar(path, _cat_names, _cat_colors)
+            return
+        if _sym_stops is not None:
+            from .._symbology import write_symbology_sidecars
+            write_symbology_sidecars(
+                path, _sym_data, stops=_sym_stops,
+                nodata=_sym_nodata, ramp_range=color_ramp_range)
 
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
@@ -828,7 +894,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          allow_unparseable_crs=allow_unparseable_crs,
                          allow_internal_only_jpeg=allow_internal_only_jpeg,
                          drop_rotation=drop_rotation)
-        _write_category_sidecar()
+        _write_sidecars()
         return path
 
     # Dispatch to _write_geotiff_gpu when GPU was selected (explicit
@@ -877,7 +943,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_unparseable_crs=allow_unparseable_crs,
                 drop_rotation=drop_rotation,
             )
-            _write_category_sidecar()
+            _write_sidecars()
             return path
         except ImportError as e:
             # ``_write_geotiff_gpu`` raises ImportError when cupy itself
@@ -1060,7 +1126,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
-            _write_category_sidecar()
+            _write_sidecars()
             return path
 
         # Eager compute (numpy, CuPy, or dask+COG)
@@ -1156,7 +1222,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-    _write_category_sidecar()
+    _write_sidecars()
     return path
 
 

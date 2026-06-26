@@ -181,7 +181,10 @@ def _terrain_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
                    warp_strength, warp_octaves,
                    worley_blend, worley_seed):
     _check_memory(data.shape[0], data.shape[1])
-    data = data * 0
+    # zeros_like (not data * 0) so an all-NaN template (e.g. from
+    # from_template()) is overwritten instead of propagating NaN
+    # everywhere (NaN * 0 == NaN).
+    data = np.zeros_like(data)
     data[:] = _gen_terrain(
         data, seed, x_range=x_range_scaled, y_range=y_range_scaled,
         octaves=octaves, lacunarity=lacunarity, persistence=persistence,
@@ -437,7 +440,10 @@ def _terrain_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
                   warp_strength, warp_octaves,
                   worley_blend, worley_seed):
     _check_gpu_memory(data.shape[0], data.shape[1])
-    data = data * 0
+    # zeros_like (not data * 0) so an all-NaN template (e.g. from
+    # from_template()) is overwritten instead of propagating NaN
+    # everywhere (NaN * 0 == NaN).
+    data = cupy.zeros_like(data)
     data[:] = _terrain_gpu(
         data, seed, x_range=x_range_scaled, y_range=y_range_scaled,
         octaves=octaves, lacunarity=lacunarity, persistence=persistence,

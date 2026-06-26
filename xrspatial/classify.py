@@ -48,7 +48,13 @@ def _available_memory_bytes():
 
 @ngjit
 def _cpu_binary(data, values):
-    out = np.empty(data.shape, dtype=data.dtype)
+    # Output float32 to match the cupy/dask+cupy backends (which always
+    # allocate 'f4') and the other classifiers, which route through _cpu_bin
+    # and likewise emit float32. Preserving the input dtype here made binary()
+    # the lone op whose result dtype diverged across backends (float64 on
+    # numpy/dask vs float32 on cupy) and could not hold the NaN sentinel for
+    # integer input.
+    out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):
@@ -98,7 +104,8 @@ def _run_cupy_binary(data, values):
 
 
 def _run_dask_cupy_binary(data, values_cupy):
-    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()),
+    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy),
+                          meta=cupy.array((), dtype='f4'),
                           **_dask_task_name_kwargs('xrspatial.binary'))
     return out
 
@@ -842,12 +849,17 @@ def natural_breaks(agg: xr.DataArray,
         of values to be reclassified.
     k : int, default=5
         Number of classes to be produced.
-    num_sample : int, default=20000
+    num_sample : int or None, default=20000
         Number of sample data points used to fit the model.
         Natural Breaks (Jenks) classification is indeed O(n²) complexity,
         where n is the total number of data points, i.e: `agg.size`
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
+        ``None`` means fit on all data instead of a sub-sample. That is
+        the full O(n²) case described above, so it may be slow and raises
+        ``MemoryError`` if the Jenks matrices would exceed half of the
+        available RAM. For dask the full sample is drawn lazily via
+        indexed access.
     name : str, default='natural_breaks'
         Name of output aggregate.
 

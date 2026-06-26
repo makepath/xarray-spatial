@@ -31,7 +31,6 @@ from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.erosion import erode  # noqa
 from xrspatial.hydro import fill  # noqa: unified wrapper
-from xrspatial.hydro import fill_d8  # noqa
 from xrspatial.interpolate import idw  # noqa
 from xrspatial.interpolate import kriging  # noqa
 from xrspatial.interpolate import spline  # noqa
@@ -52,13 +51,9 @@ from xrspatial.flood import travel_time  # noqa
 from xrspatial.flood import vegetation_curve_number  # noqa
 from xrspatial.flood import vegetation_roughness  # noqa
 from xrspatial.hydro import flow_accumulation  # noqa: unified wrapper
-from xrspatial.hydro import flow_accumulation_d8, flow_accumulation_dinf, flow_accumulation_mfd  # noqa
 from xrspatial.hydro import flow_direction  # noqa: unified wrapper
-from xrspatial.hydro import flow_direction_d8, flow_direction_dinf, flow_direction_mfd  # noqa
 from xrspatial.hydro import flow_length  # noqa: unified wrapper
-from xrspatial.hydro import flow_length_d8, flow_length_dinf, flow_length_mfd  # noqa
 from xrspatial.hydro import flow_path  # noqa: unified wrapper
-from xrspatial.hydro import flow_path_d8, flow_path_dinf, flow_path_mfd  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.glcm import glcm_texture  # noqa
 from xrspatial.morphology import morph_black_tophat  # noqa
@@ -69,7 +64,6 @@ from xrspatial.morphology import morph_gradient  # noqa
 from xrspatial.morphology import morph_opening  # noqa
 from xrspatial.morphology import morph_white_tophat  # noqa
 from xrspatial.hydro import hand  # noqa: unified wrapper
-from xrspatial.hydro import hand_d8, hand_dinf, hand_mfd  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
@@ -100,13 +94,9 @@ from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
 from xrspatial.hydro import sink  # noqa: unified wrapper
-from xrspatial.hydro import sink_d8  # noqa
 from xrspatial.hydro import snap_pour_point  # noqa: unified wrapper
-from xrspatial.hydro import snap_pour_point_d8  # noqa
 from xrspatial.hydro import stream_link  # noqa: unified wrapper
-from xrspatial.hydro import stream_link_d8, stream_link_dinf, stream_link_mfd  # noqa
 from xrspatial.hydro import stream_order  # noqa: unified wrapper
-from xrspatial.hydro import stream_order_d8, stream_order_dinf, stream_order_mfd  # noqa
 from xrspatial.sieve import sieve  # noqa
 from xrspatial.sky_view_factor import sky_view_factor  # noqa
 from xrspatial.slope import slope  # noqa
@@ -114,6 +104,7 @@ from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
 from xrspatial.surface_distance import surface_distance  # noqa
 from xrspatial.templates import from_template  # noqa
+from xrspatial.templates import list_templates  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
 from xrspatial.terrain_metrics import landforms  # noqa
 from xrspatial.terrain_metrics import LANDFORM_CLASSES  # noqa
@@ -122,7 +113,6 @@ from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
 from xrspatial.validate import validate  # noqa
 from xrspatial.hydro import twi  # noqa: unified wrapper
-from xrspatial.hydro import twi_d8  # noqa
 from xrspatial.polygon_clip import clip_polygon  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
@@ -130,11 +120,8 @@ from xrspatial.visibility import cumulative_viewshed  # noqa
 from xrspatial.visibility import line_of_sight  # noqa
 from xrspatial.visibility import visibility_frequency  # noqa
 from xrspatial.hydro import basin  # noqa: unified wrapper
-from xrspatial.hydro import basin_d8  # noqa
 from xrspatial.hydro import basins  # noqa: backward-compat alias
-from xrspatial.hydro import basins_d8  # noqa
 from xrspatial.hydro import watershed  # noqa: unified wrapper
-from xrspatial.hydro import watershed_d8, watershed_dinf, watershed_mfd  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crop  # noqa
 from xrspatial.zonal import trim  # noqa
