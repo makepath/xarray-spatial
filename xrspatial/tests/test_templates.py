@@ -183,6 +183,33 @@ def test_over_fine_resolution_raises():
         from_template("conus", resolution=1)
 
 
+def test_single_pixel_grid():
+    # a resolution coarser than the whole study-area box clamps width and height
+    # to the max(1, ...) floor, giving a 1x1 grid that still obeys the contract.
+    agg = from_template("conus", resolution=5_000_000)
+    assert agg.shape == (1, 1)
+    assert agg.attrs["res"] == (5_000_000.0, 5_000_000.0)
+    assert agg.dims == ("y", "x")
+    assert np.isnan(agg.values).all()
+
+
+def test_strip_grid():
+    # a huge resolution on one axis only clamps that axis to 1, producing an
+    # Nx1 / 1xN strip (the other axis stays multi-cell).
+    strip = from_template("conus", resolution=(20000, 5_000_000))
+    assert strip.shape[0] == 1
+    assert strip.shape[1] > 1
+    assert strip.dims == ("y", "x")
+
+
+def test_resolution_tuple_wrong_length_raises():
+    # a resolution tuple must be exactly (res_x, res_y); any other length is a
+    # validation error.
+    for bad in [(1000,), (1000, 2000, 3000)]:
+        with pytest.raises(ValueError, match=r"resolution tuple must be"):
+            from_template("conus", resolution=bad)
+
+
 def test_non_string_name_raises():
     with pytest.raises(TypeError):
         from_template(42)
