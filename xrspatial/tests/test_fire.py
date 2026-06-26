@@ -894,3 +894,112 @@ def test_dask_numpy_dtype_matches_numpy(call):
     assert dk_r.dtype == np_r.dtype
     # and must match what the graph actually computes
     assert dk_r.data.compute().dtype == np_r.dtype
+
+
+# ---------------------------------------------------------------------------
+# Inf / -Inf handling (Cat 2 edge-case coverage)
+# ---------------------------------------------------------------------------
+# None of these kernels guard against non-finite-but-not-NaN inputs: the only
+# skip test is ``v != v`` (NaN), so +Inf / -Inf flow through the arithmetic.
+# The resulting contract is well defined and identical on all four backends.
+# These tests lock that contract so a later change to the finite-value guard
+# (e.g. swapping ``v != v`` for ``not isfinite(v)``) cannot change behavior
+# silently.
+_INF = np.float32(np.inf)
+
+
+def _dnbr_inf_call(backend):
+    # pre=+inf,-inf,finite,+inf ; post=finite,finite,+inf,+inf
+    pre = create_test_raster(
+        np.array([[_INF, -_INF, 0.5, _INF]], dtype='f4'), backend)
+    post = create_test_raster(
+        np.array([[0.1, 0.1, _INF, _INF]], dtype='f4'), backend)
+    return dnbr(pre, post)
+
+
+def _rdnbr_inf_call(backend):
+    d = create_test_raster(np.array([[_INF, -_INF, 0.5]], dtype='f4'), backend)
+    p = create_test_raster(np.array([[500.0, 500.0, _INF]], dtype='f4'), backend)
+    return rdnbr(d, p)
+
+
+def _bsc_inf_call(backend):
+    v = create_test_raster(np.array([[_INF, -_INF]], dtype='f4'), backend)
+    return burn_severity_class(v)
+
+
+def _fli_inf_call(backend):
+    fuel = create_test_raster(np.array([[_INF, 2.0, _INF]], dtype='f4'), backend)
+    spread = create_test_raster(
+        np.array([[0.1, _INF, _INF]], dtype='f4'), backend)
+    return fireline_intensity(fuel, spread)
+
+
+def _fl_inf_call(backend):
+    v = create_test_raster(np.array([[_INF, -_INF]], dtype='f4'), backend)
+    return flame_length(v)
+
+
+def _ros_inf_call(backend):
+    slope = create_test_raster(np.array([[_INF, 10.0, 10.0]], dtype='f4'), backend)
+    wind = create_test_raster(np.array([[10.0, _INF, 10.0]], dtype='f4'), backend)
+    moist = create_test_raster(
+        np.array([[0.06, 0.06, _INF]], dtype='f4'), backend)
+    return rate_of_spread(slope, wind, moist)
+
+
+def _kbdi_inf_call(backend):
+    prev = create_test_raster(np.array([[_INF, 100.0, 100.0]], dtype='f4'), backend)
+    temp = create_test_raster(np.array([[30.0, _INF, 30.0]], dtype='f4'), backend)
+    precip = create_test_raster(np.array([[0.0, 0.0, _INF]], dtype='f4'), backend)
+    return kbdi(prev, temp, precip, annual_precip=1500.0)
+
+
+_INF_CONTRACTS = [
+    # (call_builder, expected_numpy_output)
+    (_dnbr_inf_call, np.array([[np.inf, -np.inf, -np.inf, np.nan]], dtype='f4')),
+    (_rdnbr_inf_call, np.array([[np.inf, -np.inf, 0.0]], dtype='f4')),
+    (_bsc_inf_call, np.array([[7, 1]], dtype=np.int8)),
+    (_fli_inf_call, np.array([[np.inf, np.inf, np.inf]], dtype='f4')),
+    (_fl_inf_call, np.array([[np.inf, 0.0]], dtype='f4')),
+    (_ros_inf_call, np.array([[np.nan, np.inf, np.nan]], dtype='f4')),
+    # kbdi: prev=inf and temp=inf both saturate the 800 clamp; precip=inf
+    # zeroes the deficit, which then re-accumulates the drought factor to
+    # ~43.96 at temp=30, annual_precip=1500.
+    (_kbdi_inf_call, np.array([[800.0, 800.0, 43.95906]], dtype='f4')),
+]
+
+
+@pytest.mark.parametrize("call,expected", _INF_CONTRACTS)
+def test_inf_contract_numpy(call, expected):
+    result = call('numpy')
+    np.testing.assert_allclose(result.data, expected, rtol=1e-5,
+                               equal_nan=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("call", [c for c, _ in _INF_CONTRACTS])
+def test_inf_numpy_equals_dask(call):
+    np_r = call('numpy')
+    dk_r = call('dask+numpy')
+    np.testing.assert_allclose(dk_r.data.compute(), np_r.data,
+                               rtol=1e-5, equal_nan=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("call", [c for c, _ in _INF_CONTRACTS])
+def test_inf_numpy_equals_cupy(call):
+    np_r = call('numpy')
+    cp_r = call('cupy')
+    np.testing.assert_allclose(cp_r.data.get(), np_r.data,
+                               rtol=1e-5, equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("call", [c for c, _ in _INF_CONTRACTS])
+def test_inf_numpy_equals_dask_cupy(call):
+    np_r = call('numpy')
+    dc_r = call('dask+cupy')
+    np.testing.assert_allclose(dc_r.data.compute().get(), np_r.data,
+                               rtol=1e-5, equal_nan=True)
