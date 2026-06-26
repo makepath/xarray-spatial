@@ -199,9 +199,6 @@ def _cf_crs_attrs(crs):
             if cf.get(k) is not None}
 
 
-_TEMPLATE_KINDS = ("regions", "cities", "countries")
-
-
 def list_templates(kind=None):
     """List the template names ``from_template`` accepts.
 
@@ -244,7 +241,7 @@ def list_templates(kind=None):
         return groups
     if kind not in groups:
         raise ValueError(
-            f"kind must be one of {_TEMPLATE_KINDS} or None, got {kind!r}."
+            f"kind must be one of {tuple(groups)} or None, got {kind!r}."
         )
     return groups[kind]
 
