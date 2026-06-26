@@ -2,6 +2,39 @@
 -----------
 
 
+### Version 0.10.13 - 2026-06-26
+
+#### New features
+- geotiff: write continuous-raster symbology sidecars (.qml + PAM statistics) from to_geotiff (#3537) (#3538)
+- templates: add list_templates() to discover from_template names (#3536)
+- templates: add major world cities as bounding-box templates in from_template (#3534)
+- fire: accept m/min spread rate in fireline_intensity by default (#3527) (#3529)
+- hydrology: make routing the sole public hydrology API surface (#3528) (#3530)
+- accessor: add coregister=True to .xrs.rasterize (#3492) (#3493)
+
+#### Bug fixes and improvements
+- flood: fix float32 dtype leak in flood_depth/curve_number_runoff dask backends (#3499) (#3509)
+- flood: fix dask backends emitting float32 output for float32 input (#3498)
+- flood: make mannings_n DataArray validation lazy-safe (#3503) (#3507)
+- flood: fix E305 and collapse utils import (#3504)
+- flood: add missing reference entries, examples, and backend notes (#3502)
+- binary: output float32 on all backends (#3514)
+- binary: type the dask+cupy meta so the lazy dtype matches float32 (#3508) (#3513)
+- geotiff: stop a short-row PAM RAT from crashing open_geotiff (#3522)
+- geotiff: add Examples section to to_geotiff docstring (#3521)
+- geotiff: cover categorical PAM sidecar round-trip on dask and GPU write paths (#3518) (#3519)
+- geotiff: join backslash-continued import in test (isort) (#3517)
+- templates: use CF Conventions metadata instead of crs_units/crs_name (#3532)
+- templates: fill all-NaN templates in generate_terrain (numpy/cupy) (#3526)
+- templates: honor requested resolution exactly in from_template() (#3494) (#3495)
+- classify: fix stale example outputs and add missing examples (#3516)
+- classify: cover all-NaN degenerate input across classifiers (#3515)
+- classify: document num_sample=None in natural_breaks docstring (#3505)
+- fire: add Examples sections and backend-support notes to docstrings (#3512)
+- fire: add Inf/-Inf regression tests (#3500)
+- multispectral: test vegetation_roughness ndvi on dask+cupy backend (#3497)
+
+
 ### Version 0.10.12 - 2026-06-25
 
 #### New features
