@@ -1,3 +1,4 @@
+import inspect
 import warnings
 
 import numpy as np
@@ -7,6 +8,21 @@ import xarray as xr
 from xrspatial import from_template, list_templates, slope
 from xrspatial._template_data import _CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES, _REGIONS
 from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
+
+
+def test_public_functions_have_type_hints():
+    # The public DataArray-producing API (e.g. generate_terrain) is fully
+    # annotated; the templates entry points should match that convention so
+    # the surface stays predictable.
+    for func in (from_template, list_templates):
+        sig = inspect.signature(func)
+        assert sig.return_annotation is not inspect.Signature.empty, (
+            f"{func.__name__} is missing a return annotation"
+        )
+        for pname, param in sig.parameters.items():
+            assert param.annotation is not inspect.Parameter.empty, (
+                f"{func.__name__} parameter {pname!r} is missing a type hint"
+            )
 
 
 def test_contract():
