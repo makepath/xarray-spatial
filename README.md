@@ -274,7 +274,7 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [from_template](xrspatial/templates.py) | Empty study-area grid for a named region (CONUS, NYC, ...) or country code; `preserve='area'/'shape'` picks an EPSG projection by property | Custom | ✅ | 🔼 | 🔼 | 🔼 |
+| [from_template](xrspatial/templates.py) | Empty study-area grid for a named region (CONUS, NYC, ...), a world city (London, Tokyo, ... in its UTM zone) or country code; `preserve='area'/'shape'` picks an EPSG projection by property; `list_templates()` lists every accepted name | Custom | ✅ | 🔼 | 🔼 | 🔼 |
 
 -----------
 
@@ -310,35 +310,19 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Flow Direction (D8)](xrspatial/hydro/flow_direction_d8.py) | Computes D8 flow direction from each cell toward the steepest downhill neighbor | O'Callaghan & Mark 1984 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Direction (Dinf)](xrspatial/hydro/flow_direction_dinf.py) | Computes D-infinity flow direction as a continuous angle toward the steepest downslope facet | Tarboton 1997 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Direction (MFD)](xrspatial/hydro/flow_direction_mfd.py) | Partitions flow to all downslope neighbors with an adaptive exponent (Qin et al. 2007) | Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Accumulation (D8)](xrspatial/hydro/flow_accumulation_d8.py) | Counts upstream cells draining through each cell in a D8 flow direction grid | Jenson & Domingue 1988 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Accumulation (Dinf)](xrspatial/hydro/flow_accumulation_dinf.py) | Accumulates upstream area by splitting flow proportionally between two neighbors (Tarboton 1997) | Tarboton 1997 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Accumulation (MFD)](xrspatial/hydro/flow_accumulation_mfd.py) | Accumulates upstream area through all MFD flow paths weighted by directional fractions | Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Length (D8)](xrspatial/hydro/flow_length_d8.py) | Computes D8 flow path length from each cell to outlet (downstream) or from divide (upstream) | Standard (D8 tracing) | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Flow Length (Dinf)](xrspatial/hydro/flow_length_dinf.py) | Proportion-weighted flow path length using D-inf angle decomposition (downstream or upstream) | Tarboton 1997 | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Flow Length (MFD)](xrspatial/hydro/flow_length_mfd.py) | Proportion-weighted flow path length using MFD fractions (downstream or upstream) | Qin et al. 2007 | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Fill (D8)](xrspatial/hydro/fill_d8.py) | Fills depressions in a DEM using Planchon-Darboux iterative flooding | Planchon & Darboux 2002 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Sink (D8)](xrspatial/hydro/sink_d8.py) | Identifies and labels depression cells in a D8 flow direction grid | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
-| [Watershed (D8)](xrspatial/hydro/watershed_d8.py) | Labels each cell with the pour point it drains to via D8 flow direction | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
-| [Watershed (Dinf)](xrspatial/hydro/watershed_dinf.py) | Labels each cell with the pour point it drains to via D-infinity flow direction | Tarboton 1997 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Watershed (MFD)](xrspatial/hydro/watershed_mfd.py) | Labels each cell with the pour point it drains to via MFD fractions | Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Basins](xrspatial/hydro/watershed_d8.py) | Delineates drainage basins by labeling each cell with its outlet ID | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Order (D8)](xrspatial/hydro/stream_order_d8.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | Strahler 1957, Shreve 1966 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Order (Dinf)](xrspatial/hydro/stream_order_dinf.py) | Strahler/Shreve stream ordering on D-infinity flow direction grids | Tarboton 1997 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Order (MFD)](xrspatial/hydro/stream_order_mfd.py) | Strahler/Shreve stream ordering on MFD fraction grids | Freeman 1991 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Link (D8)](xrspatial/hydro/stream_link_d8.py) | Assigns unique IDs to each stream segment between junctions | Standard | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Link (Dinf)](xrspatial/hydro/stream_link_dinf.py) | Stream link segmentation on D-infinity flow direction grids | Tarboton 1997 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Stream Link (MFD)](xrspatial/hydro/stream_link_mfd.py) | Stream link segmentation on MFD fraction grids | Freeman 1991 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Snap Pour Point](xrspatial/hydro/snap_pour_point_d8.py) | Snaps pour points to the highest-accumulation cell within a search radius | Custom | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Path (D8)](xrspatial/hydro/flow_path_d8.py) | Traces downstream flow paths from start points through a D8 direction grid | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
-| [Flow Path (Dinf)](xrspatial/hydro/flow_path_dinf.py) | Traces downstream flow paths using D-infinity dominant neighbor | Tarboton 1997 | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Flow Path (MFD)](xrspatial/hydro/flow_path_mfd.py) | Traces downstream flow paths through MFD fraction-weighted neighbors | Qin et al. 2007 | 🔼 | 🔼 | 🔼 | 🔼 |
-| [HAND (D8)](xrspatial/hydro/hand_d8.py) | Computes Height Above Nearest Drainage by tracing D8 flow to the nearest stream cell | Nobre et al. 2011 | ✅ | 🔼 | 🔼 | 🔼 |
-| [HAND (Dinf)](xrspatial/hydro/hand_dinf.py) | Computes Height Above Nearest Drainage using D-infinity flow direction | Nobre et al. 2011 | ✅ | 🔼 | 🔼 | 🔼 |
-| [HAND (MFD)](xrspatial/hydro/hand_mfd.py) | Computes Height Above Nearest Drainage using MFD fractions | Nobre et al. 2011 | ✅ | 🔼 | 🔼 | 🔼 |
-| [TWI](xrspatial/hydro/twi_d8.py) | Topographic Wetness Index: ln(specific catchment area / tan(slope)) | Beven & Kirkby 1979 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Flow Direction](xrspatial/hydro/flow_direction_d8.py) | Direction of steepest descent out of each cell (D8 · Dinf · MFD via `routing=`) | O'Callaghan & Mark 1984; Tarboton 1997; Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Flow Accumulation](xrspatial/hydro/flow_accumulation_d8.py) | Upstream cells or area draining through each cell (D8 · Dinf · MFD via `routing=`) | Jenson & Domingue 1988; Tarboton 1997; Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Flow Length](xrspatial/hydro/flow_length_d8.py) | Flow path length to the outlet or from the divide (D8 · Dinf · MFD via `routing=`) | Tarboton 1997; Qin et al. 2007 | 🔼 | 🔼 | 🔼 | 🔼 |
+| [Flow Path](xrspatial/hydro/flow_path_d8.py) | Traces downstream flow paths from start points (D8 · Dinf · MFD via `routing=`) | Tarboton 1997; Qin et al. 2007 | 🔼 | 🔼 | 🔼 | 🔼 |
+| [Watershed](xrspatial/hydro/watershed_d8.py) | Labels each cell with the pour point it drains to (D8 · Dinf · MFD via `routing=`) | Tarboton 1997; Qin et al. 2007 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Stream Link](xrspatial/hydro/stream_link_d8.py) | Assigns unique IDs to stream segments above a threshold (D8 · Dinf · MFD via `routing=`) | Tarboton 1997; Freeman 1991 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Stream Order](xrspatial/hydro/stream_order_d8.py) | Strahler or Shreve stream ordering of the network (D8 · Dinf · MFD via `routing=`) | Strahler 1957, Shreve 1966 | ✅ | 🔼 | 🔼 | 🔼 |
+| [HAND](xrspatial/hydro/hand_d8.py) | Height Above Nearest Drainage (D8 · Dinf · MFD via `routing=`) | Nobre et al. 2011 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Fill](xrspatial/hydro/fill_d8.py) | Fills depressions in a DEM using Planchon-Darboux iterative flooding (D8) | Planchon & Darboux 2002 | ✅ | 🔼 | 🔼 | 🔼 |
+| [Sink](xrspatial/hydro/sink_d8.py) | Identifies and labels depression cells (D8) | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
+| [Basin](xrspatial/hydro/basin_d8.py) | Labels each cell with the outlet of the basin it drains to (D8) | Standard (D8 tracing) | ✅ | 🔼 | 🔼 | 🔼 |
+| [Snap Pour Point](xrspatial/hydro/snap_pour_point_d8.py) | Snaps pour points to the highest-accumulation cell within a search radius (D8) | Custom | ✅ | 🔼 | 🔼 | 🔼 |
+| [TWI](xrspatial/hydro/twi_d8.py) | Topographic Wetness Index: ln(specific catchment area / tan(slope)) (D8) | Beven & Kirkby 1979 | ✅ | 🔼 | 🔼 | 🔼 |
 
 -----------
 

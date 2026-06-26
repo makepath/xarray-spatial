@@ -15,6 +15,7 @@ This module builds that sidecar from ``attrs['category_names']`` /
 from __future__ import annotations
 
 import os
+from xml.etree.ElementTree import ParseError
 from xml.sax.saxutils import escape
 
 from ._safe_xml import safe_fromstring
@@ -104,6 +105,33 @@ def write_pam_sidecar(path, category_names, category_colors=None):
     return out
 
 
+def build_stats_pam_xml(stats):
+    """Build a PAM ``.aux.xml`` document carrying band statistics.
+
+    *stats* maps GDAL ``STATISTICS_*`` keys to numeric values. GDAL tools and
+    QGIS read these from the band ``<Metadata>`` to drive a default min/max
+    stretch on a continuous raster, the way :func:`build_pam_xml` drives class
+    coloring on a categorical one.
+    """
+    lines = ['<PAMDataset>', '  <PAMRasterBand band="1">', '    <Metadata>']
+    for key, value in stats.items():
+        text = escape('{:.10g}'.format(float(value)))
+        lines.append(f'      <MDI key="{escape(str(key))}">{text}</MDI>')
+    lines.append('    </Metadata>')
+    lines.append('  </PAMRasterBand>')
+    lines.append('</PAMDataset>')
+    return '\n'.join(lines) + '\n'
+
+
+def write_stats_pam_sidecar(path, stats):
+    """Write the statistics PAM sidecar for *path* and return its path."""
+    xml = build_stats_pam_xml(stats)
+    out = sidecar_path(path)
+    with open(out, 'w', encoding='utf-8') as fh:
+        fh.write(xml)
+    return out
+
+
 def read_pam_sidecar(path):
     """Read ``category_names`` / ``category_colors`` from *path*'s sidecar.
 
@@ -144,9 +172,17 @@ def read_pam_sidecar(path):
         if colors is not None:
             out['category_colors'] = colors
         return out
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, IndexError, ParseError):
         # A missing, malformed, or foreign sidecar is non-fatal auxiliary
         # metadata, not a read error -- never let it break open_geotiff.
+        # IndexError covers a thematic RAT whose <Row> carries fewer <F>
+        # cells than its highest column index (e.g. a Name column at index
+        # 1 paired with a single-cell row), which would otherwise escape
+        # _parse_rat and crash the open_geotiff call that reads the
+        # adjacent sidecar. ParseError covers a truncated or otherwise
+        # non-well-formed sidecar: safe_fromstring raises it (a SyntaxError
+        # subclass, so not covered by the types above) and it would
+        # likewise escape and crash the read.
         return {}
 
 
