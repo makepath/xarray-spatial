@@ -53,13 +53,13 @@ _REGIONS = {
                   lonlat=(-180.0, -85.0, 180.0, 85.0), area_epsg=8857,
                   shape_epsg=3395),
     # Global Web Mercator (EPSG:3857). Native bounds are the canonical square
-    # extent +/-20037508 m, which is +/-180 lon and +/-85.051129 lat (the
+    # extent +/-20037508 m, which is +/-180 lon and +/-85.0511287798 lat (the
     # latitude where the Mercator y matches the x half-extent). lonlat stops at
-    # +/-85.051129 because Mercator y diverges to infinity at the poles.
+    # that latitude because Mercator y diverges to infinity at the poles.
     'web_mercator': dict(
         bounds=(-20037508, -20037508, 20037508, 20037508), crs=3857,
         default_resolution=50000, label='World (Web Mercator)',
-        lonlat=(-180.0, -85.051129, 180.0, 85.051129),
+        lonlat=(-180.0, -85.0511287798, 180.0, 85.0511287798),
         area_epsg=8857, shape_epsg=3395),
     # Global equal-area grid (EPSG:8857, Equal Earth). Native bounds are the
     # +/-90 world projected into Equal Earth.

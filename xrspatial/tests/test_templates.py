@@ -578,6 +578,17 @@ def test_cf_grid_mapping_preserve_path():
     assert "Conus Albers" in agg.attrs["crs_wkt"]
 
 
+@pytest.mark.parametrize("name", ["web_mercator", "equal_earth"])
+def test_global_preserve_picks_world_projection(name):
+    # the global templates carry the same area/shape EPSG hints as 'world', so
+    # preserve='shape' lands on World Mercator (EPSG:3395) instead of a stray
+    # UTM zone for the (0, 0) centroid, and preserve='area' lands on Equal Earth
+    agg_shape = from_template(name, preserve="shape")
+    assert agg_shape.attrs["crs"] == 3395
+    assert _proj(3395) == "merc"
+    assert from_template(name, preserve="area").attrs["crs"] == 8857
+
+
 def test_grid_mapping_omitted_for_equal_earth():
     # Equal Earth (the preserve='area' fallback for the world bbox) has no
     # CF grid mapping, so grid_mapping_name is left off and crs_wkt stands
