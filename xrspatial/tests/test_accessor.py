@@ -91,7 +91,7 @@ def test_dataarray_accessor_has_expected_methods(elevation):
         'morph_erode', 'morph_dilate', 'morph_opening', 'morph_closing',
         'morph_gradient', 'morph_white_tophat', 'morph_black_tophat',
         'proximity', 'allocation', 'direction', 'cost_distance',
-        'a_star_search',
+        'a_star_search', 'multi_stop_search',
         'zonal_stats', 'zonal_apply', 'zonal_crosstab', 'crop', 'trim',
         'regions',
         'generate_terrain', 'perlin',
@@ -118,6 +118,7 @@ def test_dataset_accessor_has_expected_methods():
         'morph_erode', 'morph_dilate', 'morph_opening', 'morph_closing',
         'morph_gradient', 'morph_white_tophat', 'morph_black_tophat',
         'proximity', 'allocation', 'direction', 'cost_distance',
+        'multi_stop_search',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
         'validate',
@@ -270,6 +271,45 @@ def test_ds_morph_gradient(elevation):
     expected = morph_gradient(ds, kernel=_MORPH_KERNEL)
     result = ds.xrs.morph_gradient(kernel=_MORPH_KERNEL)
     xr.testing.assert_identical(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# 4c. DataArray pathfinding — accessor matches direct call
+# ---------------------------------------------------------------------------
+
+def test_da_a_star_search(elevation):
+    from xrspatial.pathfinding import a_star_search
+    start, goal = (0, 0), (9, 9)
+    expected = a_star_search(elevation, start, goal)
+    result = elevation.xrs.a_star_search(start, goal)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_multi_stop_search(elevation):
+    from xrspatial.pathfinding import multi_stop_search
+    waypoints = [(0, 0), (5, 5), (9, 9)]
+    expected = multi_stop_search(elevation, waypoints)
+    result = elevation.xrs.multi_stop_search(waypoints)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_multi_stop_search_kwargs(elevation):
+    from xrspatial.pathfinding import multi_stop_search
+    waypoints = [(0, 0), (9, 0), (9, 9)]
+    expected = multi_stop_search(elevation, waypoints, optimize_order=True)
+    result = elevation.xrs.multi_stop_search(waypoints, optimize_order=True)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_ds_multi_stop_search(elevation):
+    from xrspatial.pathfinding import multi_stop_search
+    ds = xr.Dataset({'a': elevation, 'b': elevation + 100})
+    waypoints = [(0, 0), (5, 5), (9, 9)]
+    expected = multi_stop_search(ds, waypoints)
+    result = ds.xrs.multi_stop_search(waypoints)
+    xr.testing.assert_identical(result, expected)
+    # supports_dataset routes each variable through its own surface
+    assert set(result.data_vars) == {'a', 'b'}
 
 
 # ---------------------------------------------------------------------------

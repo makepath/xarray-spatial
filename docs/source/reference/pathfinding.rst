@@ -21,3 +21,10 @@ A* Pathfinding
     :toctree: _autosummary
 
     xrspatial.pathfinding.a_star_search
+
+Multi-Stop Routing
+==================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.pathfinding.multi_stop_search
