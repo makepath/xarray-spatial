@@ -367,6 +367,52 @@ def test_over_fine_resolution_raises():
         from_template("conus", resolution=1)
 
 
+# new_england at 10 m is ~6.9e9 cells, well past the eager cap, but only ~26k
+# chunks at 512 -- a lazy grid that builds and indexes instantly. This is the
+# repro from the issue.
+_OVER_CAP = dict(name="new_england", resolution=10)
+
+
+@dask_array_available
+def test_chunks_promotes_eager_to_lazy_dask():
+    import dask.array as da
+    from xrspatial.templates import _MAX_CELLS
+    # Supplying chunks promotes the default numpy backend to dask and skips the
+    # cap, returning a lazy array that never materializes the full shape.
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        chunks=512)
+    assert isinstance(agg.data, da.Array)
+    assert agg.size > _MAX_CELLS
+    assert agg.data.chunksize == (512, 512)
+    assert agg.attrs["res"] == (10.0, 10.0)
+    # computing a single cell stays cheap and yields the NaN fill
+    assert np.isnan(float(agg.data[0, 0].compute()))
+
+
+@dask_array_available
+def test_dask_backend_skips_cell_cap_without_chunks():
+    import dask.array as da
+    from xrspatial.templates import _MAX_CELLS
+    # An explicit dask backend is lazy too, so the cap is skipped even when no
+    # chunks are passed (the dask path falls back to 'auto').
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        backend="dask+numpy")
+    assert isinstance(agg.data, da.Array)
+    assert agg.size > _MAX_CELLS
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_chunks_promotes_cupy_to_dask_cupy():
+    import cupy
+    import dask.array as da
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        backend="cupy", chunks=512)
+    assert isinstance(agg.data, da.Array)
+    block = agg.data.blocks[0, 0].compute()
+    assert isinstance(block, cupy.ndarray)
+
+
 def test_single_pixel_grid():
     # a resolution coarser than the whole study-area box clamps width and height
     # to the max(1, ...) floor, giving a 1x1 grid that still obeys the contract.
