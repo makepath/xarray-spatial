@@ -1947,6 +1947,12 @@ class XrsSpatialDatasetAccessor:
         from .surface_distance import surface_direction
         return surface_direction(self._obj, elevation, **kwargs)
 
+    # ---- Pathfinding ----
+
+    def multi_stop_search(self, waypoints, **kwargs):
+        from .pathfinding import multi_stop_search
+        return multi_stop_search(self._obj, waypoints, **kwargs)
+
     # ---- Preview ----
 
     def preview(self, **kwargs):

@@ -15,6 +15,7 @@ except ImportError:
     dask = None
 
 from xrspatial.cost_distance import _heap_push, _heap_pop
+from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (
     _validate_raster,
     get_dataarray_resolution, ngjit,
@@ -1324,6 +1325,7 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
     return [waypoints[i] for i in order]
 
 
+@supports_dataset
 def multi_stop_search(surface: xr.DataArray,
                       waypoints: list,
                       barriers: list = [],
@@ -1344,8 +1346,10 @@ def multi_stop_search(surface: xr.DataArray,
 
     Parameters
     ----------
-    surface : xr.DataArray
-        2-D elevation / cost surface.
+    surface : xr.DataArray or xr.Dataset
+        2-D elevation / cost surface.  A Dataset routes each data
+        variable through the same waypoints independently and returns
+        a Dataset of the per-variable results.
     waypoints : list of array-like
         Sequence of ``(y, x)`` coordinate pairs to visit.  Must contain
         at least two points.
@@ -1368,9 +1372,10 @@ def multi_stop_search(surface: xr.DataArray,
 
     Returns
     -------
-    xr.DataArray
+    xr.DataArray or xr.Dataset
         Cumulative path cost surface.  Attributes include
         ``waypoint_order``, ``segment_costs``, and ``total_cost``.
+        A Dataset input returns a Dataset of per-variable results.
 
     Raises
     ------
