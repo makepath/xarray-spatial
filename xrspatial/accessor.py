@@ -907,6 +907,13 @@ def _reproject_onto_accessor(target, source, *, resampling, **kwargs):
     out = reproject(source, target_crs, bounds=bounds,
                     width=x.size, height=y.size, resampling=resampling,
                     **kwargs)
+    # reproject emits north-up (descending y, ascending x) regardless of the
+    # source order. Match the caller's axis directions before snapping so a
+    # grid stored in either order lines up by geography, not by row index.
+    if x[0] > x[-1]:
+        out = out.isel(x=slice(None, None, -1))
+    if y[0] < y[-1]:
+        out = out.isel(y=slice(None, None, -1))
     # Snap to the caller's exact coordinates and carry its CRS attrs so the
     # result is a cell-for-cell drop-in for the template grid.
     out = out.assign_coords(y=target['y'], x=target['x'])

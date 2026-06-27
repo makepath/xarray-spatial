@@ -780,6 +780,32 @@ def test_coregister_raster_nearest_resampling_runs():
     assert set(np.unique(interior)).issubset({3.0})
 
 
+def test_coregister_raster_handles_ascending_y_target():
+    pytest.importorskip('pyproj')
+    # A caller grid stored with ascending y must still line up by geography:
+    # the north (large-y) row should hold the northern source value, not get
+    # silently flipped by the coordinate snap.
+    ys = np.linspace(2.7e5, 3.2e6, 40)   # ascending y (EPSG:5070 metres)
+    xs = np.linspace(-2.3e6, 2.3e6, 60)
+    grid = xr.DataArray(
+        np.zeros((40, 60), dtype='float32'), dims=['y', 'x'],
+        coords={'y': ys, 'x': xs}, attrs={'crs': 5070, 'res': (76667.0, 76250.0)},
+    )
+    # source value == latitude, so larger value is further north
+    sys = np.linspace(50, 24, 50)
+    sxs = np.linspace(-125, -66, 70)
+    src = xr.DataArray(
+        np.repeat(sys[:, None], 70, axis=1).astype('float32'),
+        dims=['y', 'x'], coords={'y': sys, 'x': sxs}, attrs={'crs': 4326},
+    )
+    out = grid.xrs.coregister(src)
+    assert np.array_equal(out['y'].values, ys)
+    col = out.values[:, out.shape[1] // 2]
+    fin = col[np.isfinite(col)]
+    # ascending y: last row is the northernmost, so it holds the larger latitude
+    assert fin[-1] > fin[0]
+
+
 def test_coregister_raster_preserves_dask_backend():
     pytest.importorskip('pyproj')
     da = pytest.importorskip('dask.array')
