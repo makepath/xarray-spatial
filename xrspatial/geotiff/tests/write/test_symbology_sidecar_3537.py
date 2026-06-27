@@ -94,6 +94,19 @@ def test_gpu_write_emits_sidecars(tmp_path):
     assert os.path.exists(path + ".aux.xml")
 
 
+@requires_gpu
+def test_dask_gpu_write_emits_sidecars(tmp_path):
+    """dask+cupy (gpu=True over a dask array) hits the shared sidecar emit."""
+    import cupy
+    import dask.array as dsa
+
+    path = str(tmp_path / "dgpu.tif")
+    to_geotiff(_continuous_da(dsa.from_array(cupy.asarray(_BASE), chunks=(8, 8))),
+               path, gpu=True, color_ramp="magma")
+    assert os.path.exists(str(tmp_path / "dgpu.qml"))
+    assert os.path.exists(path + ".aux.xml")
+
+
 def test_finite_stats_backend_parity():
     """Stats agree across numpy / dask / cupy / dask+cupy."""
     import dask.array as dsa
@@ -284,3 +297,45 @@ def test_color_ramp_range_sets_bounds(tmp_path):
     # range escape hatch writes only min/max stats (no mean/stddev pass).
     aux = open(path + ".aux.xml").read()
     assert "STATISTICS_MINIMUM" in aux and "STATISTICS_MEAN" not in aux
+
+
+def test_dask_color_ramp_range_sets_bounds(tmp_path):
+    """The range escape hatch exists for large dask graphs; assert its bounds
+    and the skipped mean/stddev pass land on a dask-backed write."""
+    import dask.array as dsa
+
+    path = str(tmp_path / "dk_rng.tif")
+    to_geotiff(_continuous_da(dsa.from_array(_BASE, chunks=(8, 8))), path,
+               color_ramp="viridis", color_ramp_range=(0.0, 50.0))
+    rr = _qml_renderer(str(tmp_path / "dk_rng.qml"))
+    assert float(rr.get("classificationMin")) == pytest.approx(0.0)
+    assert float(rr.get("classificationMax")) == pytest.approx(50.0)
+    aux = open(path + ".aux.xml").read()
+    assert "STATISTICS_MINIMUM" in aux and "STATISTICS_MEAN" not in aux
+
+
+def test_3d_single_band_emits_sidecars(tmp_path):
+    """A 3D raster with a length-1 band dim is single-band -> emit symbology."""
+    band1 = xr.DataArray(
+        _BASE.reshape(1, 16, 16),
+        dims=("band", "y", "x"),
+        coords={"band": [1], "y": np.arange(16.0), "x": np.arange(16.0)},
+        attrs={"crs": 4326},
+    )
+    path = str(tmp_path / "b1.tif")
+    to_geotiff(band1, path, color_ramp="viridis")
+    assert os.path.exists(str(tmp_path / "b1.qml"))
+    assert os.path.exists(path + ".aux.xml")
+
+
+def test_nodata_attr_excluded_from_ramp_bounds(tmp_path):
+    """attrs['nodata'] (no explicit nodata= kwarg) is excluded from the ramp
+    stretch end-to-end, not just in the _finite_stats unit."""
+    arr = np.array([[1.0, 2.0], [3.0, -9999.0]], dtype="float32")
+    da = _continuous_da(arr)
+    da.attrs["nodata"] = -9999.0
+    path = str(tmp_path / "nd.tif")
+    to_geotiff(da, path, color_ramp="viridis")
+    rr = _qml_renderer(str(tmp_path / "nd.qml"))
+    assert float(rr.get("classificationMin")) == pytest.approx(1.0)
+    assert float(rr.get("classificationMax")) == pytest.approx(3.0)

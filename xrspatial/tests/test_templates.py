@@ -6,7 +6,8 @@ import pytest
 import xarray as xr
 
 from xrspatial import from_template, list_templates, slope
-from xrspatial._template_data import _CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES, _REGIONS
+from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
+                                      _REGION_ALIASES, _REGIONS)
 from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 
 
@@ -145,6 +146,62 @@ def test_world_grid():
 
 
 # ---------------------------------------------------------------------------
+# global-projection templates
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "name,crs",
+    [("web_mercator", 3857), ("wgs84", 4326), ("latlon", 4326),
+     ("equal_earth", 8857)],
+)
+def test_global_projection_contract(name, crs):
+    agg = from_template(name)
+    assert agg.attrs["crs"] == crs
+    assert agg.dims == ("y", "x")
+    assert agg.shape[0] > 1 and agg.shape[1] > 1
+    assert np.isnan(agg.values).all()
+    assert agg.dtype == np.float32
+    assert agg.name == name
+    # north-up (descending y), ascending x
+    assert agg.y.values[0] > agg.y.values[-1]
+    assert agg.x.values[0] < agg.x.values[-1]
+
+
+@pytest.mark.parametrize("alias", ["wgs84", "latlon"])
+def test_wgs84_latlon_alias_world(alias):
+    # the aliases resolve to the EPSG:4326 'world' grid (same coords and attrs);
+    # only the DataArray name reflects the spelling that was asked for
+    a = from_template(alias)
+    world = from_template("world")
+    np.testing.assert_array_equal(a.x.values, world.x.values)
+    np.testing.assert_array_equal(a.y.values, world.y.values)
+    assert a.attrs == world.attrs
+    assert a.name == alias
+
+
+@pytest.mark.parametrize("name", ["web_mercator", "equal_earth", "latlon"])
+def test_global_projection_case_insensitive(name):
+    a = from_template(name)
+    b = from_template(name.upper())
+    np.testing.assert_array_equal(a.x.values, b.x.values)
+    assert a.attrs == b.attrs
+
+
+def test_web_mercator_metre_coords_within_bounds():
+    agg = from_template("web_mercator")
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
+    left, bottom, right, top = _REGIONS["web_mercator"]["bounds"]
+    assert left <= agg.x.values.min() and agg.x.values.max() <= right
+    assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+def test_global_resolution_honored_exactly():
+    agg = from_template("web_mercator", resolution=100000)
+    assert agg.attrs["res"] == (100000.0, 100000.0)
+
+
+# ---------------------------------------------------------------------------
 # regional templates (GLANCE continental equal-area projections)
 # ---------------------------------------------------------------------------
 
@@ -203,18 +260,21 @@ def test_unknown_name_points_to_list_templates():
 def test_list_templates_grouped():
     names = list_templates()
     assert set(names) == {"regions", "cities", "countries"}
-    # each group lists exactly its registry keys, sorted
-    assert names["regions"] == sorted(_REGIONS)
+    # each group lists exactly its registry keys, sorted; the regions group also
+    # advertises the alias spellings (wgs84, latlon) so they are discoverable
+    assert names["regions"] == sorted(set(_REGIONS) | set(_REGION_ALIASES))
     assert names["cities"] == sorted(_CITIES)
     assert names["countries"] == sorted(_COUNTRY_BBOXES)
 
 
 @pytest.mark.parametrize(
-    "kind,registry",
-    [("regions", _REGIONS), ("cities", _CITIES), ("countries", _COUNTRY_BBOXES)],
+    "kind,expected",
+    [("regions", sorted(set(_REGIONS) | set(_REGION_ALIASES))),
+     ("cities", sorted(_CITIES)),
+     ("countries", sorted(_COUNTRY_BBOXES))],
 )
-def test_list_templates_kind_filter(kind, registry):
-    assert list_templates(kind) == sorted(registry)
+def test_list_templates_kind_filter(kind, expected):
+    assert list_templates(kind) == expected
 
 
 def test_list_templates_bad_kind_raises():
@@ -562,6 +622,17 @@ def test_cf_grid_mapping_preserve_path():
     assert "Conus Albers" in agg.attrs["crs_wkt"]
 
 
+@pytest.mark.parametrize("name", ["web_mercator", "equal_earth"])
+def test_global_preserve_picks_world_projection(name):
+    # the global templates carry the same area/shape EPSG hints as 'world', so
+    # preserve='shape' lands on World Mercator (EPSG:3395) instead of a stray
+    # UTM zone for the (0, 0) centroid, and preserve='area' lands on Equal Earth
+    agg_shape = from_template(name, preserve="shape")
+    assert agg_shape.attrs["crs"] == 3395
+    assert _proj(3395) == "merc"
+    assert from_template(name, preserve="area").attrs["crs"] == 8857
+
+
 def test_grid_mapping_omitted_for_equal_earth():
     # Equal Earth (the preserve='area' fallback for the world bbox) has no
     # CF grid mapping, so grid_mapping_name is left off and crs_wkt stands
@@ -600,6 +671,21 @@ def test_regional_template_grid_mapping(name, crs):
     assert agg.attrs["grid_mapping_name"] == "lambert_azimuthal_equal_area"
     assert "GLANCE" in agg.attrs["crs_wkt"]
     assert _proj(crs) == "laea"
+
+
+@pytest.mark.parametrize(
+    "name,crs,wkt_marker",
+    [("web_mercator", 3857, "Pseudo-Mercator"),
+     ("equal_earth", 8857, "Equal Earth")],
+)
+def test_global_projection_grid_mapping(name, crs, wkt_marker):
+    # neither Pseudo-Mercator nor Equal Earth has a CF grid_mapping_name, so the
+    # key is left off and crs_wkt stands alone (carrying the human CRS name).
+    agg = from_template(name)
+    assert agg.attrs["crs"] == crs
+    assert "grid_mapping_name" not in agg.attrs
+    assert wkt_marker in agg.attrs["crs_wkt"]
+    assert agg.x.attrs["units"] == "m"
 
 
 def test_cf_attrs_omitted_without_pyproj(monkeypatch):

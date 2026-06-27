@@ -1280,13 +1280,10 @@ def test_generate_sample_indices_large_is_deterministic():
 # ===================================================================
 # equal_interval and natural_breaks already cover all-NaN. The other
 # classifiers were not exercised on an all-non-finite raster, where the
-# finite mask removes every element. std_mean and maximum_breaks degrade
-# to an all-NaN result; on the eager (numpy/cupy) backends head_tail_breaks,
-# percentiles, and box_plot currently raise an opaque reduction error
-# (issue #3510), so their tests are xfail until that is fixed. Flip them to
-# plain assertions when #3510 lands. strict=False so a concurrent fix does
-# not break main via XPASS. See the dask section below for the per-backend
-# split (head_tail_breaks already degrades cleanly on dask).
+# finite mask removes every element. All of them now degrade to an all-NaN
+# result. head_tail_breaks, percentiles, and box_plot used to raise an opaque
+# reduction error on the eager (numpy/cupy) backends until #3510 added an
+# empty-finite guard. See the dask section below for the per-backend split.
 
 def test_std_mean_all_nan():
     import warnings
@@ -1303,34 +1300,59 @@ def test_maximum_breaks_all_nan():
     assert np.all(np.isnan(result.data))
 
 
-@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
 def test_head_tail_breaks_all_nan():
     agg = xr.DataArray(np.full((4, 5), np.nan))
     result = head_tail_breaks(agg)
     assert np.all(np.isnan(result.data))
 
 
-@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
 def test_percentiles_all_nan():
+    import warnings
     agg = xr.DataArray(np.full((4, 5), np.nan))
-    result = percentiles(agg)
+    # percentiles still takes nanmax over the (all-NaN) cleaned array to set
+    # the top bin edge, which warns like std_mean does on this input.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = percentiles(agg)
     assert np.all(np.isnan(result.data))
 
 
-@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
 def test_box_plot_all_nan():
     agg = xr.DataArray(np.full((4, 5), np.nan))
     result = box_plot(agg)
     assert np.all(np.isnan(result.data))
 
 
-# All-NaN on the dask backend. The dask paths are separate implementations,
-# and they do not match the eager paths on this degenerate input:
-# std_mean, maximum_breaks, and head_tail_breaks all return all-NaN on dask
-# (head_tail_breaks's dask path has a total_count == 0 guard the eager path
-# lacks, so it does not hit the #3510 crash), while percentiles and box_plot
-# crash on dask too. Pin all of it so the per-backend behaviour is explicit
-# and the #3510 fix can target only the eager paths.
+# All-inf input is mapped to NaN before binning, so it hits the same
+# empty-finite path as all-NaN and must also return an all-NaN result (#3510).
+
+def test_head_tail_breaks_all_inf():
+    agg = xr.DataArray(np.full((4, 5), np.inf))
+    result = head_tail_breaks(agg)
+    assert np.all(np.isnan(result.data))
+
+
+def test_percentiles_all_inf():
+    import warnings
+    agg = xr.DataArray(np.full((4, 5), np.inf))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = percentiles(agg)
+    assert np.all(np.isnan(result.data))
+
+
+def test_box_plot_all_inf():
+    agg = xr.DataArray(np.full((4, 5), -np.inf))
+    result = box_plot(agg)
+    assert np.all(np.isnan(result.data))
+
+
+# All-NaN on the dask backend. The dask paths are separate implementations.
+# std_mean, maximum_breaks, and head_tail_breaks always returned all-NaN on
+# dask (head_tail_breaks's dask path has a total_count == 0 guard the eager
+# path lacked); percentiles and box_plot used to crash on dask too until
+# #3510 added empty-finite guards to their dask sample paths. Pin all of it
+# so the per-backend behaviour stays explicit.
 
 @dask_array_available
 def test_std_mean_all_nan_dask():
@@ -1359,7 +1381,6 @@ def test_head_tail_breaks_all_nan_dask():
 
 
 @dask_array_available
-@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
 def test_percentiles_all_nan_dask():
     agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
     result = percentiles(agg)
@@ -1367,7 +1388,6 @@ def test_percentiles_all_nan_dask():
 
 
 @dask_array_available
-@pytest.mark.xfail(reason="all-NaN input crashes; see issue #3510", strict=False)
 def test_box_plot_all_nan_dask():
     agg = xr.DataArray(da.full((4, 5), np.nan, chunks=(2, 5)))
     result = box_plot(agg)
