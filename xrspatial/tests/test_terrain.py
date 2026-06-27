@@ -528,3 +528,76 @@ def test_terrain_all_nan_template_dask_cupy_matches_numpy():
     assert np.isfinite(t_dc.data.get()).all()
     np.testing.assert_allclose(t_np.data, t_dc.data.get(),
                                rtol=1e-4, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Fused numpy fast path (worley off) -- independent correctness anchor
+# ---------------------------------------------------------------------------
+
+def _reference_terrain(height, width, seed, noise_mode='fbm', octaves=16,
+                       lacunarity=2.0, persistence=0.5, zfactor=4000):
+    """Recompute the worley-off terrain pipeline from the trusted, un-fused
+    _perlin building block.
+
+    The fused numpy kernel and the dask+numpy path both go through
+    _gen_terrain, so dask-vs-numpy parity cannot catch a bug in the kernel
+    itself, and the GPU parity tests are skipped on CPU-only CI. This mirrors
+    _gen_terrain + _terrain_numpy with x_range/y_range scaled to (0, 1) (the
+    default full_extent) so it stays an independent reference.
+    """
+    from xrspatial.perlin import _make_perm_table, _perlin
+
+    linx = np.linspace(0, 1, width, endpoint=False, dtype=np.float32)
+    liny = np.linspace(0, 1, height, endpoint=False, dtype=np.float32)
+    x, y = np.meshgrid(linx, liny)
+
+    hm = np.zeros((height, width), dtype=np.float32)
+    norm = sum(persistence ** i for i in range(octaves))
+    if noise_mode == 'ridged':
+        weight = np.ones((height, width), dtype=np.float32)
+        for i in range(octaves):
+            amp = persistence ** i
+            freq = lacunarity ** i
+            noise = _perlin(_make_perm_table(seed + i), x * freq, y * freq)
+            noise = 1.0 - np.abs(noise)
+            noise = noise * noise
+            noise *= weight
+            weight = np.clip(noise, 0, 1)
+            hm += noise * amp
+    else:
+        for i in range(octaves):
+            amp = persistence ** i
+            freq = lacunarity ** i
+            hm += _perlin(_make_perm_table(seed + i), x * freq, y * freq) * amp
+
+    hm /= norm
+    hm = hm ** 3
+    hm = np.clip(hm, -1, 1)
+    hm = (hm + 1) / 2
+    hm[hm < 0.3] = 0
+    hm *= zfactor
+    return hm
+
+
+# rtol is the real drift guard; the loose atol only absorbs the ridged
+# feedback path's ~6e-3 absolute gap on zfactor-scaled values.  Do not
+# tighten atol or the ridged case flakes.
+_REF_RTOL = 1e-4
+_REF_ATOL = 2e-2
+
+
+@pytest.mark.parametrize('noise_mode', ['fbm', 'ridged'])
+def test_fused_numpy_matches_reference(noise_mode):
+    data = xr.DataArray(np.zeros((60, 80), dtype=np.float32), dims=['y', 'x'])
+    out = generate_terrain(data, seed=10, noise_mode=noise_mode)
+    ref = _reference_terrain(60, 80, seed=10, noise_mode=noise_mode)
+    np.testing.assert_allclose(out.data, ref, rtol=_REF_RTOL, atol=_REF_ATOL)
+
+
+def test_fused_numpy_matches_reference_nondefault_params():
+    data = xr.DataArray(np.zeros((60, 80), dtype=np.float32), dims=['y', 'x'])
+    out = generate_terrain(data, seed=7, octaves=10,
+                           lacunarity=2.3, persistence=0.45)
+    ref = _reference_terrain(60, 80, seed=7, octaves=10,
+                             lacunarity=2.3, persistence=0.45)
+    np.testing.assert_allclose(out.data, ref, rtol=_REF_RTOL, atol=_REF_ATOL)
