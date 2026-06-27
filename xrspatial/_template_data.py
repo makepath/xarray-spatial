@@ -47,7 +47,12 @@ _REGIONS = {
                 lonlat=(-74.30, 40.48, -73.65, 40.95)),
     # Continental regions in their EPSG-coded GLANCE equal-area projection
     # (Lambert azimuthal equal-area), the same family as Europe's LAEA. bounds
-    # are the lon/lat box projected into the GLANCE CRS.
+    # are the lon/lat box projected into the GLANCE CRS. No shape_epsg is set:
+    # there is no EPSG conformal projection for these continental extents, so
+    # preserve='shape' falls back to the centroid's UTM zone (covers a slice
+    # only). The lon/lat boxes follow the real region extent and may run a
+    # degree past the GLANCE area of use near the equator; LAEA still projects
+    # those points finitely.
     'southeast_asia': dict(
         bounds=(-987821, -5961342, 4923248, -932582), crs=10594,
         default_resolution=10000, label='Southeast Asia (GLANCE Asia LAEA)',

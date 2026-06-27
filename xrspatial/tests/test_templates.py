@@ -573,6 +573,26 @@ def test_grid_mapping_omitted_for_equal_earth():
 
 
 @pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_bounds_match_reprojected_lonlat(name, crs):
+    # the stored bounds are hand-maintained: the lon/lat box projected into the
+    # GLANCE CRS. Recompute them here so a future edit or regeneration that
+    # drifts bounds out of sync with lonlat (which would misgeoreference the
+    # grid) fails loudly instead of shipping a wrong canvas.
+    from xrspatial.reproject._crs_utils import _resolve_crs
+    from xrspatial.reproject._grid import _edge_samples, _transform_boundary
+
+    lon_min, lat_min, lon_max, lat_max = _REGIONS[name]["lonlat"]
+    xs, ys = _edge_samples(lon_min, lat_min, lon_max, lat_max, 101)
+    tx, ty = _transform_boundary(_resolve_crs(4326), _resolve_crs(crs), xs, ys)
+    tx, ty = np.asarray(tx), np.asarray(ty)
+    valid = np.isfinite(tx) & np.isfinite(ty)
+    recomputed = (tx[valid].min(), ty[valid].min(),
+                  tx[valid].max(), ty[valid].max())
+    # bounds are stored rounded to the metre; allow a couple of metres slack
+    np.testing.assert_allclose(_REGIONS[name]["bounds"], recomputed, atol=2.0)
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
 def test_regional_template_grid_mapping(name, crs):
     # the GLANCE regions are Lambert azimuthal equal-area, which CF defines, so
     # grid_mapping_name is present and crs_wkt names the GLANCE projection.
