@@ -579,12 +579,19 @@ def _reference_terrain(height, width, seed, noise_mode='fbm', octaves=16,
     return hm
 
 
+# rtol is the real drift guard; the loose atol only absorbs the ridged
+# feedback path's ~6e-3 absolute gap on zfactor-scaled values.  Do not
+# tighten atol or the ridged case flakes.
+_REF_RTOL = 1e-4
+_REF_ATOL = 2e-2
+
+
 @pytest.mark.parametrize('noise_mode', ['fbm', 'ridged'])
 def test_fused_numpy_matches_reference(noise_mode):
     data = xr.DataArray(np.zeros((60, 80), dtype=np.float32), dims=['y', 'x'])
     out = generate_terrain(data, seed=10, noise_mode=noise_mode)
     ref = _reference_terrain(60, 80, seed=10, noise_mode=noise_mode)
-    np.testing.assert_allclose(out.data, ref, rtol=1e-4, atol=2e-2)
+    np.testing.assert_allclose(out.data, ref, rtol=_REF_RTOL, atol=_REF_ATOL)
 
 
 def test_fused_numpy_matches_reference_nondefault_params():
@@ -593,4 +600,4 @@ def test_fused_numpy_matches_reference_nondefault_params():
                            lacunarity=2.3, persistence=0.45)
     ref = _reference_terrain(60, 80, seed=7, octaves=10,
                              lacunarity=2.3, persistence=0.45)
-    np.testing.assert_allclose(out.data, ref, rtol=1e-4, atol=2e-2)
+    np.testing.assert_allclose(out.data, ref, rtol=_REF_RTOL, atol=_REF_ATOL)
