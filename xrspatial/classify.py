@@ -1159,6 +1159,11 @@ def std_mean(agg: xr.DataArray,
 
 def _compute_head_tail_bins(values_np):
     """Compute head/tail break bins from flat finite numpy values."""
+    if values_np.size == 0:
+        # All-NaN/inf input: no finite values to partition. Return a NaN bin
+        # so _bin maps every (non-finite) pixel to NaN, matching equal_interval
+        # and maximum_breaks on degenerate input (#3510).
+        return np.array([np.nan])
     bins = []
     data = values_np.copy()
     while len(data) > 1:
@@ -1297,7 +1302,11 @@ def head_tail_breaks(agg: xr.DataArray,
 
 def _run_percentiles(data, num_sample, pct, module):
     # num_sample ignored for in-memory backends
-    q = module.percentile(data[module.isfinite(data)], pct)
+    finite = data[module.isfinite(data)]
+    if finite.size == 0:
+        # All-NaN/inf input: no finite values to take percentiles of (#3510).
+        return module.array([np.nan])
+    q = module.percentile(finite, pct)
     q = module.unique(q)
     return q
 
@@ -1313,6 +1322,9 @@ def _run_dask_percentiles(data, num_sample, pct):
     sample_idx = _generate_sample_indices(num_data, num_sample)
     values = np.asarray(clean.ravel()[sample_idx].compute())
     values = values[np.isfinite(values)]
+    if values.size == 0:
+        # All-NaN/inf input: no finite values to take percentiles of (#3510).
+        return np.array([np.nan])
     q = np.percentile(values, pct)
     q = np.unique(q)
     return q
@@ -1574,6 +1586,9 @@ _BOX_PLOT_DEFAULT_SAMPLE = 200_000
 
 
 def _box_plot_bins_from_sample(finite_np, hinge, max_v):
+    if finite_np.size == 0:
+        # All-NaN/inf input: no finite values to take percentiles of (#3510).
+        return np.array([np.nan])
     q1 = float(np.percentile(finite_np, 25))
     q2 = float(np.percentile(finite_np, 50))
     q3 = float(np.percentile(finite_np, 75))
@@ -1590,6 +1605,12 @@ def _run_box_plot(agg, hinge, module):
     data = agg.data
     data_clean = module.where(module.isinf(data), np.nan, data)
     finite_data = data_clean[module.isfinite(data_clean)]
+
+    if finite_data.size == 0:
+        # All-NaN/inf input: no finite values to take percentiles of. Return a
+        # NaN bin so every (non-finite) pixel maps to NaN, matching the other
+        # classifiers on degenerate input (#3510).
+        return _bin(agg, np.array([np.nan]), np.array([0]))
 
     if module == cupy:
         q1 = float(cupy.percentile(finite_data, 25).get())
