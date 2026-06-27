@@ -2637,6 +2637,81 @@ def test_max_distance_float32_boundary_allocation_gpu_matches_cpu():
 
 
 # ---------------------------------------------------------------------------
+# Issue #3392: split off from #3389. The cKDTree backends (eager numpy
+# PROXIMITY, and the dask paths for every mode) compared the float64 distance
+# against max_distance, while the brute-force/CUDA kernels round the distance
+# to float32 first. A max_distance landing inside the float32 ulp gap just
+# below a target's distance then dropped the target to NaN on the cKDTree
+# backends while the brute-force backends kept it. _inclusive_upper_bound now
+# widens the bound by half a float32 ulp so the cKDTree decision matches.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("metric", ['EUCLIDEAN', 'MANHATTAN'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_float32_ulp_max_distance_dask_matches_numpy(func, metric):
+    # A target whose true float64 distance sits one float32-ulp above
+    # max_distance, but whose float32-rounded distance is <= max_distance, must
+    # be kept identically on the eager numpy and dask+numpy backends.
+    lon = np.array([0.0, 0.1, 0.7])
+    lat = np.array([0.0])
+    data = np.zeros((1, 3), dtype=np.float64)
+    data[0, 0] = 9.0
+    j = 2
+    p = 2 if metric == 'EUCLIDEAN' else 1
+    d64 = float(np.linalg.norm([lon[j] - lon[0]], ord=p))
+    md = (float(np.float32(d64)) + d64) / 2.0
+    assert float(np.float32(d64)) < md < d64, "needs a real float32 ulp gap"
+
+    kwargs = dict(x='lon', y='lat', max_distance=md, distance_metric=metric)
+    numpy_raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    numpy_val = func(numpy_raster, **kwargs).data[0, j]
+
+    dask_raster = xr.DataArray(
+        data.copy(), dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    dask_raster.data = da.from_array(dask_raster.data, chunks=(1, 2))
+    dask_val = func(dask_raster, **kwargs).data.compute()[0, j]
+
+    # The target qualifies (its float32 distance is <= max_distance), so
+    # neither backend NaNs it out and both return the same value.
+    assert not np.isnan(numpy_val)
+    assert np.isnan(numpy_val) == np.isnan(dask_val)
+    np.testing.assert_allclose(numpy_val, dask_val, rtol=1e-6)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_float32_ulp_max_distance_just_below_excludes(func):
+    # The mirror case: when max_distance is below the target's float32-rounded
+    # distance, the target is genuinely out of range and every backend must
+    # NaN it out. Guards against the bound widening so far it admits targets
+    # the brute-force kernels exclude.
+    lon = np.array([0.0, 0.1, 0.7])
+    lat = np.array([0.0])
+    data = np.zeros((1, 3), dtype=np.float64)
+    data[0, 0] = 9.0
+    j = 2
+    d32 = np.float32(0.7)
+    md = float(np.nextafter(d32, np.float32(-np.inf)))  # one float32 ulp below
+    assert md < float(d32)
+
+    kwargs = dict(x='lon', y='lat', max_distance=md)
+    numpy_raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    numpy_val = func(numpy_raster, **kwargs).data[0, j]
+
+    dask_raster = xr.DataArray(
+        data.copy(), dims=['lat', 'lon'], coords={'lon': lon, 'lat': lat})
+    dask_raster.data = da.from_array(dask_raster.data, chunks=(1, 2))
+    dask_val = func(dask_raster, **kwargs).data.compute()[0, j]
+
+    assert np.isnan(numpy_val)
+    assert np.isnan(dask_val)
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for issue #3442: EUCLIDEAN proximity/allocation/direction
 # dropped a target sitting exactly at max_distance to NaN on the numpy and
 # dask+numpy cKDTree backends, while cupy/dask+cupy (brute force) kept it.
