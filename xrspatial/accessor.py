@@ -1210,6 +1210,10 @@ class XrsSpatialDataArrayAccessor:
         from .pathfinding import a_star_search
         return a_star_search(self._obj, start, goal, **kwargs)
 
+    def multi_stop_search(self, waypoints, **kwargs):
+        from .pathfinding import multi_stop_search
+        return multi_stop_search(self._obj, waypoints, **kwargs)
+
     # ---- Zonal ----
 
     def zonal_stats(self, zones, **kwargs):
