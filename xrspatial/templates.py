@@ -22,9 +22,19 @@ from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _trans
 _PRESERVE_OPTIONS = ("area", "shape")
 
 # Guard against a stray fine resolution allocating an enormous array. Applied to
-# every backend, including dask: a lazy grid this large is almost always a typo,
-# and the uniform cap keeps the error identical across backends.
+# the eager backends (numpy, cupy) only: those materialize the whole grid up
+# front, so a huge shape is an immediate out-of-memory risk. A dask grid is
+# lazy (da.full builds a chunk graph, never the array), so the cap is skipped
+# there -- a large chunked study area is a legitimate workflow.
 _MAX_CELLS = 500_000_000
+
+# A lazy dask grid never materializes, but its task graph does: with a fixed
+# chunk size the block count grows with the cell count, and a typo-level
+# resolution can build a graph large enough to bog down the client during
+# construction. Guard on the estimated block count (not cells) so a legitimate
+# large grid with sensible chunks still passes -- the new_england@10m repro is
+# ~26k blocks, so 1e6 leaves wide headroom while catching the runaway case.
+_MAX_CHUNKS = 1_000_000
 
 
 def _resolve(name):
@@ -178,6 +188,23 @@ def _make_data(shape, fill, backend, chunks):
     )
 
 
+def _estimate_n_chunks(shape, chunks):
+    """Number of blocks ``da.full`` would build for ``shape`` and ``chunks``.
+
+    Uses dask's own ``normalize_chunks`` so every ``chunks`` form -- ``'auto'``
+    (where dask picks the block shape from the chunk-size config), an int, a
+    tuple, or a dict -- resolves to the same block grid the real array would
+    have. dtype is ``float32`` to match the grid ``_make_data`` builds. The call
+    only sizes the block tuples, so it stays cheap even when the count is huge.
+    """
+    from dask.array.core import normalize_chunks
+    normalized = normalize_chunks(chunks, shape=shape, dtype="float32")
+    n = 1
+    for dim in normalized:
+        n *= len(dim)
+    return n
+
+
 def _cf_crs_attrs(crs):
     """CF Conventions grid-mapping attributes for an EPSG code.
 
@@ -254,7 +281,7 @@ def from_template(name: str,
                   resolution: Optional[Union[float, Tuple[float, float]]] = None,
                   *, preserve: Optional[str] = None, backend: str = "numpy",
                   fill: float = np.nan,
-                  chunks: Union[int, str, Tuple] = "auto") -> xr.DataArray:
+                  chunks: Optional[Union[int, str, Tuple]] = None) -> xr.DataArray:
     """Create an empty DataArray for a common study area.
 
     The returned raster is NaN-filled and obeys the xarray-spatial array
@@ -301,11 +328,22 @@ def from_template(name: str,
         the chosen EPSG int. Requires pyproj.
     backend : str, default='numpy'
         Array backend: ``'numpy'``, ``'dask+numpy'`` (alias ``'dask'``),
-        ``'cupy'``, or ``'dask+cupy'``.
+        ``'cupy'``, or ``'dask+cupy'``. The eager backends (``'numpy'``,
+        ``'cupy'``) materialize the whole grid, so they are subject to a
+        500-million-cell cap; the dask backends build a lazy chunk graph and
+        are not.
     fill : float, default=numpy.nan
         Value the grid is filled with. The dtype is always ``float32``.
-    chunks : int, str, or tuple, default='auto'
-        Dask chunk specification; only used by the dask backends.
+    chunks : int, str, or tuple, optional
+        Dask chunk specification. Supplying it returns a lazy, chunked grid:
+        an eager backend is promoted to its dask variant (``'numpy'`` to
+        ``'dask+numpy'``, ``'cupy'`` to ``'dask+cupy'``), and the cell cap no
+        longer applies. When omitted, the dask backends use ``'auto'``. The
+        data stays lazy, but a very fine resolution still builds one task per
+        chunk, so an extreme shape with small chunks can make a task graph
+        large enough to bog down the client. To prevent that, a grid that would
+        split into more than 1,000,000 chunks raises ``ValueError``; coarsen the
+        resolution or use larger chunks.
 
     Returns
     -------
@@ -351,6 +389,10 @@ def from_template(name: str,
         32630
         >>> from_template("FRA", preserve="area").attrs["crs"]    # Equal Earth
         8857
+        >>> # passing chunks returns a lazy dask grid, exempt from the cell cap
+        >>> agg = from_template("new_england", resolution=10, chunks=512)
+        >>> type(agg.data).__name__
+        'Array'
     """
     spec = _resolve(name)
     key = spec["key"]
@@ -379,13 +421,33 @@ def from_template(name: str,
     width = max(1, int(round((right - left) / res_x)))
     height = max(1, int(round((top - bottom) / res_y)))
 
+    # Supplying `chunks` signals intent for a lazy, chunked grid: promote an
+    # eager backend to its dask variant so the result never materializes.
+    backend = backend.lower()
+    if chunks is not None and backend in ("numpy", "cupy"):
+        backend = "dask+numpy" if backend == "numpy" else "dask+cupy"
+    is_dask = backend in ("dask", "dask+numpy", "dask+cupy")
+
     n_cells = width * height
-    if n_cells > _MAX_CELLS:
+    if not is_dask and n_cells > _MAX_CELLS:
         raise ValueError(
             f"resolution {(res_x, res_y)} produces a {height} x {width} grid "
             f"({n_cells:,} cells), exceeding the {_MAX_CELLS:,}-cell limit. "
-            f"Use a coarser resolution."
+            f"Use a coarser resolution, or pass chunks=... for a lazy dask grid."
         )
+
+    effective_chunks = "auto" if chunks is None else chunks
+    if is_dask:
+        n_chunks = _estimate_n_chunks((height, width), effective_chunks)
+        if n_chunks > _MAX_CHUNKS:
+            raise ValueError(
+                f"resolution {(res_x, res_y)} produces a {height} x {width} "
+                f"grid that splits into {n_chunks:,} chunks with "
+                f"chunks={effective_chunks!r}, exceeding the "
+                f"{_MAX_CHUNKS:,}-chunk limit. A task graph this large can bog "
+                f"down the client even though no data is computed. Use a "
+                f"coarser resolution or larger chunks."
+            )
 
     # Honor the requested resolution exactly: anchor the lower-left corner and
     # nudge the far edges to an exact multiple of the cell size, so res comes
@@ -396,7 +458,7 @@ def from_template(name: str,
     top = bottom + height * res_y
     ys, xs = _make_output_coords((left, bottom, right, top), (height, width))
 
-    data = _make_data((height, width), fill, backend, chunks)
+    data = _make_data((height, width), fill, backend, effective_chunks)
 
     attrs = {"res": (res_x, res_y), "crs": crs}
     attrs.update(_cf_crs_attrs(crs))

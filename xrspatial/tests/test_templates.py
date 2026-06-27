@@ -367,6 +367,105 @@ def test_over_fine_resolution_raises():
         from_template("conus", resolution=1)
 
 
+# new_england at 10 m is ~6.9e9 cells, well past the eager cap, but only ~26k
+# chunks at 512 -- a lazy grid that builds and indexes instantly. This is the
+# repro from the issue.
+_OVER_CAP = dict(name="new_england", resolution=10)
+
+
+@dask_array_available
+def test_chunks_promotes_eager_to_lazy_dask():
+    import dask.array as da
+    from xrspatial.templates import _MAX_CELLS
+    # Supplying chunks promotes the default numpy backend to dask and skips the
+    # cap, returning a lazy array that never materializes the full shape.
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        chunks=512)
+    assert isinstance(agg.data, da.Array)
+    assert agg.size > _MAX_CELLS
+    assert agg.data.chunksize == (512, 512)
+    assert agg.attrs["res"] == (10.0, 10.0)
+    # computing a single cell stays cheap and yields the NaN fill
+    assert np.isnan(float(agg.data[0, 0].compute()))
+
+
+@dask_array_available
+def test_dask_backend_skips_cell_cap_without_chunks():
+    import dask.array as da
+    from xrspatial.templates import _MAX_CELLS
+    # An explicit dask backend is lazy too, so the cap is skipped even when no
+    # chunks are passed (the dask path falls back to 'auto').
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        backend="dask+numpy")
+    assert isinstance(agg.data, da.Array)
+    assert agg.size > _MAX_CELLS
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_chunks_promotes_cupy_to_dask_cupy():
+    import cupy
+    import dask.array as da
+    agg = from_template(_OVER_CAP["name"], resolution=_OVER_CAP["resolution"],
+                        backend="cupy", chunks=512)
+    assert isinstance(agg.data, da.Array)
+    block = agg.data.blocks[0, 0].compute()
+    assert isinstance(block, cupy.ndarray)
+
+
+@dask_array_available
+def test_over_fine_dask_chunk_count_raises():
+    # The dask path skips the cell cap, but a typo-level resolution with a fixed
+    # chunk size builds a runaway task graph. This is the issue #3557 repro:
+    # conus at 1 m / chunks=512 is ~7e13 cells / 512^2 ~= 7e7 chunks. The guard
+    # must raise from the estimate, BEFORE da.full builds the graph. Match the
+    # chunk-count cap text specifically so this can't pass on the eager
+    # cell-cap message (which also mentions "chunks").
+    with pytest.raises(ValueError, match="chunk limit"):
+        from_template("conus", resolution=1, chunks=512)
+
+
+@dask_array_available
+def test_explicit_dask_backend_chunk_count_raises():
+    # Same guard via the non-promotion path: an explicit dask backend with a
+    # fixed small chunk size on a typo-fine resolution must raise too.
+    with pytest.raises(ValueError, match="chunk limit"):
+        from_template("conus", resolution=1, backend="dask+numpy", chunks=512)
+
+
+@dask_array_available
+def test_auto_chunks_exempt_from_chunk_cap():
+    import dask.array as da
+    # 'auto' sizes blocks to the dask chunk-size config (~128 MB), so even a very
+    # fine resolution stays well under the chunk cap and builds fine. The guard
+    # keys on the real block count, so the auto path is not falsely tripped.
+    agg = from_template("conus", resolution=1, chunks="auto")
+    assert isinstance(agg.data, da.Array)
+    from xrspatial.templates import _MAX_CHUNKS
+    assert agg.data.npartitions <= _MAX_CHUNKS
+
+
+@dask_array_available
+def test_chunk_count_estimate_matches_dask():
+    import dask.array as da
+    from xrspatial.templates import _estimate_n_chunks
+    # The estimate must agree with the block count dask actually builds, across
+    # chunk forms, so the guard fires on the real graph size.
+    for chunks in (256, 512, "auto", (300, 400)):
+        built = da.full((4000, 5000), np.nan, dtype="float32", chunks=chunks)
+        assert _estimate_n_chunks((4000, 5000), chunks) == built.npartitions
+
+
+@dask_array_available
+def test_legit_large_dask_grid_passes():
+    import dask.array as da
+    # The headroom case: new_england @ 10 m / chunks=512 is past the eager cell
+    # cap but only ~26k chunks, far below the 1e6 chunk cap, so it must build.
+    agg = from_template("new_england", resolution=10, chunks=512)
+    assert isinstance(agg.data, da.Array)
+    assert agg.data.npartitions < 1_000_000
+
+
 def test_single_pixel_grid():
     # a resolution coarser than the whole study-area box clamps width and height
     # to the max(1, ...) floor, giving a 1x1 grid that still obeys the contract.
