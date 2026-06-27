@@ -313,7 +313,11 @@ def from_template(name: str,
         Dask chunk specification. Supplying it returns a lazy, chunked grid:
         an eager backend is promoted to its dask variant (``'numpy'`` to
         ``'dask+numpy'``, ``'cupy'`` to ``'dask+cupy'``), and the cell cap no
-        longer applies. When omitted, the dask backends use ``'auto'``.
+        longer applies. When omitted, the dask backends use ``'auto'``. The
+        data stays lazy, but a very fine resolution still builds one task per
+        chunk, so an extreme shape with small chunks can make a task graph
+        large enough to bog down the client; coarsen the resolution or use
+        larger chunks if that happens.
 
     Returns
     -------
@@ -359,6 +363,10 @@ def from_template(name: str,
         32630
         >>> from_template("FRA", preserve="area").attrs["crs"]    # Equal Earth
         8857
+        >>> # passing chunks returns a lazy dask grid, exempt from the cell cap
+        >>> agg = from_template("new_england", resolution=10, chunks=512)
+        >>> type(agg.data).__name__
+        'Array'
     """
     spec = _resolve(name)
     key = spec["key"]
