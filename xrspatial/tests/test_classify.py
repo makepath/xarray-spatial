@@ -1307,8 +1307,13 @@ def test_head_tail_breaks_all_nan():
 
 
 def test_percentiles_all_nan():
+    import warnings
     agg = xr.DataArray(np.full((4, 5), np.nan))
-    result = percentiles(agg)
+    # percentiles still takes nanmax over the (all-NaN) cleaned array to set
+    # the top bin edge, which warns like std_mean does on this input.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = percentiles(agg)
     assert np.all(np.isnan(result.data))
 
 
@@ -1328,8 +1333,11 @@ def test_head_tail_breaks_all_inf():
 
 
 def test_percentiles_all_inf():
+    import warnings
     agg = xr.DataArray(np.full((4, 5), np.inf))
-    result = percentiles(agg)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = percentiles(agg)
     assert np.all(np.isnan(result.data))
 
 
