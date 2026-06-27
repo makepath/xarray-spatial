@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 
 import numpy as np
 import geopandas as gpd
-import spatialpandas
 from rasterio.features import rasterize as rio_rasterize
 from rasterio.transform import from_bounds
 from shapely.geometry import (
@@ -29,9 +28,19 @@ from shapely.geometry import (
     box,
 )
 
-import datashader as ds
 from geocube.api.core import make_geocube
 from xrspatial.rasterize import rasterize as xrs_rasterize
+
+# datashader is a deliberate A/B comparison here but is no longer a default
+# dependency. Guard the import (and spatialpandas, which only feeds the
+# datashader path) so the benchmark still runs when it is absent; the
+# datashader column is skipped in that case.
+try:
+    import datashader as ds
+    import spatialpandas
+    HAS_DATASHADER = True
+except ImportError:
+    HAS_DATASHADER = False
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +607,7 @@ def main():
     for gen_name, gen_cfg in GENERATORS.items():
         gen_fn = gen_cfg["fn"]
         kind = gen_cfg["kind"]
-        use_datashader = kind == "polygon"
+        use_datashader = kind == "polygon" and HAS_DATASHADER
 
         for n in feature_counts:
             geoms, vals = gen_fn(n, rng)
