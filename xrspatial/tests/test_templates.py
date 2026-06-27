@@ -219,6 +219,18 @@ _REGIONAL = [
     ("middle_east", 10594),
     ("south_america", 10603),
     ("oceania", 10601),
+    ("australia", 10601),
+    ("new_zealand", 10601),
+    ("central_africa", 10592),
+    ("north_asia", 10594),
+    ("greenland", 10598),
+    ("amazon_basin", 10603),
+    ("andes", 10603),
+    ("southern_cone", 10603),
+    ("western_europe", 10596),
+    ("eastern_europe", 10596),
+    ("northern_europe", 10596),
+    ("southern_europe", 10596),
 ]
 
 
@@ -232,6 +244,22 @@ def test_regional_template_contract(name, crs):
     assert agg.dtype == np.float32
     assert agg.name == name
     # projected (LAEA) metre coordinates, north-up, ascending x
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
+    assert agg.y.values[0] > agg.y.values[-1]
+    assert agg.x.values[0] < agg.x.values[-1]
+
+
+def test_antarctica_contract():
+    # Antarctica is the one region that is not GLANCE LAEA: it uses the de-facto
+    # standard Antarctic Polar Stereographic (EPSG:3031), a projected metre CRS.
+    agg = from_template("antarctica")
+    assert agg.attrs["crs"] == 3031
+    assert agg.dims == ("y", "x")
+    assert agg.shape[0] > 1 and agg.shape[1] > 1
+    assert np.isnan(agg.values).all()
+    assert agg.dtype == np.float32
+    assert agg.name == "antarctica"
     assert agg.x.attrs["units"] == "m"
     assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
     assert agg.y.values[0] > agg.y.values[-1]
@@ -680,6 +708,18 @@ def test_regional_template_grid_mapping(name, crs):
     assert agg.attrs["grid_mapping_name"] == "lambert_azimuthal_equal_area"
     assert "GLANCE" in agg.attrs["crs_wkt"]
     assert _proj(crs) == "laea"
+
+
+def test_antarctica_grid_mapping_and_preserve():
+    # Antarctic Polar Stereographic is conformal, so grid_mapping_name is
+    # 'polar_stereographic' and preserve='area' must hand back a real equal-area
+    # code (the south-polar LAEA EPSG:6932), not 3031.
+    agg = from_template("antarctica")
+    assert agg.attrs["grid_mapping_name"] == "polar_stereographic"
+    assert _proj(3031) == "stere"
+    assert from_template("antarctica", preserve="area").attrs["crs"] == 6932
+    assert _proj(6932) == "laea"
+    assert from_template("antarctica", preserve="shape").attrs["crs"] == 3031
 
 
 @pytest.mark.parametrize(
