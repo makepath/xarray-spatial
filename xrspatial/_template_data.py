@@ -45,6 +45,25 @@ _REGIONS = {
     'nyc': dict(bounds=(558916, 4481270, 614426, 4534084), crs=32618,
                 default_resolution=30, label='New York City (UTM 18N)',
                 lonlat=(-74.30, 40.48, -73.65, 40.95)),
+    # Continental regions in their EPSG-coded GLANCE equal-area projection
+    # (Lambert azimuthal equal-area), the same family as Europe's LAEA. bounds
+    # are the lon/lat box projected into the GLANCE CRS.
+    'southeast_asia': dict(
+        bounds=(-987821, -5961342, 4923248, -932582), crs=10594,
+        default_resolution=10000, label='Southeast Asia (GLANCE Asia LAEA)',
+        lonlat=(92.0, -11.0, 141.0, 28.0), area_epsg=10594),
+    'central_america': dict(
+        bounds=(821182, -4620810, 2695977, -3111382), crs=10598,
+        default_resolution=2000, label='Central America (GLANCE N. America LAEA)',
+        lonlat=(-92.5, 7.0, -77.0, 18.5), area_epsg=10598),
+    'caribbean': dict(
+        bounds=(1500961, -4302986, 4618873, -1455289), crs=10598,
+        default_resolution=5000, label='Caribbean (GLANCE N. America LAEA)',
+        lonlat=(-85.0, 9.0, -59.0, 27.5), area_epsg=10598),
+    'west_africa': dict(
+        bounds=(-4141633, -109304, -404383, 2659299), crs=10592,
+        default_resolution=5000, label='West Africa (GLANCE Africa LAEA)',
+        lonlat=(-18.0, 4.0, 16.0, 27.0), area_epsg=10592),
     # The default (non-preserve) world grid spans the full +/-90 in EPSG:4326.
     # The preserve path uses a +/-85 latitude band (the conventional Web
     # Mercator limit) so 'shape' (World Mercator) does not diverge at the poles.

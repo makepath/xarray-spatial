@@ -270,7 +270,9 @@ def from_template(name: str,
     ----------
     name : str
         A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'world'``; a world-city name (case-insensitive), e.g.
+        ``'europe'``, ``'southeast_asia'``, ``'central_america'``,
+        ``'caribbean'``, ``'west_africa'``, ``'world'``; a world-city name
+        (case-insensitive), e.g.
         ``'london'``, ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3
         country code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and
         cities come back in a projected CRS (cities in their UTM zone); country
