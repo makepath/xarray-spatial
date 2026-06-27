@@ -52,6 +52,29 @@ _REGIONS = {
                   default_resolution=0.5, label='World (WGS84)',
                   lonlat=(-180.0, -85.0, 180.0, 85.0), area_epsg=8857,
                   shape_epsg=3395),
+    # Global Web Mercator (EPSG:3857). Native bounds are the canonical square
+    # extent +/-20037508 m, which is +/-180 lon and +/-85.051129 lat (the
+    # latitude where the Mercator y matches the x half-extent). lonlat stops at
+    # +/-85.051129 because Mercator y diverges to infinity at the poles.
+    'web_mercator': dict(
+        bounds=(-20037508, -20037508, 20037508, 20037508), crs=3857,
+        default_resolution=50000, label='World (Web Mercator)',
+        lonlat=(-180.0, -85.051129, 180.0, 85.051129),
+        area_epsg=8857, shape_epsg=3395),
+    # Global equal-area grid (EPSG:8857, Equal Earth). Native bounds are the
+    # +/-90 world projected into Equal Earth.
+    'equal_earth': dict(
+        bounds=(-17243959, -8392928, 17243959, 8392928), crs=8857,
+        default_resolution=50000, label='World (Equal Earth)',
+        lonlat=(-180.0, -90.0, 180.0, 90.0),
+        area_epsg=8857, shape_epsg=3395),
+}
+
+# Alternate spellings that resolve to a curated region (single source of truth).
+# 'wgs84' / 'latlon' are friendly names for the EPSG:4326 'world' grid.
+_REGION_ALIASES = {
+    'wgs84': 'world',
+    'latlon': 'world',
 }
 
 # Equal-area fallback when a template has no curated ``area_epsg``
