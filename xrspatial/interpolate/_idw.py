@@ -286,6 +286,12 @@ def idw(x, y=None, z=None, template=None, power=2.0, k=None,
         fill_value=np.nan, name='idw', *, column=None):
     """Inverse Distance Weighting interpolation.
 
+    Supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy backed
+    templates; the output backend matches the *template*.  The k-nearest
+    mode (``k`` is not ``None``) runs on the CPU backends only (NumPy and
+    Dask with NumPy); GPU templates require ``k=None`` and raise
+    ``NotImplementedError`` otherwise.
+
     Parameters
     ----------
     x, y, z : array-like
@@ -311,6 +317,10 @@ def idw(x, y=None, z=None, template=None, power=2.0, k=None,
     Returns
     -------
     xr.DataArray
+        Interpolated raster (float64) on the same grid, coords, dims, and
+        attrs as *template*.  Input points containing NaN/inf in any of
+        *x*, *y*, *z* are dropped before interpolation; pixels with zero
+        total weight take *fill_value*.
 
     Raises
     ------
@@ -318,6 +328,21 @@ def idw(x, y=None, z=None, template=None, power=2.0, k=None,
         When ``k`` is set on a numpy-backed template and the
         ``(grid_pixels, k)`` distance and index arrays from the
         ``cKDTree`` query would exceed 80% of available memory.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np, xarray as xr
+        >>> from xrspatial.interpolate import idw
+        >>> template = xr.DataArray(
+        ...     np.zeros((2, 2)),
+        ...     dims=["y", "x"],
+        ...     coords={"y": [1.0, 0.0], "x": [0.0, 1.0]},
+        ... )
+        >>> idw([0.0, 1.0], [0.0, 1.0], [0.0, 10.0], template).values
+        array([[ 5., 10.],
+               [ 0.,  5.]])
     """
     x, y, z = resolve_xyz(x, y, z, column=column, func_name='idw')
     _validate_raster(template, func_name='idw', name='template')
