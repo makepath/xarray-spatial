@@ -644,6 +644,8 @@ def _pycnophylactic_numpy(zones_arr, values_dict, nodata_zone,
 
     # pixels that belong to some zone (valid for smoothing)
     valid = ~np.isnan(surface)
+    if not np.any(valid):
+        return surface
 
     for _ in range(max_iterations):
         # Laplacian smoothing: mean of 4-connected neighbours

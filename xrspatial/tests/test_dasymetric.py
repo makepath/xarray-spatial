@@ -1070,13 +1070,7 @@ class TestLimitingVariableThreeClass:
 # ---------------------------------------------------------------------------
 
 class TestPycnophylacticEmptyValid:
-    """pycnophylactic crashes when no pixel is valid for smoothing (#3406).
-
-    disaggregate handles the same inputs gracefully (all-NaN output); these
-    are xfail(strict) until #3406 makes pycnophylactic agree.  When the
-    source fix lands, the tests start XPASSing and strict mode flips them
-    red, prompting removal of the marker.
-    """
+    """pycnophylactic agrees with disaggregate on empty-valid inputs (#3406)."""
 
     def test_disaggregate_all_nan_zones_is_all_nan(self):
         """Reference: disaggregate returns all-NaN, no crash."""
@@ -1085,21 +1079,11 @@ class TestPycnophylacticEmptyValid:
         result = disaggregate(zones, {1: 100.0}, weight)
         assert np.all(np.isnan(result.values))
 
-    @pytest.mark.xfail(
-        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
-        strict=True,
-        raises=ValueError,
-    )
     def test_pycnophylactic_all_nan_zones(self):
         zones = create_test_raster(np.full((3, 3), np.nan), backend='numpy')
         result = pycnophylactic(zones, {1: 100.0})
         assert np.all(np.isnan(result.values))
 
-    @pytest.mark.xfail(
-        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
-        strict=True,
-        raises=ValueError,
-    )
     def test_pycnophylactic_no_matching_zone(self):
         zones = create_test_raster(
             np.array([[1, 1], [2, 2]], dtype=np.float64), backend='numpy')
