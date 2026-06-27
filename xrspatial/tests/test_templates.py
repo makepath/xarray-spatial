@@ -152,7 +152,7 @@ def test_world_grid():
 @pytest.mark.parametrize(
     "name,crs",
     [("web_mercator", 3857), ("wgs84", 4326), ("latlon", 4326),
-     ("equal_earth", 8857)],
+     ("equal_earth", 8857), ("pacific", 3832)],
 )
 def test_global_projection_contract(name, crs):
     agg = from_template(name)
@@ -179,12 +179,31 @@ def test_wgs84_latlon_alias_world(alias):
     assert a.name == alias
 
 
-@pytest.mark.parametrize("name", ["web_mercator", "equal_earth", "latlon"])
+@pytest.mark.parametrize("name", ["web_mercator", "equal_earth", "latlon",
+                                  "pacific", "pdc"])
 def test_global_projection_case_insensitive(name):
     a = from_template(name)
     b = from_template(name.upper())
     np.testing.assert_array_equal(a.x.values, b.x.values)
     assert a.attrs == b.attrs
+
+
+def test_pacific_pdc_mercator():
+    # the Pacific Disaster Center projection (EPSG:3832, WGS 84 / PDC Mercator)
+    # is a Pacific-centered Mercator, so the ocean is continuous; CF names it
+    # 'mercator' and the WKT carries the PDC name.
+    agg = from_template("pacific")
+    assert agg.attrs["crs"] == 3832
+    assert agg.attrs["grid_mapping_name"] == "mercator"
+    assert "PDC Mercator" in agg.attrs["crs_wkt"]
+    assert agg.x.attrs["units"] == "m"
+    # 'pdc' is an alias for the same grid (only the name differs)
+    pdc = from_template("pdc")
+    np.testing.assert_array_equal(pdc.x.values, agg.x.values)
+    assert pdc.attrs == agg.attrs
+    assert pdc.name == "pdc"
+    # conformal, so preserve='area' hands back the Equal Earth equal-area code
+    assert from_template("pacific", preserve="area").attrs["crs"] == 8857
 
 
 def test_web_mercator_metre_coords_within_bounds():
@@ -199,6 +218,95 @@ def test_web_mercator_metre_coords_within_bounds():
 def test_global_resolution_honored_exactly():
     agg = from_template("web_mercator", resolution=100000)
     assert agg.attrs["res"] == (100000.0, 100000.0)
+
+
+# ---------------------------------------------------------------------------
+# regional templates (GLANCE continental equal-area projections)
+# ---------------------------------------------------------------------------
+
+_REGIONAL = [
+    ("southeast_asia", 10594),
+    ("central_america", 10598),
+    ("caribbean", 10598),
+    ("west_africa", 10592),
+    ("north_africa", 10592),
+    ("east_africa", 10592),
+    ("southern_africa", 10592),
+    ("south_asia", 10594),
+    ("east_asia", 10594),
+    ("central_asia", 10594),
+    ("middle_east", 10594),
+    ("south_america", 10603),
+    ("oceania", 10601),
+    ("australia", 10601),
+    ("new_zealand", 10601),
+    ("central_africa", 10592),
+    ("north_asia", 10594),
+    ("greenland", 10598),
+    ("canada", 10598),
+    ("mexico", 10598),
+    ("great_lakes", 10598),
+    ("pacific_northwest", 10598),
+    ("gulf_coast", 10598),
+    ("new_england", 10598),
+    ("great_plains", 10598),
+    ("american_southwest", 10598),
+    ("amazon_basin", 10603),
+    ("andes", 10603),
+    ("southern_cone", 10603),
+    ("western_europe", 10596),
+    ("eastern_europe", 10596),
+    ("northern_europe", 10596),
+    ("southern_europe", 10596),
+]
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_template_contract(name, crs):
+    agg = from_template(name)
+    assert agg.attrs["crs"] == crs
+    assert agg.dims == ("y", "x")
+    assert agg.shape[0] > 1 and agg.shape[1] > 1
+    assert np.isnan(agg.values).all()
+    assert agg.dtype == np.float32
+    assert agg.name == name
+    # projected (LAEA) metre coordinates, north-up, ascending x
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
+    assert agg.y.values[0] > agg.y.values[-1]
+    assert agg.x.values[0] < agg.x.values[-1]
+
+
+def test_antarctica_contract():
+    # Antarctica is the one region that is not GLANCE LAEA: it uses the de-facto
+    # standard Antarctic Polar Stereographic (EPSG:3031), a projected metre CRS.
+    agg = from_template("antarctica")
+    assert agg.attrs["crs"] == 3031
+    assert agg.dims == ("y", "x")
+    assert agg.shape[0] > 1 and agg.shape[1] > 1
+    assert np.isnan(agg.values).all()
+    assert agg.dtype == np.float32
+    assert agg.name == "antarctica"
+    assert agg.x.attrs["units"] == "m"
+    assert agg.x.attrs["standard_name"] == "projection_x_coordinate"
+    assert agg.y.values[0] > agg.y.values[-1]
+    assert agg.x.values[0] < agg.x.values[-1]
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_template_centers_within_bounds(name, crs):
+    agg = from_template(name)
+    left, bottom, right, top = _REGIONS[name]["bounds"]
+    assert left <= agg.x.values.min() and agg.x.values.max() <= right
+    assert bottom <= agg.y.values.min() and agg.y.values.max() <= top
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_template_case_insensitive(name, crs):
+    a = from_template(name)
+    b = from_template(name.upper())
+    np.testing.assert_array_equal(a.x.values, b.x.values)
+    assert a.attrs == b.attrs
 
 
 @pytest.mark.parametrize("bad", ["does-not-exist", "ZZZ"])
@@ -597,6 +705,48 @@ def test_grid_mapping_omitted_for_equal_earth():
     assert agg.attrs["crs"] == 8857
     assert "grid_mapping_name" not in agg.attrs
     assert "Equal Earth" in agg.attrs["crs_wkt"]
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_bounds_match_reprojected_lonlat(name, crs):
+    # the stored bounds are hand-maintained: the lon/lat box projected into the
+    # GLANCE CRS. Recompute them here so a future edit or regeneration that
+    # drifts bounds out of sync with lonlat (which would misgeoreference the
+    # grid) fails loudly instead of shipping a wrong canvas.
+    from xrspatial.reproject._crs_utils import _resolve_crs
+    from xrspatial.reproject._grid import _edge_samples, _transform_boundary
+
+    lon_min, lat_min, lon_max, lat_max = _REGIONS[name]["lonlat"]
+    xs, ys = _edge_samples(lon_min, lat_min, lon_max, lat_max, 101)
+    tx, ty = _transform_boundary(_resolve_crs(4326), _resolve_crs(crs), xs, ys)
+    tx, ty = np.asarray(tx), np.asarray(ty)
+    valid = np.isfinite(tx) & np.isfinite(ty)
+    recomputed = (tx[valid].min(), ty[valid].min(),
+                  tx[valid].max(), ty[valid].max())
+    # bounds are stored rounded to the metre; allow a couple of metres slack
+    np.testing.assert_allclose(_REGIONS[name]["bounds"], recomputed, atol=2.0)
+
+
+@pytest.mark.parametrize("name,crs", _REGIONAL)
+def test_regional_template_grid_mapping(name, crs):
+    # the GLANCE regions are Lambert azimuthal equal-area, which CF defines, so
+    # grid_mapping_name is present and crs_wkt names the GLANCE projection.
+    agg = from_template(name)
+    assert agg.attrs["grid_mapping_name"] == "lambert_azimuthal_equal_area"
+    assert "GLANCE" in agg.attrs["crs_wkt"]
+    assert _proj(crs) == "laea"
+
+
+def test_antarctica_grid_mapping_and_preserve():
+    # Antarctic Polar Stereographic is conformal, so grid_mapping_name is
+    # 'polar_stereographic' and preserve='area' must hand back a real equal-area
+    # code (the south-polar LAEA EPSG:6932), not 3031.
+    agg = from_template("antarctica")
+    assert agg.attrs["grid_mapping_name"] == "polar_stereographic"
+    assert _proj(3031) == "stere"
+    assert from_template("antarctica", preserve="area").attrs["crs"] == 6932
+    assert _proj(6932) == "laea"
+    assert from_template("antarctica", preserve="shape").attrs["crs"] == 3031
 
 
 @pytest.mark.parametrize(

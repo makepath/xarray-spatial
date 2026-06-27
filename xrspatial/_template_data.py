@@ -45,6 +45,156 @@ _REGIONS = {
     'nyc': dict(bounds=(558916, 4481270, 614426, 4534084), crs=32618,
                 default_resolution=30, label='New York City (UTM 18N)',
                 lonlat=(-74.30, 40.48, -73.65, 40.95)),
+    # Continental regions in their EPSG-coded GLANCE equal-area projection
+    # (Lambert azimuthal equal-area), the same family as Europe's LAEA. bounds
+    # are the lon/lat box projected into the GLANCE CRS. No shape_epsg is set:
+    # there is no EPSG conformal projection for these continental extents, so
+    # preserve='shape' falls back to the centroid's UTM zone (covers a slice
+    # only). The lon/lat boxes follow the real region extent and may run a
+    # degree past the GLANCE area of use near the equator; LAEA still projects
+    # those points finitely.
+    'southeast_asia': dict(
+        bounds=(-987821, -5961342, 4923248, -932582), crs=10594,
+        default_resolution=10000, label='Southeast Asia (GLANCE Asia LAEA)',
+        lonlat=(92.0, -11.0, 141.0, 28.0), area_epsg=10594),
+    'central_america': dict(
+        bounds=(821182, -4620810, 2695977, -3111382), crs=10598,
+        default_resolution=2000, label='Central America (GLANCE N. America LAEA)',
+        lonlat=(-92.5, 7.0, -77.0, 18.5), area_epsg=10598),
+    'caribbean': dict(
+        bounds=(1500961, -4302986, 4618873, -1455289), crs=10598,
+        default_resolution=5000, label='Caribbean (GLANCE N. America LAEA)',
+        lonlat=(-85.0, 9.0, -59.0, 27.5), area_epsg=10598),
+    'west_africa': dict(
+        bounds=(-4141633, -109304, -404383, 2659299), crs=10592,
+        default_resolution=5000, label='West Africa (GLANCE Africa LAEA)',
+        lonlat=(-18.0, 4.0, 16.0, 27.0), area_epsg=10592),
+    'north_africa': dict(
+        bounds=(-3867207, 1434990, 1804670, 3865653), crs=10592,
+        default_resolution=10000, label='North Africa (GLANCE Africa LAEA)',
+        lonlat=(-17.0, 18.0, 37.0, 38.0), area_epsg=10592),
+    'east_africa': dict(
+        bounds=(851984, -1872363, 3520386, 1573813), crs=10592,
+        default_resolution=5000, label='East Africa (GLANCE Africa LAEA)',
+        lonlat=(28.0, -12.0, 52.0, 18.0), area_epsg=10592),
+    'southern_africa': dict(
+        bounds=(-997536, -4373971, 2316937, -1421722), crs=10592,
+        default_resolution=5000, label='Southern Africa (GLANCE Africa LAEA)',
+        lonlat=(11.0, -35.0, 41.0, -8.0), area_epsg=10592),
+    'south_asia': dict(
+        bounds=(-4560937, -4342133, -175948, 56016), crs=10594,
+        default_resolution=5000, label='South Asia (GLANCE Asia LAEA)',
+        lonlat=(60.0, 5.0, 98.0, 38.0), area_epsg=10594),
+    'east_asia': dict(
+        bounds=(-2888124, -2967169, 4752508, 1872058), crs=10594,
+        default_resolution=10000, label='East Asia (GLANCE Asia LAEA)',
+        lonlat=(73.0, 18.0, 146.0, 54.0), area_epsg=10594),
+    'central_asia': dict(
+        bounds=(-4529046, -1031518, -748494, 2365024), crs=10594,
+        default_resolution=5000, label='Central Asia (GLANCE Asia LAEA)',
+        lonlat=(46.0, 35.0, 88.0, 56.0), area_epsg=10594),
+    'middle_east': dict(
+        bounds=(-6742347, -2794074, -2936764, 1798849), crs=10594,
+        default_resolution=5000, label='Middle East (GLANCE Asia LAEA)',
+        lonlat=(34.0, 12.0, 63.0, 42.0), area_epsg=10594),
+    'south_america': dict(
+        bounds=(-2461362, -4624186, 2901620, 3066400), crs=10603,
+        default_resolution=10000, label='South America (GLANCE S. America LAEA)',
+        lonlat=(-82.0, -56.0, -34.0, 13.0), area_epsg=10603),
+    # Oceania bounded west of the antimeridian (Australia, New Guinea, New
+    # Zealand) so the lon/lat box does not wrap 180.
+    'oceania': dict(
+        bounds=(-2736534, -4140479, 4725674, 773877), crs=10601,
+        default_resolution=10000, label='Oceania (GLANCE Oceania LAEA)',
+        lonlat=(110.0, -48.0, 179.0, -8.0), area_epsg=10601),
+    'australia': dict(
+        bounds=(-2397336, -3314170, 2074139, 552968), crs=10601,
+        default_resolution=5000, label='Australia (GLANCE Oceania LAEA)',
+        lonlat=(113.0, -44.0, 154.0, -10.0), area_epsg=10601),
+    'new_zealand': dict(
+        bounds=(2357704, -4140479, 3965299, -2362651), crs=10601,
+        default_resolution=2000, label='New Zealand (GLANCE Oceania LAEA)',
+        lonlat=(166.0, -48.0, 179.0, -34.0), area_epsg=10601),
+    'central_africa': dict(
+        bounds=(-1335054, -2091682, 1224158, 789768), crs=10592,
+        default_resolution=5000, label='Central Africa (GLANCE Africa LAEA)',
+        lonlat=(8.0, -14.0, 31.0, 12.0), area_epsg=10592),
+    'north_asia': dict(
+        bounds=(-2829330, 333534, 4672506, 4568106), crs=10594,
+        default_resolution=10000, label='North Asia (GLANCE Asia LAEA)',
+        lonlat=(60.0, 48.0, 179.0, 78.0), area_epsg=10594),
+    'greenland': dict(
+        bounds=(307428, 1266923, 3614205, 4339302), crs=10598,
+        default_resolution=5000, label='Greenland (GLANCE N. America LAEA)',
+        lonlat=(-74.0, 59.0, -11.0, 84.0), area_epsg=10598),
+    'canada': dict(
+        bounds=(-3271722, -999331, 3748086, 3935367), crs=10598,
+        default_resolution=10000, label='Canada (GLANCE N. America LAEA)',
+        lonlat=(-141.0, 41.0, -52.0, 84.0), area_epsg=10598),
+    'mexico': dict(
+        bounds=(-2026872, -3928666, 1581449, -1690630), crs=10598,
+        default_resolution=5000, label='Mexico (GLANCE N. America LAEA)',
+        lonlat=(-118.0, 14.0, -86.0, 33.0), area_epsg=10598),
+    'great_lakes': dict(
+        bounds=(506191, -972693, 2067092, 243847), crs=10598,
+        default_resolution=2000, label='Great Lakes (GLANCE N. America LAEA)',
+        lonlat=(-93.0, 41.0, -75.0, 49.5), area_epsg=10598),
+    'pacific_northwest': dict(
+        bounds=(-2033861, -823605, -752346, 508938), crs=10598,
+        default_resolution=2000, label='Pacific Northwest (GLANCE N. America LAEA)',
+        lonlat=(-125.0, 42.0, -111.0, 52.0), area_epsg=10598),
+    'gulf_coast': dict(
+        bounds=(193569, -2859113, 1963599, -1884446), crs=10598,
+        default_resolution=2000, label='Gulf Coast (GLANCE N. America LAEA)',
+        lonlat=(-98.0, 24.0, -81.0, 31.0), area_epsg=10598),
+    'new_england': dict(
+        bounds=(1914015, -633460, 2686814, 258722), crs=10598,
+        default_resolution=1000, label='New England (GLANCE N. America LAEA)',
+        lonlat=(-74.0, 41.0, -67.0, 47.5), area_epsg=10598),
+    'great_plains': dict(
+        bounds=(-483626, -2100615, 387002, -99072), crs=10598,
+        default_resolution=5000, label='Great Plains (GLANCE N. America LAEA)',
+        lonlat=(-105.0, 31.0, -96.0, 49.0), area_epsg=10598),
+    'american_southwest': dict(
+        bounds=(-1913308, -2095218, -249048, -674284), crs=10598,
+        default_resolution=2000, label='American Southwest (GLANCE N. America LAEA)',
+        lonlat=(-120.0, 31.0, -103.0, 42.0), area_epsg=10598),
+    'amazon_basin': dict(
+        bounds=(-2129139, -422334, 1795411, 2309720), crs=10603,
+        default_resolution=5000, label='Amazon Basin (GLANCE S. America LAEA)',
+        lonlat=(-79.0, -18.0, -44.0, 6.0), area_epsg=10603),
+    'andes': dict(
+        bounds=(-2350812, -4564243, -133276, 2958360), crs=10603,
+        default_resolution=10000, label='Andes (GLANCE S. America LAEA)',
+        lonlat=(-81.0, -56.0, -62.0, 12.0), area_epsg=10603),
+    'southern_cone': dict(
+        bounds=(-1697271, -4517109, 744960, -221307), crs=10603,
+        default_resolution=5000, label='Southern Cone (GLANCE S. America LAEA)',
+        lonlat=(-76.0, -56.0, -53.0, -17.0), area_epsg=10603),
+    'western_europe': dict(
+        bounds=(-2382583, -1327155, -191916, 406028), crs=10596,
+        default_resolution=5000, label='Western Europe (GLANCE Europe LAEA)',
+        lonlat=(-10.0, 43.0, 17.0, 55.0), area_epsg=10596),
+    'eastern_europe': dict(
+        bounds=(-482758, -1221647, 2340946, 916013), crs=10596,
+        default_resolution=5000, label='Eastern Europe (GLANCE Europe LAEA)',
+        lonlat=(14.0, 44.0, 50.0, 60.0), area_epsg=10596),
+    'northern_europe': dict(
+        bounds=(-1039068, -111313, 782636, 1847310), crs=10596,
+        default_resolution=2000, label='Northern Europe (GLANCE Europe LAEA)',
+        lonlat=(4.0, 54.0, 32.0, 71.0), area_epsg=10596),
+    'southern_europe': dict(
+        bounds=(-2698894, -2211793, 739758, -416605), crs=10596,
+        default_resolution=5000, label='Southern Europe (GLANCE Europe LAEA)',
+        lonlat=(-10.0, 35.0, 28.0, 47.0), area_epsg=10596),
+    # Antarctica uses the de-facto standard Antarctic Polar Stereographic
+    # (EPSG:3031, conformal), so preserve='area' falls back to the EPSG-coded
+    # south-polar equal-area grid (EPSG:6932) rather than claiming 3031 is
+    # equal-area. shape_epsg is 3031 itself (already conformal).
+    'antarctica': dict(
+        bounds=(-3333134, -3333134, 3333134, 3333134), crs=3031,
+        default_resolution=10000, label='Antarctica (Polar Stereographic)',
+        lonlat=(-180.0, -90.0, 180.0, -60.0), area_epsg=6932, shape_epsg=3031),
     # The default (non-preserve) world grid spans the full +/-90 in EPSG:4326.
     # The preserve path uses a +/-85 latitude band (the conventional Web
     # Mercator limit) so 'shape' (World Mercator) does not diverge at the poles.
@@ -68,13 +218,25 @@ _REGIONS = {
         default_resolution=50000, label='World (Equal Earth)',
         lonlat=(-180.0, -90.0, 180.0, 90.0),
         area_epsg=8857, shape_epsg=3395),
+    # Pacific-centered world (EPSG:3832, WGS 84 / PDC Mercator). lon_0=150 so the
+    # Pacific Ocean is continuous, with the map seam in the Atlantic (~30 W). x
+    # spans the full a*pi longitude extent; y is the ellipsoidal Mercator value
+    # at the conventional +/-85.0511287798 latitude limit. Conformal, so
+    # area_epsg falls back to Equal Earth for preserve='area'.
+    'pacific': dict(
+        bounds=(-20037508, -19994875, 20037508, 19994875), crs=3832,
+        default_resolution=50000, label='Pacific-centered World (PDC Mercator)',
+        lonlat=(-180.0, -85.0511287798, 180.0, 85.0511287798),
+        area_epsg=8857, shape_epsg=3832),
 }
 
 # Alternate spellings that resolve to a curated region (single source of truth).
-# 'wgs84' / 'latlon' are friendly names for the EPSG:4326 'world' grid.
+# 'wgs84' / 'latlon' are friendly names for the EPSG:4326 'world' grid; 'pdc' is
+# the Pacific Disaster Center's name for its Pacific-centered Mercator.
 _REGION_ALIASES = {
     'wgs84': 'world',
     'latlon': 'world',
+    'pdc': 'pacific',
 }
 
 # Equal-area fallback when a template has no curated ``area_epsg``

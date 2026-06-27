@@ -271,17 +271,21 @@ def from_template(name: str,
     Parameters
     ----------
     name : str
-        A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'world'``; a global-projection name, e.g.
-        ``'web_mercator'`` (EPSG:3857), ``'wgs84'`` / ``'latlon'`` (EPSG:4326,
-        the same grid as ``'world'``), or ``'equal_earth'`` (EPSG:8857); a
-        world-city name (case-insensitive), e.g. ``'london'``, ``'tokyo'``,
-        ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3 country code, e.g.
-        ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and cities come back in
-        a projected CRS (cities in their UTM zone); country codes come back in
-        EPSG:4326. Where two cities share a name the larger keeps the bare name
-        and the others take a ``_<iso2>`` suffix (e.g. ``'hyderabad'`` vs
-        ``'hyderabad_pk'``).
+        A curated region name (case-insensitive): a national/metro area such as
+        ``'conus'`` or ``'nyc'``, a continental or subcontinental region such as
+        ``'europe'``, ``'southeast_asia'``, ``'east_africa'``, or
+        ``'south_america'`` (call :func:`list_templates` for the full set), or
+        ``'world'``; a global-projection name, e.g. ``'web_mercator'``
+        (EPSG:3857), ``'wgs84'`` / ``'latlon'`` (EPSG:4326, the same grid as
+        ``'world'``), ``'equal_earth'`` (EPSG:8857), or ``'pacific'`` / ``'pdc'``
+        (EPSG:3832, a Pacific-centered PDC Mercator); a world-city name
+        (case-insensitive), e.g. ``'london'``,
+        ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3 country
+        code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and cities
+        come back in a projected CRS (cities in their UTM zone); country codes
+        come back in EPSG:4326. Where two cities share a name the larger keeps
+        the bare name and the others take a ``_<iso2>`` suffix (e.g.
+        ``'hyderabad'`` vs ``'hyderabad_pk'``).
     resolution : float or tuple of float, optional
         Cell size in the template's CRS units (metres for projected regions,
         degrees for country codes). A scalar gives square cells; a
