@@ -14,7 +14,8 @@ import xarray as xr
 
 from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
                                       _COUNTRY_DEFAULT_RESOLUTION, _EQUAL_AREA_FALLBACK_EPSG,
-                                      _REGIONS, _UPS_NORTH_EPSG, _UPS_SOUTH_EPSG)
+                                      _REGION_ALIASES, _REGIONS, _UPS_NORTH_EPSG,
+                                      _UPS_SOUTH_EPSG)
 from xrspatial.reproject._crs_utils import _require_pyproj, _resolve_crs
 from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _transform_boundary
 
@@ -39,11 +40,12 @@ def _resolve(name):
             f"got {type(name).__name__}"
         )
 
-    region = _REGIONS.get(name.lower())
+    name_l = name.lower()
+    region = _REGIONS.get(_REGION_ALIASES.get(name_l, name_l))
     if region is not None:
         return dict(
             bounds=region["bounds"], crs=region["crs"],
-            default_resolution=region["default_resolution"], key=name.lower(),
+            default_resolution=region["default_resolution"], key=name_l,
             lonlat=region["lonlat"], area_epsg=region.get("area_epsg"),
             shape_epsg=region.get("shape_epsg"),
         )
@@ -65,7 +67,7 @@ def _resolve(name):
             lonlat=bbox, area_epsg=None, shape_epsg=None,
         )
 
-    regions = ", ".join(sorted(_REGIONS))
+    regions = ", ".join(sorted(set(_REGIONS) | set(_REGION_ALIASES)))
     raise ValueError(
         f"Unknown template {name!r}. Available named regions: {regions}. "
         f"{len(_CITIES)} world cities are also supported (lowercase name, e.g. "
@@ -235,7 +237,7 @@ def list_templates(kind: Optional[str] = None) -> Union[Dict[str, List[str]], Li
         True
     """
     groups = {
-        "regions": sorted(_REGIONS),
+        "regions": sorted(set(_REGIONS) | set(_REGION_ALIASES)),
         "cities": sorted(_CITIES),
         "countries": sorted(_COUNTRY_BBOXES),
     }
@@ -270,13 +272,16 @@ def from_template(name: str,
     ----------
     name : str
         A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'world'``; a world-city name (case-insensitive), e.g.
-        ``'london'``, ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3
-        country code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and
-        cities come back in a projected CRS (cities in their UTM zone); country
-        codes come back in EPSG:4326. Where two cities share a name the larger
-        keeps the bare name and the others take a ``_<iso2>`` suffix
-        (e.g. ``'hyderabad'`` vs ``'hyderabad_pk'``).
+        ``'europe'``, ``'world'``; a global-projection name, e.g.
+        ``'web_mercator'`` (EPSG:3857), ``'wgs84'`` / ``'latlon'`` (EPSG:4326,
+        the same grid as ``'world'``), or ``'equal_earth'`` (EPSG:8857); a
+        world-city name (case-insensitive), e.g. ``'london'``, ``'tokyo'``,
+        ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3 country code, e.g.
+        ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and cities come back in
+        a projected CRS (cities in their UTM zone); country codes come back in
+        EPSG:4326. Where two cities share a name the larger keeps the bare name
+        and the others take a ``_<iso2>`` suffix (e.g. ``'hyderabad'`` vs
+        ``'hyderabad_pk'``).
     resolution : float or tuple of float, optional
         Cell size in the template's CRS units (metres for projected regions,
         degrees for country codes). A scalar gives square cells; a
@@ -330,6 +335,12 @@ def from_template(name: str,
         >>> agg = from_template("FRA")              # France bbox in EPSG:4326
         >>> agg.attrs["crs"]
         4326
+        >>> from_template("web_mercator").attrs["crs"]   # global EPSG:3857
+        3857
+        >>> from_template("latlon").attrs["crs"]         # alias for wgs84
+        4326
+        >>> from_template("equal_earth").attrs["crs"]    # global equal-area
+        8857
         >>> from_template("london").attrs["crs"]    # greater London, UTM 30N
         32630
         >>> from_template("FRA", preserve="shape").attrs["crs"]   # UTM 30N

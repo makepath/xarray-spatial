@@ -274,7 +274,7 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [from_template](xrspatial/templates.py) | Empty study-area grid for a named region (CONUS, NYC, ...), a world city (London, Tokyo, ... in its UTM zone) or country code; `preserve='area'/'shape'` picks an EPSG projection by property; `list_templates()` lists every accepted name | Custom | ✅ | 🔼 | 🔼 | 🔼 |
+| [from_template](xrspatial/templates.py) | Empty study-area grid for a named region (CONUS, NYC, ...), a world city (London, Tokyo, ... in its UTM zone), a country code, or a whole-world projection (web_mercator, wgs84/latlon, equal_earth); `preserve='area'/'shape'` picks an EPSG projection by property; `list_templates()` lists every accepted name | Custom | ✅ | 🔼 | 🔼 | 🔼 |
 
 -----------
 
