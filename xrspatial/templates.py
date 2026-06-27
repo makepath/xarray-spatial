@@ -36,6 +36,46 @@ _MAX_CELLS = 500_000_000
 # ~26k blocks, so 1e6 leaves wide headroom while catching the runaway case.
 _MAX_CHUNKS = 1_000_000
 
+# Target block edge (cells) for the default dask tiling. dask's byte-based
+# 'auto' picks one chunk shape from the array's total bytes, which leaves most
+# templates as a single giant block (no parallelism) or with thin ragged edge
+# slivers. A fixed square block tiles evenly and keeps each chunk friendly to
+# the neighborhood ops (slope, focal, ...) that run on the result via
+# map_overlap. 2048 is ~16 MB at float32: small enough to parallelize a
+# moderate grid, large enough that overlap halos stay cheap.
+_DASK_BLOCK = 2048
+
+# Ceiling on the block count for the default tiling. A 2048-cell block would
+# explode the graph at a typo-level fine resolution, so for very large grids the
+# block edge grows to keep the count near this many blocks. That keeps the
+# default 'auto' path always under _MAX_CHUNKS (it never errors on its own), and
+# leaves any grid up to ~8e11 cells on the plain 2048 block.
+_DASK_MAX_BLOCKS = 200_000
+
+
+def _balanced_axis(size, block):
+    """Split ``size`` into near-equal blocks of about ``block`` cells.
+
+    Returns a tuple of chunk lengths that sum to ``size`` and differ by at most
+    one, so there is no tiny trailing sliver. A dimension at or below ~1.5x the
+    block stays a single chunk.
+    """
+    n = max(1, round(size / block))
+    base, rem = divmod(size, n)
+    return tuple(base + 1 if i < rem else base for i in range(n))
+
+
+def _neighborhood_chunks(shape):
+    """Even, square-ish dask chunks for the default tiling.
+
+    Uses a ~``_DASK_BLOCK`` block, growing it for very large grids so the block
+    count stays near ``_DASK_MAX_BLOCKS`` instead of exploding the task graph.
+    """
+    import math
+    cells = shape[0] * shape[1]
+    block = max(_DASK_BLOCK, math.ceil(math.sqrt(cells / _DASK_MAX_BLOCKS)))
+    return tuple(_balanced_axis(size, block) for size in shape)
+
 
 def _resolve(name):
     """Resolve a name to a spec dict.
@@ -338,12 +378,18 @@ def from_template(name: str,
         Dask chunk specification. Supplying it returns a lazy, chunked grid:
         an eager backend is promoted to its dask variant (``'numpy'`` to
         ``'dask+numpy'``, ``'cupy'`` to ``'dask+cupy'``), and the cell cap no
-        longer applies. When omitted, the dask backends use ``'auto'``. The
-        data stays lazy, but a very fine resolution still builds one task per
-        chunk, so an extreme shape with small chunks can make a task graph
-        large enough to bog down the client. To prevent that, a grid that would
-        split into more than 1,000,000 chunks raises ``ValueError``; coarsen the
-        resolution or use larger chunks.
+        longer applies. When omitted (or ``'auto'``), the dask backends tile
+        the grid into even, square-ish blocks (~2048 cells per side) tuned for
+        the neighborhood ops -- ``slope``, ``hillshade``, ``focal`` -- that run
+        on the result through ``map_overlap``. That gives a parallel,
+        well-formed task graph instead of one giant block or thin ragged edges.
+        A grid small enough to not be worth splitting stays a single chunk.
+        Pass an explicit value to override the tiling. The data stays lazy, but
+        a very fine resolution still builds one task per chunk, so an extreme
+        shape with small explicit chunks can make a task graph large enough to
+        bog down the client; a grid that would split into more than 1,000,000
+        chunks raises ``ValueError``. The default tiling grows its block for
+        such grids so it never trips that cap on its own.
 
     Returns
     -------
@@ -393,6 +439,29 @@ def from_template(name: str,
         >>> agg = from_template("new_england", resolution=10, chunks=512)
         >>> type(agg.data).__name__
         'Array'
+
+    Recipes
+    -------
+    Pick a grid, drop your own data onto it with
+    :meth:`DataArray.xrs.coregister <xrspatial.accessor.XrsSpatialDataArrayAccessor.coregister>`,
+    then run any tool. ``coregister`` reprojects a raster or rasterizes a
+    GeoDataFrame onto the template's exact grid, so layers line up
+    cell-for-cell.
+
+    .. sourcecode:: python
+
+        >>> grid = from_template("conus", resolution=1000)
+        >>> elevation = grid.xrs.coregister(my_dem)        # raster -> grid
+        >>> roads = grid.xrs.coregister(my_roads_gdf)      # vectors -> grid
+        >>> slope = elevation.xrs.slope()
+
+    For an out-of-core workflow, ask for a dask backend; the default tiling
+    keeps the downstream graph parallel and overlap-friendly:
+
+    .. sourcecode:: python
+
+        >>> grid = from_template("conus", resolution=250, backend="dask")
+        >>> slope = grid.xrs.coregister(my_dem).xrs.slope()  # stays lazy
     """
     spec = _resolve(name)
     key = spec["key"]
@@ -436,14 +505,25 @@ def from_template(name: str,
             f"Use a coarser resolution, or pass chunks=... for a lazy dask grid."
         )
 
-    effective_chunks = "auto" if chunks is None else chunks
+    # 'auto' (the default) tiles into even square blocks tuned for the
+    # neighborhood ops that run on the result; an explicit chunks= is honored
+    # verbatim. Either way the block count is checked against _MAX_CHUNKS below.
+    if chunks is None or chunks == "auto":
+        effective_chunks = _neighborhood_chunks((height, width)) if is_dask \
+            else "auto"
+    else:
+        effective_chunks = chunks
     if is_dask:
         n_chunks = _estimate_n_chunks((height, width), effective_chunks)
         if n_chunks > _MAX_CHUNKS:
+            # Report the request, not the expanded per-block tuple the default
+            # tiling produces, so the message stays readable.
+            chunks_display = chunks if chunks not in (None, "auto") \
+                else f"the default ~{_DASK_BLOCK}-cell tiling"
             raise ValueError(
                 f"resolution {(res_x, res_y)} produces a {height} x {width} "
                 f"grid that splits into {n_chunks:,} chunks with "
-                f"chunks={effective_chunks!r}, exceeding the "
+                f"{chunks_display!r}, exceeding the "
                 f"{_MAX_CHUNKS:,}-chunk limit. A task graph this large can bog "
                 f"down the client even though no data is computed. Use a "
                 f"coarser resolution or larger chunks."
