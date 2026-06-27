@@ -418,9 +418,19 @@ def test_over_fine_dask_chunk_count_raises():
     # The dask path skips the cell cap, but a typo-level resolution with a fixed
     # chunk size builds a runaway task graph. This is the issue #3557 repro:
     # conus at 1 m / chunks=512 is ~7e13 cells / 512^2 ~= 7e7 chunks. The guard
-    # must raise from the estimate, BEFORE da.full builds the graph.
-    with pytest.raises(ValueError, match="chunk"):
+    # must raise from the estimate, BEFORE da.full builds the graph. Match the
+    # chunk-count cap text specifically so this can't pass on the eager
+    # cell-cap message (which also mentions "chunks").
+    with pytest.raises(ValueError, match="chunk limit"):
         from_template("conus", resolution=1, chunks=512)
+
+
+@dask_array_available
+def test_explicit_dask_backend_chunk_count_raises():
+    # Same guard via the non-promotion path: an explicit dask backend with a
+    # fixed small chunk size on a typo-fine resolution must raise too.
+    with pytest.raises(ValueError, match="chunk limit"):
+        from_template("conus", resolution=1, backend="dask+numpy", chunks=512)
 
 
 @dask_array_available

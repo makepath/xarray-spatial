@@ -33,7 +33,7 @@ _MAX_CELLS = 500_000_000
 # resolution can build a graph large enough to bog down the client during
 # construction. Guard on the estimated block count (not cells) so a legitimate
 # large grid with sensible chunks still passes -- the new_england@10m repro is
-# ~12k blocks, so 1e6 leaves wide headroom while catching the runaway case.
+# ~26k blocks, so 1e6 leaves wide headroom while catching the runaway case.
 _MAX_CHUNKS = 1_000_000
 
 
