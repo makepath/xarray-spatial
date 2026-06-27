@@ -271,12 +271,14 @@ def from_template(name: str,
     Parameters
     ----------
     name : str
-        A curated region name (case-insensitive), e.g. ``'conus'``, ``'nyc'``,
-        ``'europe'``, ``'southeast_asia'``, ``'central_america'``,
-        ``'caribbean'``, ``'west_africa'``, ``'world'``; a global-projection
-        name, e.g. ``'web_mercator'`` (EPSG:3857), ``'wgs84'`` / ``'latlon'``
-        (EPSG:4326, the same grid as ``'world'``), or ``'equal_earth'``
-        (EPSG:8857); a world-city name (case-insensitive), e.g. ``'london'``,
+        A curated region name (case-insensitive): a national/metro area such as
+        ``'conus'`` or ``'nyc'``, a continental or subcontinental region such as
+        ``'europe'``, ``'southeast_asia'``, ``'east_africa'``, or
+        ``'south_america'`` (call :func:`list_templates` for the full set), or
+        ``'world'``; a global-projection name, e.g. ``'web_mercator'``
+        (EPSG:3857), ``'wgs84'`` / ``'latlon'`` (EPSG:4326, the same grid as
+        ``'world'``), or ``'equal_earth'`` (EPSG:8857); a world-city name
+        (case-insensitive), e.g. ``'london'``,
         ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3 country
         code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and cities
         come back in a projected CRS (cities in their UTM zone); country codes

@@ -210,6 +210,15 @@ _REGIONAL = [
     ("central_america", 10598),
     ("caribbean", 10598),
     ("west_africa", 10592),
+    ("north_africa", 10592),
+    ("east_africa", 10592),
+    ("southern_africa", 10592),
+    ("south_asia", 10594),
+    ("east_asia", 10594),
+    ("central_asia", 10594),
+    ("middle_east", 10594),
+    ("south_america", 10603),
+    ("oceania", 10601),
 ]
 
 

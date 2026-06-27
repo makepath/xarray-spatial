@@ -69,6 +69,44 @@ _REGIONS = {
         bounds=(-4141633, -109304, -404383, 2659299), crs=10592,
         default_resolution=5000, label='West Africa (GLANCE Africa LAEA)',
         lonlat=(-18.0, 4.0, 16.0, 27.0), area_epsg=10592),
+    'north_africa': dict(
+        bounds=(-3867207, 1434990, 1804670, 3865653), crs=10592,
+        default_resolution=10000, label='North Africa (GLANCE Africa LAEA)',
+        lonlat=(-17.0, 18.0, 37.0, 38.0), area_epsg=10592),
+    'east_africa': dict(
+        bounds=(851984, -1872363, 3520386, 1573813), crs=10592,
+        default_resolution=5000, label='East Africa (GLANCE Africa LAEA)',
+        lonlat=(28.0, -12.0, 52.0, 18.0), area_epsg=10592),
+    'southern_africa': dict(
+        bounds=(-997536, -4373971, 2316937, -1421722), crs=10592,
+        default_resolution=5000, label='Southern Africa (GLANCE Africa LAEA)',
+        lonlat=(11.0, -35.0, 41.0, -8.0), area_epsg=10592),
+    'south_asia': dict(
+        bounds=(-4560937, -4342133, -175948, 56016), crs=10594,
+        default_resolution=5000, label='South Asia (GLANCE Asia LAEA)',
+        lonlat=(60.0, 5.0, 98.0, 38.0), area_epsg=10594),
+    'east_asia': dict(
+        bounds=(-2888124, -2967169, 4752508, 1872058), crs=10594,
+        default_resolution=10000, label='East Asia (GLANCE Asia LAEA)',
+        lonlat=(73.0, 18.0, 146.0, 54.0), area_epsg=10594),
+    'central_asia': dict(
+        bounds=(-4529046, -1031518, -748494, 2365024), crs=10594,
+        default_resolution=5000, label='Central Asia (GLANCE Asia LAEA)',
+        lonlat=(46.0, 35.0, 88.0, 56.0), area_epsg=10594),
+    'middle_east': dict(
+        bounds=(-6742347, -2794074, -2936764, 1798849), crs=10594,
+        default_resolution=5000, label='Middle East (GLANCE Asia LAEA)',
+        lonlat=(34.0, 12.0, 63.0, 42.0), area_epsg=10594),
+    'south_america': dict(
+        bounds=(-2461362, -4624186, 2901620, 3066400), crs=10603,
+        default_resolution=10000, label='South America (GLANCE S. America LAEA)',
+        lonlat=(-82.0, -56.0, -34.0, 13.0), area_epsg=10603),
+    # Oceania bounded west of the antimeridian (Australia, New Guinea, New
+    # Zealand) so the lon/lat box does not wrap 180.
+    'oceania': dict(
+        bounds=(-2736534, -4140479, 4725674, 773877), crs=10601,
+        default_resolution=10000, label='Oceania (GLANCE Oceania LAEA)',
+        lonlat=(110.0, -48.0, 179.0, -8.0), area_epsg=10601),
     # The default (non-preserve) world grid spans the full +/-90 in EPSG:4326.
     # The preserve path uses a +/-85 latitude band (the conventional Web
     # Mercator limit) so 'shape' (World Mercator) does not diverge at the poles.
