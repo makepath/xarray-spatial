@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # std lib
 import math
+import threading
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -109,6 +110,14 @@ def _scale(value, old_range, new_range):
 # over rows with prange, so there are no per-octave temporaries.  Output matches
 # the numpy path to float32 epsilon.  Worley blending is not handled here (it
 # needs a global min/max pass); _gen_terrain keeps the numpy path for that.
+
+# Numba parallel=True kernels must not be launched concurrently from multiple
+# Python threads: the default 'workqueue' threading layer is not threadsafe and
+# aborts the process (SIGABRT on macOS) when two host threads enter a parallel
+# region at once.  _terrain_dask_numpy calls _gen_terrain_fast per chunk under
+# dask's threaded scheduler, so the kernel launch is serialized behind this
+# lock.  Same hazard and fix as the reproject kernels (#3141).
+_PARALLEL_KERNEL_LOCK = threading.Lock()
 
 
 @njit(nogil=True, inline='always')
@@ -231,12 +240,13 @@ def _gen_terrain_fast(height, width, seed, x_range, y_range, octaves,
         warp_norm = 1.0
 
     out = np.empty((height, width), dtype=np.float32)
-    _fused_terrain_numpy(
-        out, linx, liny, perms, octaves,
-        np.float32(persistence), np.float32(lacunarity), np.float32(norm),
-        noise_mode == 'ridged', do_warp, warp_px, warp_py,
-        warp_octaves, np.float32(warp_norm), np.float32(warp_strength),
-    )
+    with _PARALLEL_KERNEL_LOCK:
+        _fused_terrain_numpy(
+            out, linx, liny, perms, octaves,
+            np.float32(persistence), np.float32(lacunarity), np.float32(norm),
+            noise_mode == 'ridged', do_warp, warp_px, warp_py,
+            warp_octaves, np.float32(warp_norm), np.float32(warp_strength),
+        )
     return out
 
 
