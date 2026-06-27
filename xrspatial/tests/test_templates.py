@@ -466,6 +466,52 @@ def test_legit_large_dask_grid_passes():
     assert agg.data.npartitions < 1_000_000
 
 
+@dask_array_available
+def test_default_dask_chunks_are_balanced_square_blocks():
+    import dask.array as da
+    from xrspatial.templates import _DASK_BLOCK
+    # The default 'auto' path tiles into even, square-ish blocks (no thin edge
+    # slivers) sized near _DASK_BLOCK, so downstream map_overlap ops parallelize
+    # cleanly. conus @ 1 km is bigger than one block, so it must split.
+    agg = from_template("conus", resolution=1000, backend="dask")
+    assert isinstance(agg.data, da.Array)
+    assert agg.data.npartitions > 1
+    for axis in agg.data.chunks:
+        # balanced: every block within one cell of the others, none tiny
+        assert max(axis) - min(axis) <= 1
+        assert min(axis) > _DASK_BLOCK // 2
+
+
+@dask_array_available
+def test_small_dask_template_stays_one_chunk():
+    # A grid at or below ~1.5x the block edge is not worth splitting; it comes
+    # back as a single chunk just like before, so tiny templates keep zero
+    # task-graph overhead.
+    agg = from_template("conus", resolution=5000, backend="dask")
+    assert agg.data.npartitions == 1
+
+
+@dask_array_available
+def test_default_tiling_block_grows_for_huge_grids():
+    # At a typo-level fine resolution a fixed 2048 block would explode the graph.
+    # The default block edge grows instead, keeping the count under the cap so
+    # 'auto' never trips the guard on its own (the #3557 contract).
+    from xrspatial.templates import _MAX_CHUNKS, _DASK_BLOCK
+    agg = from_template("conus", resolution=1, backend="dask")
+    assert agg.data.npartitions <= _MAX_CHUNKS
+    # the block grew well past the nominal edge
+    assert agg.data.chunks[0][0] > _DASK_BLOCK
+
+
+@dask_array_available
+def test_explicit_chunks_bypass_default_tiling():
+    # An explicit chunks= is honored verbatim, not replaced by the default
+    # tiling, so callers keep full control.
+    agg = from_template("conus", resolution=1000, chunks=512)
+    assert agg.data.chunks[0][0] == 512
+    assert agg.data.chunks[1][0] == 512
+
+
 def test_single_pixel_grid():
     # a resolution coarser than the whole study-area box clamps width and height
     # to the max(1, ...) floor, giving a 1x1 grid that still obeys the contract.

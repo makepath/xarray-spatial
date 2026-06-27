@@ -850,6 +850,79 @@ def _rasterize_on_accessor(obj, geometries, *, coregister, **kwargs):
     return rasterize(geometries, like=obj, **kwargs)
 
 
+def _coregister_on_accessor(obj, data, *, resampling, **kwargs):
+    """Put *data* on caller raster *obj*'s grid (CRS + bounds + shape).
+
+    Dispatches on the input type:
+
+    - A GeoDataFrame is rasterized onto the grid, reprojected into the caller
+      CRS first -- the same path as ``rasterize(coregister=True)``. The
+      ``resampling`` argument does not apply to a burn and is ignored.
+    - A raster ``DataArray`` is reprojected and resampled onto the grid.
+
+    Either way the result shares *obj*'s ``y``/``x`` coordinates exactly, so it
+    lines up cell-for-cell with the template and any other layer coregistered
+    the same way.
+    """
+    from xrspatial.interpolate._vector import is_geodataframe
+
+    if is_geodataframe(data):
+        return _rasterize_on_accessor(obj, data, coregister=True, **kwargs)
+    if isinstance(data, xr.DataArray):
+        return _reproject_onto_accessor(obj, data, resampling=resampling,
+                                        **kwargs)
+    raise TypeError(
+        "coregister expects a raster xarray.DataArray or a GeoDataFrame, "
+        f"got {type(data).__name__}"
+    )
+
+
+def _reproject_onto_accessor(target, source, *, resampling, **kwargs):
+    """Reproject raster *source* onto *target*'s exact grid."""
+    import numpy as np
+
+    from .reproject import reproject
+    from .rasterize import _like_crs
+
+    target_crs = _like_crs(target)
+    if target_crs is None:
+        raise ValueError(
+            "coregister of a raster needs a CRS on the caller grid "
+            "(its detected raster CRS, e.g. attrs['crs'])"
+        )
+    y = np.asarray(target['y'].values, dtype='float64')
+    x = np.asarray(target['x'].values, dtype='float64')
+    if y.size < 2 or x.size < 2:
+        raise ValueError(
+            "coregister needs a caller grid of at least 2x2 cells"
+        )
+    res = target.attrs.get('res')
+    if res is not None:
+        res_x, res_y = abs(float(res[0])), abs(float(res[1]))
+    else:
+        res_x = abs(float(x[1] - x[0]))
+        res_y = abs(float(y[1] - y[0]))
+    bounds = (float(x.min()) - res_x / 2.0, float(y.min()) - res_y / 2.0,
+              float(x.max()) + res_x / 2.0, float(y.max()) + res_y / 2.0)
+    out = reproject(source, target_crs, bounds=bounds,
+                    width=x.size, height=y.size, resampling=resampling,
+                    **kwargs)
+    # reproject emits north-up (descending y, ascending x) regardless of the
+    # source order. Match the caller's axis directions before snapping so a
+    # grid stored in either order lines up by geography, not by row index.
+    if x[0] > x[-1]:
+        out = out.isel(x=slice(None, None, -1))
+    if y[0] < y[-1]:
+        out = out.isel(y=slice(None, None, -1))
+    # Snap to the caller's exact coordinates and carry its CRS attrs so the
+    # result is a cell-for-cell drop-in for the template grid.
+    out = out.assign_coords(y=target['y'], x=target['x'])
+    for k in ('crs', 'crs_wkt', 'grid_mapping_name'):
+        if k in target.attrs:
+            out.attrs[k] = target.attrs[k]
+    return out
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
@@ -1210,6 +1283,10 @@ class XrsSpatialDataArrayAccessor:
         from .pathfinding import a_star_search
         return a_star_search(self._obj, start, goal, **kwargs)
 
+    def multi_stop_search(self, waypoints, **kwargs):
+        from .pathfinding import multi_stop_search
+        return multi_stop_search(self._obj, waypoints, **kwargs)
+
     # ---- Zonal ----
 
     def zonal_stats(self, zones, **kwargs):
@@ -1440,6 +1517,49 @@ class XrsSpatialDataArrayAccessor:
         """
         return _rasterize_on_accessor(self._obj, geometries,
                                       coregister=coregister, **kwargs)
+
+    def coregister(self, data, *, resampling='bilinear', **kwargs):
+        """Put *data* on this raster's grid, ready to analyze.
+
+        One call to land another layer on this grid, whatever form it takes:
+
+        - A raster ``xarray.DataArray`` is reprojected and resampled from its
+          own CRS onto this grid's CRS, bounds, and shape.
+        - A ``GeoDataFrame`` is burned onto the grid with
+          :meth:`rasterize`, reprojected into this CRS first (the
+          ``coregister=True`` path).
+
+        The result shares this raster's ``y``/``x`` coordinates exactly, so it
+        stacks cell-for-cell with the template and with anything else
+        coregistered onto it. Pair it with :func:`xrspatial.from_template` to
+        go from a region name to an analysis-ready grid::
+
+            grid = from_template('conus')
+            elevation = grid.xrs.coregister(my_dem)      # raster -> grid
+            roads = grid.xrs.coregister(my_roads_gdf)    # vectors -> grid
+            slope = elevation.xrs.slope()
+
+        Parameters
+        ----------
+        data : xarray.DataArray or geopandas.GeoDataFrame
+            The layer to place on this grid. A raster DataArray needs a
+            detectable CRS (``attrs['crs']`` or ``crs_wkt``); a GeoDataFrame
+            needs ``.crs``.
+        resampling : str, default 'bilinear'
+            Resampling method for the raster path, forwarded to
+            :func:`xrspatial.reproject.reproject` (e.g. ``'nearest'`` for
+            categorical data). Ignored when *data* is a GeoDataFrame.
+        **kwargs
+            Forwarded to :func:`~xrspatial.reproject.reproject` (raster input)
+            or :func:`~xrspatial.rasterize.rasterize` (GeoDataFrame input).
+
+        Returns
+        -------
+        xarray.DataArray
+            *data* on this raster's grid.
+        """
+        return _coregister_on_accessor(self._obj, data, resampling=resampling,
+                                       **kwargs)
 
     # ---- GeoTIFF I/O ----
 
@@ -1942,6 +2062,12 @@ class XrsSpatialDatasetAccessor:
     def surface_direction(self, elevation, **kwargs):
         from .surface_distance import surface_direction
         return surface_direction(self._obj, elevation, **kwargs)
+
+    # ---- Pathfinding ----
+
+    def multi_stop_search(self, waypoints, **kwargs):
+        from .pathfinding import multi_stop_search
+        return multi_stop_search(self._obj, waypoints, **kwargs)
 
     # ---- Preview ----
 

@@ -25,3 +25,28 @@ From Template
 
     xrspatial.templates.from_template
     xrspatial.templates.list_templates
+
+Putting your data on a template
+===============================
+
+A template is an empty canvas; ``coregister`` fills it with your own data. It
+reprojects a raster :class:`~xarray.DataArray` onto the template's grid, or
+rasterizes a ``GeoDataFrame`` onto it, so every layer lines up cell-for-cell.
+
+.. sourcecode:: python
+
+    from xrspatial import from_template
+
+    grid = from_template("conus", resolution=1000)   # empty Albers grid
+    elevation = grid.xrs.coregister(my_dem)           # raster -> grid
+    roads = grid.xrs.coregister(my_roads_gdf)         # vectors -> grid
+    slope = elevation.xrs.slope()
+
+For an out-of-core run, ask for a dask backend. The template tiles into even,
+square blocks tuned for the neighborhood ops that follow, so the downstream
+task graph stays parallel and overlap-friendly:
+
+.. sourcecode:: python
+
+    grid = from_template("conus", resolution=250, backend="dask")
+    slope = grid.xrs.coregister(my_dem).xrs.slope()   # stays lazy
