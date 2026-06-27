@@ -750,33 +750,45 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
 
 
 def _inclusive_upper_bound(max_distance):
-    """Exclusive ``distance_upper_bound`` that cKDTree treats as inclusive.
+    """Exclusive cKDTree ``distance_upper_bound`` matching the float32 keep test.
 
-    ``cKDTree.query``'s ``distance_upper_bound`` is exclusive, while the
-    brute-force and CUDA kernels keep ``dist <= max_distance``. To turn the
-    exclusive check into the inclusive one the bound has to be widened just
-    past ``max_distance``.
+    The brute-force and CUDA kernels round each candidate distance to float32
+    and keep it when ``np.float32(dist) <= max_distance`` (see
+    ``_process_numpy_bruteforce`` and ``_proximity_cuda_kernel``). cKDTree
+    instead compares *float64* distances against an *exclusive* bound, so to
+    reproduce the kernels' keep decision the bound has to account for both
+    differences.
 
-    A one-ulp widen (``np.nextafter``) is not enough for the EUCLIDEAN query
-    (``p=2``): cKDTree compares *squared* distances internally, and the square
-    of ``nextafter(0.0, inf)`` (the smallest subnormal) underflows back to
-    0.0, so the bound collapses to exactly ``max_distance`` again and a
-    target sitting exactly at the bound -- most visibly a target pixel itself
-    at ``max_distance=0`` -- is dropped to NaN. numpy/dask then disagreed with
-    the cupy/dask+cupy brute-force backends, which include it.
+    * Float32 rounding: a target whose true float64 distance rounds *down*
+      across a float32 step to a value ``<= max_distance`` is kept by the
+      kernels but, against a float64-exact bound, dropped by cKDTree to NaN.
+      This surfaces when ``max_distance`` sits in the float32 ulp gap just
+      below a target's distance (issue #3392). The bound is therefore widened
+      to the midpoint between the largest float32 ``<= max_distance`` and the
+      next float32 up: the supremum of float64 distances that still round to a
+      float32 value ``<= max_distance``. Nothing beyond that midpoint is pulled
+      in, so no target the kernels exclude is admitted.
 
-    Widen by a relative epsilon with an absolute floor instead. The bump stays
-    large enough to survive squaring for ``p=2`` (and is harmless for ``p=1``)
-    while staying far below the next representable distance, so nothing beyond
-    ``max_distance`` is pulled in. Because the bump is relative, a target at a
-    true distance within roughly ``8 * eps * max_distance`` of the bound could
-    qualify, but at that magnitude the two distances are not distinguishable in
-    float64 anyway, so the result is still correct.
+    * Inclusive boundary for ``p=2``: cKDTree compares *squared* distances
+      internally, and the square of ``nextafter(0.0, inf)`` (the smallest
+      subnormal) underflows back to 0.0, collapsing the bound to exactly
+      ``max_distance`` and dropping a target sitting on the bound -- most
+      visibly a target pixel itself at ``max_distance=0``. A relative bump with
+      an absolute floor stays large enough to survive squaring for ``p=2`` (and
+      is harmless for ``p=1``). At small ``max_distance`` the float32 midpoint
+      underflows toward 0, so this floor is what keeps the boundary inclusive.
     """
     if not np.isfinite(max_distance):
         return np.inf
+    # Largest float32 value <= max_distance (np.float32 rounds to nearest, so it
+    # can land just above; step down one float32 ulp when it does).
+    f = np.float32(max_distance)
+    if f > max_distance:
+        f = np.nextafter(f, np.float32(-np.inf))
+    nf = np.nextafter(f, np.float32(np.inf))
+    f32_bound = (float(f) + float(nf)) / 2.0
     bump = 4.0 * np.finfo(np.float64).eps * max(abs(max_distance), 1.0)
-    return max_distance + bump
+    return max(f32_bound, max_distance + bump)
 
 
 def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p,
