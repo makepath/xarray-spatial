@@ -97,6 +97,7 @@ def test_dataarray_accessor_has_expected_methods(elevation):
         'generate_terrain', 'perlin',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
+        'coregister',
         'rechunk_no_shuffle',
         'fused_overlap',
         'multi_overlap',
@@ -703,3 +704,88 @@ def test_catalog_repr_still_works_with_proxy(elevation):
     assert 'slope' in text
     # _repr_html_ on the accessor itself still renders the table.
     assert '<table>' in elevation.xrs._repr_html_()
+
+
+# ---------------------------------------------------------------------------
+# 12. coregister — put your own data on a template grid (#3561)
+# ---------------------------------------------------------------------------
+
+def _conus_grid(resolution=20000):
+    """Small CONUS template (EPSG:5070) to coregister onto."""
+    from xrspatial import from_template
+    return from_template('conus', resolution=resolution)
+
+
+def _latlon_constant(value=7.0, shape=(50, 70)):
+    """A constant-valued EPSG:4326 raster covering the lower 48."""
+    ys = np.linspace(50, 24, shape[0])
+    xs = np.linspace(-125, -66, shape[1])
+    return xr.DataArray(
+        np.full(shape, value, dtype='float32'),
+        dims=['y', 'x'], coords={'y': ys, 'x': xs}, attrs={'crs': 4326},
+    )
+
+
+def test_coregister_raster_lands_on_template_grid():
+    pytest.importorskip('pyproj')
+    grid = _conus_grid()
+    out = grid.xrs.coregister(_latlon_constant(value=7.0))
+    # exact grid match: same shape, same coordinates, template CRS carried over
+    assert out.shape == grid.shape
+    assert np.array_equal(out['x'].values, grid['x'].values)
+    assert np.array_equal(out['y'].values, grid['y'].values)
+    assert out.attrs['crs'] == grid.attrs['crs'] == 5070
+    # a constant field stays constant through the bilinear resample
+    interior = out.values[np.isfinite(out.values)]
+    assert interior.size > 0
+    np.testing.assert_allclose(interior, 7.0, atol=1e-4)
+
+
+def test_coregister_vector_matches_rasterize_coregister():
+    pytest.importorskip('pyproj')
+    gpd = pytest.importorskip('geopandas')
+    from shapely.geometry import box
+    grid = _conus_grid()
+    gdf = gpd.GeoDataFrame({'v': [1]}, geometry=[box(-110, 35, -95, 45)], crs=4326)
+    out = grid.xrs.coregister(gdf)
+    direct = grid.xrs.rasterize(gdf, coregister=True)
+    assert np.array_equal(np.nan_to_num(out.values), np.nan_to_num(direct.values))
+    assert out.shape == grid.shape
+
+
+def test_coregister_rejects_unsupported_type():
+    grid = _conus_grid()
+    with pytest.raises(TypeError, match='coregister expects'):
+        grid.xrs.coregister(123)
+
+
+def test_coregister_raster_requires_target_crs():
+    pytest.importorskip('pyproj')
+    # a caller grid with no detectable CRS cannot anchor the reprojection
+    grid = xr.DataArray(
+        np.zeros((10, 10), dtype='float32'), dims=['y', 'x'],
+        coords={'y': np.arange(10, dtype=float), 'x': np.arange(10, dtype=float)},
+    )
+    with pytest.raises(ValueError, match='needs a CRS'):
+        grid.xrs.coregister(_latlon_constant(shape=(10, 10)))
+
+
+def test_coregister_raster_nearest_resampling_runs():
+    pytest.importorskip('pyproj')
+    grid = _conus_grid()
+    out = grid.xrs.coregister(_latlon_constant(value=3.0), resampling='nearest')
+    assert out.shape == grid.shape
+    interior = out.values[np.isfinite(out.values)]
+    # nearest keeps the exact source value (no interpolation blur)
+    assert set(np.unique(interior)).issubset({3.0})
+
+
+def test_coregister_raster_preserves_dask_backend():
+    pytest.importorskip('pyproj')
+    da = pytest.importorskip('dask.array')
+    grid = _conus_grid()
+    src = _latlon_constant(value=2.0)
+    src.data = da.from_array(src.data, chunks=(25, 35))
+    out = grid.xrs.coregister(src)
+    assert isinstance(out.data, da.Array)
+    assert out.shape == grid.shape
