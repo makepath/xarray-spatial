@@ -218,13 +218,25 @@ _REGIONS = {
         default_resolution=50000, label='World (Equal Earth)',
         lonlat=(-180.0, -90.0, 180.0, 90.0),
         area_epsg=8857, shape_epsg=3395),
+    # Pacific-centered world (EPSG:3832, WGS 84 / PDC Mercator). lon_0=150 so the
+    # Pacific Ocean is continuous, with the map seam in the Atlantic (~30 W). x
+    # spans the full a*pi longitude extent; y is the ellipsoidal Mercator value
+    # at the conventional +/-85.0511287798 latitude limit. Conformal, so
+    # area_epsg falls back to Equal Earth for preserve='area'.
+    'pacific': dict(
+        bounds=(-20037508, -19994875, 20037508, 19994875), crs=3832,
+        default_resolution=50000, label='Pacific-centered World (PDC Mercator)',
+        lonlat=(-180.0, -85.0511287798, 180.0, 85.0511287798),
+        area_epsg=8857, shape_epsg=3832),
 }
 
 # Alternate spellings that resolve to a curated region (single source of truth).
-# 'wgs84' / 'latlon' are friendly names for the EPSG:4326 'world' grid.
+# 'wgs84' / 'latlon' are friendly names for the EPSG:4326 'world' grid; 'pdc' is
+# the Pacific Disaster Center's name for its Pacific-centered Mercator.
 _REGION_ALIASES = {
     'wgs84': 'world',
     'latlon': 'world',
+    'pdc': 'pacific',
 }
 
 # Equal-area fallback when a template has no curated ``area_epsg``

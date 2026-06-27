@@ -277,7 +277,8 @@ def from_template(name: str,
         ``'south_america'`` (call :func:`list_templates` for the full set), or
         ``'world'``; a global-projection name, e.g. ``'web_mercator'``
         (EPSG:3857), ``'wgs84'`` / ``'latlon'`` (EPSG:4326, the same grid as
-        ``'world'``), or ``'equal_earth'`` (EPSG:8857); a world-city name
+        ``'world'``), ``'equal_earth'`` (EPSG:8857), or ``'pacific'`` / ``'pdc'``
+        (EPSG:3832, a Pacific-centered PDC Mercator); a world-city name
         (case-insensitive), e.g. ``'london'``,
         ``'tokyo'``, ``'sao_paulo'``; or an ISO-3166 / GADM alpha-3 country
         code, e.g. ``'USA'``, ``'FRA'``, ``'JPN'``. Curated regions and cities

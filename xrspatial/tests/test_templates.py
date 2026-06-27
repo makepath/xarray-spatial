@@ -152,7 +152,7 @@ def test_world_grid():
 @pytest.mark.parametrize(
     "name,crs",
     [("web_mercator", 3857), ("wgs84", 4326), ("latlon", 4326),
-     ("equal_earth", 8857)],
+     ("equal_earth", 8857), ("pacific", 3832)],
 )
 def test_global_projection_contract(name, crs):
     agg = from_template(name)
@@ -179,12 +179,31 @@ def test_wgs84_latlon_alias_world(alias):
     assert a.name == alias
 
 
-@pytest.mark.parametrize("name", ["web_mercator", "equal_earth", "latlon"])
+@pytest.mark.parametrize("name", ["web_mercator", "equal_earth", "latlon",
+                                  "pacific", "pdc"])
 def test_global_projection_case_insensitive(name):
     a = from_template(name)
     b = from_template(name.upper())
     np.testing.assert_array_equal(a.x.values, b.x.values)
     assert a.attrs == b.attrs
+
+
+def test_pacific_pdc_mercator():
+    # the Pacific Disaster Center projection (EPSG:3832, WGS 84 / PDC Mercator)
+    # is a Pacific-centered Mercator, so the ocean is continuous; CF names it
+    # 'mercator' and the WKT carries the PDC name.
+    agg = from_template("pacific")
+    assert agg.attrs["crs"] == 3832
+    assert agg.attrs["grid_mapping_name"] == "mercator"
+    assert "PDC Mercator" in agg.attrs["crs_wkt"]
+    assert agg.x.attrs["units"] == "m"
+    # 'pdc' is an alias for the same grid (only the name differs)
+    pdc = from_template("pdc")
+    np.testing.assert_array_equal(pdc.x.values, agg.x.values)
+    assert pdc.attrs == agg.attrs
+    assert pdc.name == "pdc"
+    # conformal, so preserve='area' hands back the Equal Earth equal-area code
+    assert from_template("pacific", preserve="area").attrs["crs"] == 8857
 
 
 def test_web_mercator_metre_coords_within_bounds():
