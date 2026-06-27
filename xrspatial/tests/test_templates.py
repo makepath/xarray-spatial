@@ -413,6 +413,49 @@ def test_chunks_promotes_cupy_to_dask_cupy():
     assert isinstance(block, cupy.ndarray)
 
 
+@dask_array_available
+def test_over_fine_dask_chunk_count_raises():
+    # The dask path skips the cell cap, but a typo-level resolution with a fixed
+    # chunk size builds a runaway task graph. This is the issue #3557 repro:
+    # conus at 1 m / chunks=512 is ~7e13 cells / 512^2 ~= 7e7 chunks. The guard
+    # must raise from the estimate, BEFORE da.full builds the graph.
+    with pytest.raises(ValueError, match="chunk"):
+        from_template("conus", resolution=1, chunks=512)
+
+
+@dask_array_available
+def test_auto_chunks_exempt_from_chunk_cap():
+    import dask.array as da
+    # 'auto' sizes blocks to the dask chunk-size config (~128 MB), so even a very
+    # fine resolution stays well under the chunk cap and builds fine. The guard
+    # keys on the real block count, so the auto path is not falsely tripped.
+    agg = from_template("conus", resolution=1, chunks="auto")
+    assert isinstance(agg.data, da.Array)
+    from xrspatial.templates import _MAX_CHUNKS
+    assert agg.data.npartitions <= _MAX_CHUNKS
+
+
+@dask_array_available
+def test_chunk_count_estimate_matches_dask():
+    import dask.array as da
+    from xrspatial.templates import _estimate_n_chunks
+    # The estimate must agree with the block count dask actually builds, across
+    # chunk forms, so the guard fires on the real graph size.
+    for chunks in (256, 512, "auto", (300, 400)):
+        built = da.full((4000, 5000), np.nan, dtype="float32", chunks=chunks)
+        assert _estimate_n_chunks((4000, 5000), chunks) == built.npartitions
+
+
+@dask_array_available
+def test_legit_large_dask_grid_passes():
+    import dask.array as da
+    # The headroom case: new_england @ 10 m / chunks=512 is past the eager cell
+    # cap but only ~26k chunks, far below the 1e6 chunk cap, so it must build.
+    agg = from_template("new_england", resolution=10, chunks=512)
+    assert isinstance(agg.data, da.Array)
+    assert agg.data.npartitions < 1_000_000
+
+
 def test_single_pixel_grid():
     # a resolution coarser than the whole study-area box clamps width and height
     # to the max(1, ...) floor, giving a 1x1 grid that still obeys the contract.
