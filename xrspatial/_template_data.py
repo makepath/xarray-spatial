@@ -127,6 +127,38 @@ _REGIONS = {
         bounds=(307428, 1266923, 3614205, 4339302), crs=10598,
         default_resolution=5000, label='Greenland (GLANCE N. America LAEA)',
         lonlat=(-74.0, 59.0, -11.0, 84.0), area_epsg=10598),
+    'canada': dict(
+        bounds=(-3271722, -999331, 3748086, 3935367), crs=10598,
+        default_resolution=10000, label='Canada (GLANCE N. America LAEA)',
+        lonlat=(-141.0, 41.0, -52.0, 84.0), area_epsg=10598),
+    'mexico': dict(
+        bounds=(-2026872, -3928666, 1581449, -1690630), crs=10598,
+        default_resolution=5000, label='Mexico (GLANCE N. America LAEA)',
+        lonlat=(-118.0, 14.0, -86.0, 33.0), area_epsg=10598),
+    'great_lakes': dict(
+        bounds=(506191, -972693, 2067092, 243847), crs=10598,
+        default_resolution=2000, label='Great Lakes (GLANCE N. America LAEA)',
+        lonlat=(-93.0, 41.0, -75.0, 49.5), area_epsg=10598),
+    'pacific_northwest': dict(
+        bounds=(-2033861, -823605, -752346, 508938), crs=10598,
+        default_resolution=2000, label='Pacific Northwest (GLANCE N. America LAEA)',
+        lonlat=(-125.0, 42.0, -111.0, 52.0), area_epsg=10598),
+    'gulf_coast': dict(
+        bounds=(193569, -2859113, 1963599, -1884446), crs=10598,
+        default_resolution=2000, label='Gulf Coast (GLANCE N. America LAEA)',
+        lonlat=(-98.0, 24.0, -81.0, 31.0), area_epsg=10598),
+    'new_england': dict(
+        bounds=(1914015, -633460, 2686814, 258722), crs=10598,
+        default_resolution=1000, label='New England (GLANCE N. America LAEA)',
+        lonlat=(-74.0, 41.0, -67.0, 47.5), area_epsg=10598),
+    'great_plains': dict(
+        bounds=(-483626, -2100615, 387002, -99072), crs=10598,
+        default_resolution=5000, label='Great Plains (GLANCE N. America LAEA)',
+        lonlat=(-105.0, 31.0, -96.0, 49.0), area_epsg=10598),
+    'american_southwest': dict(
+        bounds=(-1913308, -2095218, -249048, -674284), crs=10598,
+        default_resolution=2000, label='American Southwest (GLANCE N. America LAEA)',
+        lonlat=(-120.0, 31.0, -103.0, 42.0), area_epsg=10598),
     'amazon_basin': dict(
         bounds=(-2129139, -422334, 1795411, 2309720), crs=10603,
         default_resolution=5000, label='Amazon Basin (GLANCE S. America LAEA)',
