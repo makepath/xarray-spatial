@@ -578,12 +578,21 @@ def from_template(name: str,
         block = _block_edge(height * width)
         height, width = _pad_to_tiles((height, width), block)
 
+    # Name the knob the caller actually set when a cap is hit: height/width on
+    # the explicit-shape path (its resolution is derived), resolution otherwise.
+    if explicit_shape:
+        shape_desc = f"height={height}, width={width}"
+        coarsen = "Use a smaller height/width"
+    else:
+        shape_desc = f"resolution {(res_x, res_y)}"
+        coarsen = "Use a coarser resolution"
+
     n_cells = width * height
     if not is_dask and n_cells > _MAX_CELLS:
         raise ValueError(
-            f"resolution {(res_x, res_y)} produces a {height} x {width} grid "
+            f"{shape_desc} produces a {height} x {width} grid "
             f"({n_cells:,} cells), exceeding the {_MAX_CELLS:,}-cell limit. "
-            f"Use a coarser resolution, or pass chunks=... for a lazy dask grid."
+            f"{coarsen}, or pass chunks=... for a lazy dask grid."
         )
 
     # 'auto' (the default) tiles into even square blocks tuned for the
@@ -602,12 +611,12 @@ def from_template(name: str,
             chunks_display = chunks if chunks not in (None, "auto") \
                 else f"the default ~{_DASK_BLOCK}-cell tiling"
             raise ValueError(
-                f"resolution {(res_x, res_y)} produces a {height} x {width} "
+                f"{shape_desc} produces a {height} x {width} "
                 f"grid that splits into {n_chunks:,} chunks with "
                 f"{chunks_display!r}, exceeding the "
                 f"{_MAX_CHUNKS:,}-chunk limit. A task graph this large can bog "
-                f"down the client even though no data is computed. Use a "
-                f"coarser resolution or larger chunks."
+                f"down the client even though no data is computed. "
+                f"{coarsen} or use larger chunks."
             )
 
     # Honor the requested resolution exactly: anchor the lower-left corner and

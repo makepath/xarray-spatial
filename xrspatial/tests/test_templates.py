@@ -1063,3 +1063,40 @@ def test_non_positive_height_width_raises():
         from_template("conus", height=0, width=10)
     with pytest.raises(ValueError, match="height and width must be positive"):
         from_template("conus", height=10, width=-5)
+
+
+def test_oversized_explicit_shape_cap_message_names_height_width():
+    # The cell-cap message must point at the knob the caller actually set: on
+    # the height/width path that is height/width, not the derived resolution.
+    with pytest.raises(ValueError, match="exceeding") as exc:
+        from_template("conus", height=30000, width=30000)  # 9e8 cells, eager
+    assert "height=30000" in str(exc.value)
+    assert "width=30000" in str(exc.value)
+    assert "resolution" not in str(exc.value)
+
+
+@dask_array_available
+def test_explicit_height_width_with_preserve():
+    # height/width compose with preserve=: the exact shape is anchored at the
+    # reprojected bbox and the CRS is the chosen EPSG, resolution derived.
+    agg = from_template("FRA", preserve="shape", height=300, width=400)
+    assert agg.shape == (300, 400)
+    assert agg.attrs["crs"] == 32630  # FRA centroid UTM 30N
+    assert agg.x.attrs["units"] == "m"
+    res_x, res_y = agg.attrs["res"]
+    assert res_x > 0 and res_y > 0
+
+
+@dask_array_available
+def test_explicit_height_width_dask_ragged_shape_stays_exact():
+    import dask.array as da
+    # An explicit shape that is not a block multiple is left exactly as asked
+    # (not padded); the dask path still tiles it into balanced blocks.
+    agg = from_template("conus", resolution=1000, height=5000, width=5000,
+                        backend="dask")
+    assert isinstance(agg.data, da.Array)
+    assert agg.shape == (5000, 5000)
+    assert agg.data.npartitions > 1
+    for axis in agg.data.chunks:
+        assert sum(axis) == 5000
+        assert max(axis) - min(axis) <= 1  # balanced, no ragged sliver
