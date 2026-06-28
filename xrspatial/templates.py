@@ -65,16 +65,45 @@ def _balanced_axis(size, block):
     return tuple(base + 1 if i < rem else base for i in range(n))
 
 
-def _neighborhood_chunks(shape):
+def _block_edge(cells):
+    """Block edge (cells) for the default tiling of a ``cells``-cell grid.
+
+    A fixed ``_DASK_BLOCK`` edge, grown for very large grids so the block count
+    stays near ``_DASK_MAX_BLOCKS`` instead of exploding the task graph.
+    """
+    import math
+    return max(_DASK_BLOCK, math.ceil(math.sqrt(cells / _DASK_MAX_BLOCKS)))
+
+
+def _neighborhood_chunks(shape, block=None):
     """Even, square-ish dask chunks for the default tiling.
 
     Uses a ~``_DASK_BLOCK`` block, growing it for very large grids so the block
     count stays near ``_DASK_MAX_BLOCKS`` instead of exploding the task graph.
+    Pass ``block`` to reuse an edge already computed (so a padded shape tiles
+    into the same blocks it was padded to).
+    """
+    if block is None:
+        block = _block_edge(shape[0] * shape[1])
+    return tuple(_balanced_axis(size, block) for size in shape)
+
+
+def _pad_to_tiles(shape, block):
+    """Grow each axis up to a whole multiple of ``block``.
+
+    An axis that already fits in a single block (``_balanced_axis`` would keep
+    it one chunk) is left alone, so a small template is not bloated out to a
+    full block. A multi-block axis is padded up to the next ``block`` multiple
+    so its tiling has no ragged remainder chunk.
     """
     import math
-    cells = shape[0] * shape[1]
-    block = max(_DASK_BLOCK, math.ceil(math.sqrt(cells / _DASK_MAX_BLOCKS)))
-    return tuple(_balanced_axis(size, block) for size in shape)
+    out = []
+    for size in shape:
+        if round(size / block) >= 2:
+            out.append(int(math.ceil(size / block) * block))
+        else:
+            out.append(size)
+    return tuple(out)
 
 
 def _resolve(name):
@@ -319,7 +348,8 @@ def list_templates(kind: Optional[str] = None) -> Union[Dict[str, List[str]], Li
 
 def from_template(name: str,
                   resolution: Optional[Union[float, Tuple[float, float]]] = None,
-                  *, preserve: Optional[str] = None, backend: str = "numpy",
+                  *, height: Optional[int] = None, width: Optional[int] = None,
+                  preserve: Optional[str] = None, backend: str = "numpy",
                   fill: float = np.nan,
                   chunks: Optional[Union[int, str, Tuple]] = None) -> xr.DataArray:
     """Create an empty DataArray for a common study area.
@@ -357,7 +387,16 @@ def from_template(name: str,
         Cell size in the template's CRS units (metres for projected regions,
         degrees for country codes). A scalar gives square cells; a
         ``(res_x, res_y)`` tuple sets each axis. Defaults to a per-template
-        value so a bare ``from_template('conus')`` works.
+        value so a bare ``from_template('conus')`` works. Ignored on the
+        ``height`` / ``width`` path unless given (see below).
+    height, width : int, optional
+        Grid shape in cells. Supply both (or neither). When given, the result
+        is exactly ``height`` x ``width`` cells anchored at the region's
+        lower-left corner, and the extent floats off that anchor rather than
+        snapping to the study-area box: with ``resolution`` the extent is
+        ``shape x resolution``; without it the resolution is derived so the
+        exact shape spans the region bbox. Use this to ask for a
+        tiling-friendly shape directly.
     preserve : {'area', 'shape'}, optional
         Reproject the template into an EPSG-coded projection chosen for the
         property it preserves, instead of the template's default CRS. ``'area'``
@@ -381,9 +420,14 @@ def from_template(name: str,
         longer applies. When omitted (or ``'auto'``), the dask backends tile
         the grid into even, square-ish blocks (~2048 cells per side) tuned for
         the neighborhood ops -- ``slope``, ``hillshade``, ``focal`` -- that run
-        on the result through ``map_overlap``. That gives a parallel,
-        well-formed task graph instead of one giant block or thin ragged edges.
-        A grid small enough to not be worth splitting stays a single chunk.
+        on the result through ``map_overlap``. To make that tiling exact, a
+        multi-block grid has its extent padded out from the lower-left anchor
+        so each axis is a whole number of blocks: every chunk is full-size with
+        no ragged remainder, the requested ``resolution`` is unchanged, and the
+        padded grid still covers the study area (it only grows). The padding is
+        dask-only -- eager grids and explicit ``height`` / ``width`` keep the
+        exact bbox-derived shape -- and a grid small enough to not be worth
+        splitting stays a single chunk, unpadded.
         Pass an explicit value to override the tiling. The data stays lazy, but
         a very fine resolution still builds one task per chunk, so an extreme
         shape with small explicit chunks can make a task graph large enough to
@@ -439,6 +483,9 @@ def from_template(name: str,
         >>> agg = from_template("new_england", resolution=10, chunks=512)
         >>> type(agg.data).__name__
         'Array'
+        >>> # ask for an exact tiling-friendly shape; the extent floats
+        >>> from_template("conus", resolution=1000, height=4096, width=6144).shape
+        (4096, 6144)
 
     Recipes
     -------
@@ -485,10 +532,33 @@ def from_template(name: str,
         default_res = spec["default_resolution"]
 
     left, bottom, right, top = bounds
-    res_x, res_y = _normalize_resolution(resolution, default_res)
 
-    width = max(1, int(round((right - left) / res_x)))
-    height = max(1, int(round((top - bottom) / res_y)))
+    # height/width are an all-or-nothing pair that fixes the grid shape exactly.
+    explicit_shape = height is not None or width is not None
+    if explicit_shape and (height is None or width is None):
+        raise ValueError(
+            "supply both height and width together, or neither"
+        )
+
+    if explicit_shape:
+        # Exact shape: the grid is height x width cells anchored at the region's
+        # lower-left corner, and the extent floats off that anchor. With a
+        # resolution the extent is shape x resolution; without one the
+        # resolution is derived so the exact shape spans the region bbox.
+        height, width = int(height), int(width)
+        if height <= 0 or width <= 0:
+            raise ValueError(
+                f"height and width must be positive, got {(height, width)}"
+            )
+        if resolution is None:
+            res_x = (right - left) / width
+            res_y = (top - bottom) / height
+        else:
+            res_x, res_y = _normalize_resolution(resolution, default_res)
+    else:
+        res_x, res_y = _normalize_resolution(resolution, default_res)
+        width = max(1, int(round((right - left) / res_x)))
+        height = max(1, int(round((top - bottom) / res_y)))
 
     # Supplying `chunks` signals intent for a lazy, chunked grid: promote an
     # eager backend to its dask variant so the result never materializes.
@@ -496,6 +566,17 @@ def from_template(name: str,
     if chunks is not None and backend in ("numpy", "cupy"):
         backend = "dask+numpy" if backend == "numpy" else "dask+cupy"
     is_dask = backend in ("dask", "dask+numpy", "dask+cupy")
+
+    # Default dask tiling pads the shape out to whole blocks so every chunk is
+    # full-size with no ragged remainder. Only on a dask backend under the
+    # default tiling, and never when the caller fixed the shape with
+    # height/width or drove the tiling with an explicit chunks=. Reuse the same
+    # block edge for the padding and the chunking so they agree exactly.
+    default_tiling = chunks is None or chunks == "auto"
+    block = None
+    if is_dask and default_tiling and not explicit_shape:
+        block = _block_edge(height * width)
+        height, width = _pad_to_tiles((height, width), block)
 
     n_cells = width * height
     if not is_dask and n_cells > _MAX_CELLS:
@@ -508,9 +589,9 @@ def from_template(name: str,
     # 'auto' (the default) tiles into even square blocks tuned for the
     # neighborhood ops that run on the result; an explicit chunks= is honored
     # verbatim. Either way the block count is checked against _MAX_CHUNKS below.
-    if chunks is None or chunks == "auto":
-        effective_chunks = _neighborhood_chunks((height, width)) if is_dask \
-            else "auto"
+    if default_tiling:
+        effective_chunks = _neighborhood_chunks((height, width), block) \
+            if is_dask else "auto"
     else:
         effective_chunks = chunks
     if is_dask:

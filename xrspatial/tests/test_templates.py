@@ -929,3 +929,137 @@ def test_lite_crs_name_property():
 
     assert LiteCRS(5070).name == "NAD83 / Conus Albers"
     assert LiteCRS(4326).name == "WGS 84"
+
+
+# ---------------------------------------------------------------------------
+# tiling-optimized extents: the default dask grid pads its shape out to whole
+# blocks so every chunk is full-size, and explicit height/width set the grid
+# shape exactly (extent floats off the region anchor).
+# ---------------------------------------------------------------------------
+
+
+@dask_array_available
+def test_default_dask_extent_padded_to_whole_tiles():
+    import dask.array as da
+    from xrspatial.templates import _DASK_BLOCK
+    # conus @ 1 km is a multi-block grid (~3105 x 5865). The default tiling pads
+    # the shape up to exact multiples of the block edge so every chunk is a full
+    # _DASK_BLOCK square -- no ragged remainder block on the far edge.
+    agg = from_template("conus", resolution=1000, backend="dask")
+    assert isinstance(agg.data, da.Array)
+    assert agg.shape[0] % _DASK_BLOCK == 0
+    assert agg.shape[1] % _DASK_BLOCK == 0
+    for axis in agg.data.chunks:
+        assert set(axis) == {_DASK_BLOCK}
+
+
+@dask_array_available
+def test_padding_keeps_resolution_exact_and_covers_region():
+    # Padding grows the grid by whole cells out from the lower-left anchor, so
+    # the requested resolution comes back unchanged and the padded extent still
+    # covers the original study-area box (it only ever grows).
+    agg = from_template("conus", resolution=1000, backend="dask")
+    assert agg.attrs["res"] == (1000.0, 1000.0)
+    left, bottom, right, top = _REGIONS["conus"]["bounds"]
+    # half-cell pixel-center inset, then the padded edges reach at/past the box
+    assert agg.x.values.min() <= left + 1000.0
+    assert agg.y.values.max() >= top - 1000.0
+    assert agg.x.values.max() >= right - 1000.0
+    assert agg.y.values.min() <= bottom + 1000.0
+
+
+@dask_array_available
+def test_padding_skipped_for_single_chunk_grid():
+    # A grid that stays a single chunk (nyc @ default, ~1760 x 1850) is not
+    # padded -- its dask coords match the eager grid cell-for-cell, so backend
+    # stays a pure execution detail for templates small enough not to tile.
+    eager = from_template("nyc")
+    lazy = from_template("nyc", backend="dask+numpy")
+    assert lazy.data.npartitions == 1
+    np.testing.assert_array_equal(lazy.x.values, eager.x.values)
+    np.testing.assert_array_equal(lazy.y.values, eager.y.values)
+
+
+def test_padding_skipped_for_eager_backend():
+    # Padding is a dask tiling concern; the eager numpy grid keeps the exact
+    # bbox-derived shape (no point bloating a materialized array).
+    from xrspatial.templates import _resolve, _normalize_resolution
+    spec = _resolve("conus")
+    left, bottom, right, top = spec["bounds"]
+    rx, ry = _normalize_resolution(1000, spec["default_resolution"])
+    w = max(1, round((right - left) / rx))
+    h = max(1, round((top - bottom) / ry))
+    agg = from_template("conus", resolution=1000)  # numpy
+    assert agg.shape == (h, w)
+
+
+@dask_array_available
+def test_padding_skipped_for_explicit_chunks():
+    # An explicit chunks= means the caller is driving the tiling, so the shape
+    # is left at the exact bbox-derived size (today's honored-verbatim contract).
+    from xrspatial.templates import _resolve, _normalize_resolution
+    spec = _resolve("conus")
+    left, bottom, right, top = spec["bounds"]
+    rx, ry = _normalize_resolution(1000, spec["default_resolution"])
+    w = max(1, round((right - left) / rx))
+    h = max(1, round((top - bottom) / ry))
+    agg = from_template("conus", resolution=1000, chunks=512)
+    assert agg.shape == (h, w)
+
+
+def test_explicit_height_width_exact_shape():
+    # Supplying height and width sets the grid shape exactly; the extent floats
+    # off the region's lower-left anchor instead of the bbox.
+    agg = from_template("conus", height=4096, width=6144)
+    assert agg.shape == (4096, 6144)
+    assert agg.dims == ("y", "x")
+    assert agg.attrs["crs"] == 5070
+
+
+def test_explicit_height_width_with_resolution_floats_extent():
+    # height/width + resolution => extent = shape x resolution, anchored at the
+    # region origin. Resolution is honored exactly.
+    agg = from_template("conus", resolution=1000, height=4096, width=6144)
+    assert agg.shape == (4096, 6144)
+    assert agg.attrs["res"] == (1000.0, 1000.0)
+    left, bottom, right, top = _REGIONS["conus"]["bounds"]
+    # width * res out from the left anchor (pixel centers inset by half a cell)
+    assert np.isclose(agg.x.values[0], left + 1000.0 / 2)
+    assert np.isclose(agg.x.values[-1], left + (6144 - 0.5) * 1000.0)
+
+
+def test_explicit_height_width_without_resolution_covers_bbox():
+    # height/width alone => resolution is derived so the exact shape spans the
+    # region bbox (the grid still covers the named study area).
+    agg = from_template("conus", height=600, width=1200)
+    assert agg.shape == (600, 1200)
+    left, bottom, right, top = _REGIONS["conus"]["bounds"]
+    res_x, res_y = agg.attrs["res"]
+    assert np.isclose(res_x, (right - left) / 1200)
+    assert np.isclose(res_y, (top - bottom) / 600)
+
+
+@dask_array_available
+def test_explicit_height_width_not_padded_on_dask():
+    # The user picked the exact (tile-friendly) shape; the dask path tiles it
+    # but does not pad it back out to a different size.
+    import dask.array as da
+    agg = from_template("conus", resolution=1000, height=4096, width=6144,
+                        backend="dask")
+    assert isinstance(agg.data, da.Array)
+    assert agg.shape == (4096, 6144)
+
+
+def test_partial_height_width_raises():
+    # height and width are an all-or-nothing pair.
+    with pytest.raises(ValueError, match="both height and width"):
+        from_template("conus", height=4096)
+    with pytest.raises(ValueError, match="both height and width"):
+        from_template("conus", width=6144)
+
+
+def test_non_positive_height_width_raises():
+    with pytest.raises(ValueError, match="height and width must be positive"):
+        from_template("conus", height=0, width=10)
+    with pytest.raises(ValueError, match="height and width must be positive"):
+        from_template("conus", height=10, width=-5)
