@@ -368,7 +368,8 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
     Returns
     -------
     xr.DataArray
-        Downsampled raster with updated coordinates.
+        Downsampled raster with updated coordinates.  ``attrs['res']`` is
+        recomputed from the output spacing when the input carried a ``res``.
     """
     _validate_raster(agg, func_name='preview', ndim=2)
 
