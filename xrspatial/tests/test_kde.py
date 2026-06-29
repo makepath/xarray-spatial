@@ -550,3 +550,15 @@ class TestKDEResolutionAttr:
                               x_range=(0, 100), y_range=(0, 50),
                               width=11, height=6)
         assert result.attrs['res'] == (10.0, 10.0)
+
+    def test_line_density_res_matches_coords(self):
+        from xrspatial.utils import get_dataarray_resolution
+        result = line_density([0.0], [0.0], [20.0], [10.0],
+                              bandwidth=2.0,
+                              x_range=(0, 20), y_range=(0, 10),
+                              width=21, height=6)
+        cx = float(result.x.values[1] - result.x.values[0])
+        cy = float(result.y.values[1] - result.y.values[0])
+        assert result.attrs['res'] == (abs(cx), abs(cy))
+        rx, ry = get_dataarray_resolution(result)
+        assert (rx, ry) == result.attrs['res']
