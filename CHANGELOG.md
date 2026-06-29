@@ -2,6 +2,32 @@
 -----------
 
 
+### Version 0.10.14 - 2026-06-28
+
+#### New features
+- templates: add regional templates to from_template for Africa, Asia, the Americas, and Oceania (#3553)
+- templates: add global-projection templates to from_template (web_mercator, wgs84/latlon, equal_earth) (#3550)
+- templates: accept explicit height/width and produce dask-aligned extents in from_template (#3567)
+- templates: add coregister and neighborhood-friendly dask chunks to from_template (#3562)
+- accessor: expose multi_stop_search on the .xrs DataArray and Dataset accessors (#3564)
+
+#### Bug fixes and improvements
+- preview: recompute the res attribute for downsampled preview() output (#3570)
+- rasterize/kde/line_density: set output attrs['res'] when the grid resolution changes (#3572)
+- classify: return all-NaN instead of crashing on all-non-finite input (#3548)
+- proximity: match the cKDTree max_distance check to the brute-force float32 convention (#3555)
+- templates: guard dask grids against task-graph explosion (#3559)
+- templates: skip the cell cap for lazy dask grids when chunks is supplied (#3556)
+- terrain: speed up the generate_terrain numpy backend with a fused parallel kernel (#3566)
+- templates: add type hints to from_template and list_templates (#3543)
+- interpolate: add IDW examples and backend-support notes to the docs (#3547)
+- templates: fix a stale UTM zone in the from_template FRA example (#3544)
+- benchmark: guard the datashader import in the rasterizer benchmark (#3560)
+- geotiff: cover symbology sidecars on dask, dask+GPU, 3D single-band, and color_ramp_range (#3546)
+- templates: cover single-pixel/strip grids and resolution-tuple validation in tests (#3540)
+- curvature: fix isort import-ordering (#3568)
+
+
 ### Version 0.10.13 - 2026-06-26
 
 #### New features
