@@ -282,6 +282,24 @@ def _interpolate_coords(coords, n_out):
     return np.interp(indices, np.arange(len(vals)), vals.astype(np.float64))
 
 
+def _res_from_coords(result, y_dim, x_dim):
+    """Pixel size ``(res_x, res_y)`` from the output coordinate spacing.
+
+    Returns ``None`` when either axis has fewer than two coordinates, so
+    the caller can leave any existing ``res`` untouched.  Spacing is taken
+    as a positive magnitude to match how ``res`` is stored elsewhere
+    (templates, terrain), regardless of whether the axis ascends or
+    descends.
+    """
+    if x_dim not in result.coords or y_dim not in result.coords:
+        return None
+    xs = np.asarray(result.coords[x_dim].values)
+    ys = np.asarray(result.coords[y_dim].values)
+    if xs.size < 2 or ys.size < 2:
+        return None
+    return (abs(float(xs[1] - xs[0])), abs(float(ys[1] - ys[0])))
+
+
 # ---------------------------------------------------------------------------
 # Second-pass refinement
 # ---------------------------------------------------------------------------
@@ -350,7 +368,8 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
     Returns
     -------
     xr.DataArray
-        Downsampled raster with updated coordinates.
+        Downsampled raster with updated coordinates.  ``attrs['res']`` is
+        recomputed from the output spacing when the input carried a ``res``.
     """
     _validate_raster(agg, func_name='preview', ndim=2)
 
@@ -443,5 +462,13 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
             result, target_h, target_w, y_dim, x_dim,
         )
         result.name = name
+
+    # The output grid is coarser than the input, so the copied 'res' is
+    # stale.  Recompute it from the downsampled coordinates so it matches
+    # the returned array's x/y spacing.
+    if 'res' in result.attrs:
+        new_res = _res_from_coords(result, y_dim, x_dim)
+        if new_res is not None:
+            result.attrs = {**result.attrs, 'res': new_res}
 
     return result
