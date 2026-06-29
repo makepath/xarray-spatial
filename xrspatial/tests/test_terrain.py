@@ -530,6 +530,63 @@ def test_terrain_all_nan_template_dask_cupy_matches_numpy():
                                rtol=1e-4, atol=1e-4)
 
 
+# =====================================================================
+# Issue #3574: the dask backends regenerate every cell from coordinates
+# and must not materialize the template's values.  Mapping over a
+# da.empty_like skeleton drops the template (e.g. from_template's
+# da.full(nan)) out of the graph entirely.
+# =====================================================================
+
+def _poisoned_template(backend='dask'):
+    """A dask template whose blocks raise if they are ever computed.
+
+    generate_terrain regenerates terrain from coordinates and never reads
+    these values, so its result must compute without tripping the poison.
+    """
+    def _boom(block):
+        raise AssertionError("template values were materialized")
+
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        base = da.zeros((50, 50), chunks=(10, 10), dtype=cupy.float32,
+                        meta=cupy.array((), dtype=cupy.float32))
+        poisoned = da.map_blocks(_boom, base, dtype=cupy.float32,
+                                 meta=cupy.array((), dtype=cupy.float32))
+    else:
+        base = da.zeros((50, 50), chunks=(10, 10), dtype=np.float32)
+        poisoned = da.map_blocks(_boom, base, dtype=np.float32,
+                                 meta=np.array((), dtype=np.float32))
+    return xr.DataArray(poisoned, dims=['y', 'x'])
+
+
+@dask_array_available
+@pytest.mark.parametrize("worley_blend", [0.0, 0.2])
+def test_terrain_dask_does_not_materialize_template(worley_blend):
+    """The template's values must never be read; mapping over an empty
+    skeleton keeps them out of the graph (both map_blocks call sites)."""
+    terrain = generate_terrain(_poisoned_template(), worley_blend=worley_blend)
+    result = terrain.compute()  # raises if the template were materialized
+    assert np.isfinite(result.data).all()
+
+
+@dask_array_available
+def test_terrain_dask_skeleton_matches_numpy():
+    """Swapping the template for an empty skeleton must not change output."""
+    expected = generate_terrain(create_test_arr()).data
+    actual = generate_terrain(_poisoned_template()).compute().data
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-7)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+@pytest.mark.parametrize("worley_blend", [0.0, 0.2])
+def test_terrain_dask_cupy_does_not_materialize_template(worley_blend):
+    terrain = generate_terrain(_poisoned_template(backend='dask+cupy'),
+                               worley_blend=worley_blend)
+    result = terrain.compute()
+    assert np.isfinite(result.data.get()).all()
+
+
 # ---------------------------------------------------------------------------
 # Fused numpy fast path (worley off) -- independent correctness anchor
 # ---------------------------------------------------------------------------
