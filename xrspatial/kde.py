@@ -546,7 +546,9 @@ def kde(
     Returns
     -------
     xr.DataArray
-        2-D density surface.
+        2-D density surface.  When *template* is omitted, ``attrs['res']``
+        carries the ``(x, y)`` cell size of the grid built from the data
+        extent; when *template* is given, the output inherits its attrs.
     """
     # -- Resolve GeoDataFrame input ----------------------------------------
     if is_geodataframe(x):
@@ -669,10 +671,15 @@ def kde(
             coords=template.coords, dims=template.dims,
             attrs=template.attrs,
         )
+    # No template: the grid was built from x_range/y_range above, so the
+    # cell spacing `dx`/`dy` is the output resolution.  Record it as
+    # `res` so downstream tools (which prefer `attrs['res']` over deriving
+    # cellsize from coords) read the true spacing.
     return xr.DataArray(
         data, name=name,
         dims=['y', 'x'],
         coords={'y': y_coords, 'x': x_coords},
+        attrs={'res': (abs(dx), abs(dy))},
     )
 
 
@@ -725,7 +732,10 @@ def line_density(
     Returns
     -------
     xr.DataArray
-        2-D line-density surface.
+        2-D line-density surface.  When *template* is omitted,
+        ``attrs['res']`` carries the ``(x, y)`` cell size of the grid built
+        from the data extent; when *template* is given, the output inherits
+        its attrs.
     """
     x1a = np.asarray(x1, dtype=np.float64).ravel()
     y1a = np.asarray(y1, dtype=np.float64).ravel()
@@ -799,10 +809,13 @@ def line_density(
             coords=template.coords, dims=template.dims,
             attrs=template.attrs,
         )
+    # No template: `dx`/`dy` is the output cell spacing, so record it as
+    # `res` for downstream tools that prefer `attrs['res']` over coords.
     return xr.DataArray(
         out, name=name,
         dims=['y', 'x'],
         coords={'y': y_coords, 'x': x_coords},
+        attrs={'res': (abs(dx), abs(dy))},
     )
 
 

@@ -4354,7 +4354,11 @@ def rasterize(
         GeoDataFrame with a ``.crs`` and neither ``like`` nor its
         ``spatial_ref`` coord supplies a CRS, the geometry CRS is
         emitted on the output (``attrs['crs']`` as an EPSG int when one
-        resolves, else ``attrs['crs_wkt']`` as WKT).
+        resolves, else ``attrs['crs_wkt']`` as WKT).  ``attrs['res']``
+        carries the ``(x, y)`` cell size of the output grid.  When the
+        output reuses ``like``'s grid bit-identically the template's
+        ``res`` and ``transform`` are kept; otherwise ``res`` reflects the
+        freshly-built grid and the stale ``transform`` is dropped.
 
     Examples
     --------
@@ -4837,18 +4841,21 @@ def rasterize(
     out_attrs = like_attrs if like_attrs is not None else {}
     for k in ('nodata', '_FillValue', 'nodatavals'):
         out_attrs.pop(k, None)
-    # Grid-shape attrs (res, transform) describe the template's grid.
-    # When the caller overrides bounds/width/height/resolution so the
-    # output grid no longer matches ``like``, leaving the inherited
-    # values in place lies to downstream consumers: get_dataarray_
-    # resolution() prefers ``attrs['res']`` over computing from coords,
-    # so a stale res silently poisons slope/aspect/proximity callers
-    # with the template's cellsize instead of the actual one.  Drop them
-    # when the grid was reshaped; keep them when the output reuses the
-    # template's coords bit-identically.
-    if like_attrs is not None and not reuse_like_coords:
-        for k in ('res', 'transform'):
-            out_attrs.pop(k, None)
+    # Grid-shape attrs (res, transform) describe the output grid.  When
+    # the output reuses ``like``'s coords bit-identically, the template's
+    # res and transform still apply, so leave them alone.  Otherwise the
+    # grid was just built fresh above (the caller overrode
+    # bounds/width/height/resolution, or rasterized without ``like`` at
+    # all), so write the actual cellsize: get_dataarray_resolution()
+    # prefers ``attrs['res']`` over computing from coords, so a stale
+    # template res -- or no res at all -- would feed slope/aspect/
+    # proximity callers the wrong cellsize.  ``px``/``py`` come from the
+    # reshape branch above and are defined whenever ``not
+    # reuse_like_coords``.  Drop any inherited ``transform`` since its
+    # origin/scale no longer match the new grid.
+    if not reuse_like_coords:
+        out_attrs['res'] = (abs(px), abs(py))
+        out_attrs.pop('transform', None)
     try:
         fill_as_float = float(fill)
         fill_is_nan = np.isnan(fill_as_float)
