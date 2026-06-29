@@ -2,6 +2,12 @@
 -----------
 
 
+### Version 0.10.15 - 2026-06-29
+
+#### Bug fixes and improvements
+- terrain: map the generate_terrain dask backends over an empty skeleton so from_template grids no longer drop out of the task graph (#3575)
+
+
 ### Version 0.10.14 - 2026-06-28
 
 #### New features
