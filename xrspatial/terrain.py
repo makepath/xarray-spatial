@@ -378,6 +378,13 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
     """
     height, width = data.shape
 
+    # The chunk functions below regenerate every cell from coordinates and
+    # never read the incoming block values.  Map over an uninitialised
+    # skeleton with the same shape/chunking so the (NaN-filled) template the
+    # caller passed in — e.g. from_template()'s da.full — drops out of the
+    # graph instead of being memset and then thrown away.
+    skeleton = da.empty_like(data, dtype=np.float32)
+
     # --- worley pre-pass: get global min/max to avoid per-chunk seams ---
     w_norm_range = None
     if worley_blend > 0:
@@ -417,7 +424,7 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
             return _worley_numpy_xy(w_p, x_arr, y_arr)
 
         raw_worley = da.map_blocks(
-            _chunk_worley_raw, data, dtype=np.float32,
+            _chunk_worley_raw, skeleton, dtype=np.float32,
             meta=np.array((), dtype=np.float32),
         )
         (raw_worley,) = dask.persist(raw_worley)
@@ -452,7 +459,7 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         out *= zfactor
         return out
 
-    return da.map_blocks(_chunk_terrain, data, dtype=np.float32,
+    return da.map_blocks(_chunk_terrain, skeleton, dtype=np.float32,
                          meta=np.array((), dtype=np.float32),
                          **_dask_task_name_kwargs('xrspatial.terrain'))
 
@@ -634,8 +641,12 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
     computes global worley noise range so normalization is consistent across
     chunk boundaries.
     """
-    data = data * 0
     height, width = data.shape
+
+    # See _terrain_dask_numpy: the chunk functions regenerate every cell from
+    # coordinates and never read block values, so map over an uninitialised
+    # skeleton instead of materialising (and discarding) the template's fill.
+    skeleton = da.empty_like(data, dtype=cupy.float32)
 
     # --- worley pre-pass: get global min/max to avoid per-chunk seams ---
     w_norm_range = None
@@ -691,7 +702,7 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
             return w_noise
 
         raw_worley = da.map_blocks(
-            _chunk_worley_raw, data, dtype=cupy.float32,
+            _chunk_worley_raw, skeleton, dtype=cupy.float32,
             meta=cupy.array((), dtype=cupy.float32),
         )
         (raw_worley,) = dask.persist(raw_worley)
@@ -719,7 +730,7 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         )
         return out
 
-    data = da.map_blocks(_chunk_terrain, data, dtype=cupy.float32,
+    data = da.map_blocks(_chunk_terrain, skeleton, dtype=cupy.float32,
                          meta=cupy.array((), dtype=cupy.float32),
                          **_dask_task_name_kwargs('xrspatial.terrain'))
 
