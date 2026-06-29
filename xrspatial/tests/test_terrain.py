@@ -579,8 +579,10 @@ def test_terrain_dask_skeleton_matches_numpy():
 
 @cuda_and_cupy_available
 @dask_array_available
-def test_terrain_dask_cupy_does_not_materialize_template():
-    terrain = generate_terrain(_poisoned_template(backend='dask+cupy'))
+@pytest.mark.parametrize("worley_blend", [0.0, 0.2])
+def test_terrain_dask_cupy_does_not_materialize_template(worley_blend):
+    terrain = generate_terrain(_poisoned_template(backend='dask+cupy'),
+                               worley_blend=worley_blend)
     result = terrain.compute()
     assert np.isfinite(result.data.get()).all()
 
