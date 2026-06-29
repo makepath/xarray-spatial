@@ -1913,12 +1913,15 @@ class TestMetadataPropagation:
         assert 'nodatavals' not in result.attrs
 
     def test_no_like_no_attrs_pollution(self):
-        """Without `like` and with NaN fill, attrs must stay empty."""
+        """Without `like` and with NaN fill, the only attr is the grid
+        ``res`` describing the freshly-built output; no nodata keys leak.
+        """
         result = rasterize(
             [(box(2, 2, 8, 8), 1.0)],
             width=10, height=10, bounds=(0, 0, 10, 10),
         )
-        assert result.attrs == {}
+        # 10x10 over a 10-unit span -> 1.0/pixel.
+        assert result.attrs == {'res': (1.0, 1.0)}
 
     @skip_no_dask
     def test_like_attrs_propagated_dask(self):
@@ -2047,12 +2050,13 @@ class TestMetadataPropagation:
 
 
 class TestLikeStaleGridAttrs2251:
-    """Issue #2251 -- ``like.attrs['res']`` and ``attrs['transform']`` describe
-    the template's grid.  When the caller overrides ``bounds``,
+    """Issue #2251 / #3571 -- ``like.attrs['res']`` and ``attrs['transform']``
+    describe the template's grid.  When the caller overrides ``bounds``,
     ``width``/``height``, or ``resolution`` so the output grid is no longer
-    identical to ``like``, those keys have to be dropped so downstream
-    consumers (``get_dataarray_resolution`` prefers ``attrs['res']`` over
-    coords) don't see a stale cellsize.
+    identical to ``like``, the template's cellsize no longer applies.
+    ``res`` is refreshed to the grid actually built (so downstream consumers,
+    which prefer ``attrs['res']`` over coords, read the true cellsize) and the
+    inherited ``transform`` is dropped (its origin/scale no longer match).
     """
 
     @staticmethod
@@ -2077,8 +2081,9 @@ class TestLikeStaleGridAttrs2251:
             like=like, bounds=(0, 0, 100, 100),
             width=10, height=10, fill=0,
         )
-        # Grid shape moved from 1.0/pixel to 10.0/pixel; stale attrs gone.
-        assert 'res' not in result.attrs
+        # Grid shape moved from 1.0/pixel to 10.0/pixel; res refreshed to
+        # the new cellsize and the stale transform dropped.
+        assert result.attrs.get('res') == (10.0, 10.0)
         assert 'transform' not in result.attrs
         # Non-grid-shape attrs (crs) still propagate.
         assert result.attrs.get('crs') == 'EPSG:32610'
@@ -2089,7 +2094,8 @@ class TestLikeStaleGridAttrs2251:
             [(box(2, 2, 8, 8), 1.0)],
             like=like, width=5, height=5, fill=0,
         )
-        assert 'res' not in result.attrs
+        # Template spans 0..10 over 5 cells -> 2.0/pixel.
+        assert result.attrs.get('res') == (2.0, 2.0)
         assert 'transform' not in result.attrs
         assert result.attrs.get('crs') == 'EPSG:32610'
 
@@ -2099,7 +2105,7 @@ class TestLikeStaleGridAttrs2251:
             [(box(2, 2, 8, 8), 1.0)],
             like=like, resolution=0.5, fill=0,
         )
-        assert 'res' not in result.attrs
+        assert result.attrs.get('res') == (0.5, 0.5)
         assert 'transform' not in result.attrs
         assert result.attrs.get('crs') == 'EPSG:32610'
 
@@ -2138,8 +2144,8 @@ class TestLikeStaleGridAttrs2251:
             like=like, bounds=(0, 0, 100, 100),
             width=10, height=10, fill=0,
         )
-        # With res stripped, get_dataarray_resolution falls back to
-        # computing from coords; both axes should be 10.0.
+        # res is refreshed to the actual grid, so get_dataarray_resolution
+        # reads it directly; both axes should be 10.0.
         cx, cy = get_dataarray_resolution(result)
         assert abs(cx - 10.0) < 1e-9
         assert abs(cy - 10.0) < 1e-9
@@ -2152,7 +2158,7 @@ class TestLikeStaleGridAttrs2251:
             like=like, bounds=(0, 0, 100, 100),
             width=10, height=10, fill=0, chunks=5,
         )
-        assert 'res' not in result.attrs
+        assert result.attrs.get('res') == (10.0, 10.0)
         assert 'transform' not in result.attrs
         assert result.attrs.get('crs') == 'EPSG:32610'
 
@@ -2164,7 +2170,7 @@ class TestLikeStaleGridAttrs2251:
             like=like, bounds=(0, 0, 100, 100),
             width=10, height=10, fill=0, gpu=True,
         )
-        assert 'res' not in result.attrs
+        assert result.attrs.get('res') == (10.0, 10.0)
         assert 'transform' not in result.attrs
         assert result.attrs.get('crs') == 'EPSG:32610'
 
@@ -2177,7 +2183,7 @@ class TestLikeStaleGridAttrs2251:
             like=like, bounds=(0, 0, 100, 100),
             width=10, height=10, fill=0, gpu=True, chunks=5,
         )
-        assert 'res' not in result.attrs
+        assert result.attrs.get('res') == (10.0, 10.0)
         assert 'transform' not in result.attrs
         assert result.attrs.get('crs') == 'EPSG:32610'
 

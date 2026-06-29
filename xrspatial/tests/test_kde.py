@@ -497,3 +497,68 @@ class TestCuPyParity:
         # Compact kernels match exactly.
         tol = 1e-2 if kernel == 'gaussian' else 1e-6
         np.testing.assert_allclose(result_np, np_result.values, rtol=tol)
+
+
+# ---------------------------------------------------------------------------
+# Output resolution metadata (issue #3571)
+# ---------------------------------------------------------------------------
+
+class TestKDEResolutionAttr:
+    """When ``template`` is omitted, kde/line_density build a fresh grid
+    from ``x_range``/``y_range`` and must record its cell spacing as
+    ``attrs['res']`` so downstream tools (which prefer ``attrs['res']``
+    over deriving cellsize from coords) read the true resolution.
+    """
+
+    def test_kde_sets_res_from_range(self):
+        # x spans 0..100 over 11 cells -> dx = 10; y spans 0..50 over 6
+        # cells -> dy = 10.  Rectangular grid pins the (x_res, y_res) order.
+        x = np.array([10.0, 20.0, 80.0])
+        y = np.array([5.0, 10.0, 40.0])
+        result = kde(x, y, bandwidth=5.0,
+                     x_range=(0, 100), y_range=(0, 50),
+                     width=11, height=6)
+        assert result.attrs['res'] == (10.0, 10.0)
+
+    def test_kde_res_matches_coords(self):
+        from xrspatial.utils import get_dataarray_resolution
+        x = np.array([1.0, 2.0, 3.0])
+        y = np.array([1.0, 2.0, 3.0])
+        result = kde(x, y, bandwidth=1.0,
+                     x_range=(0, 20), y_range=(0, 10),
+                     width=21, height=6)
+        # res must agree with the cellsize implied by the coordinates.
+        cx = float(result.x.values[1] - result.x.values[0])
+        cy = float(result.y.values[1] - result.y.values[0])
+        assert result.attrs['res'] == (abs(cx), abs(cy))
+        # get_dataarray_resolution reads res directly.
+        rx, ry = get_dataarray_resolution(result)
+        assert (rx, ry) == result.attrs['res']
+
+    def test_kde_template_res_from_template(self, simple_grid):
+        # A template carrying res propagates it (output grid == template).
+        template = simple_grid.copy()
+        template.attrs['res'] = (0.5, 0.5)
+        x = np.array([0.0, 1.0])
+        y = np.array([0.0, 1.0])
+        result = kde(x, y, bandwidth=1.0, template=template)
+        assert result.attrs['res'] == (0.5, 0.5)
+
+    def test_line_density_sets_res_from_range(self):
+        result = line_density([0.0], [0.0], [100.0], [50.0],
+                              bandwidth=5.0,
+                              x_range=(0, 100), y_range=(0, 50),
+                              width=11, height=6)
+        assert result.attrs['res'] == (10.0, 10.0)
+
+    def test_line_density_res_matches_coords(self):
+        from xrspatial.utils import get_dataarray_resolution
+        result = line_density([0.0], [0.0], [20.0], [10.0],
+                              bandwidth=2.0,
+                              x_range=(0, 20), y_range=(0, 10),
+                              width=21, height=6)
+        cx = float(result.x.values[1] - result.x.values[0])
+        cy = float(result.y.values[1] - result.y.values[0])
+        assert result.attrs['res'] == (abs(cx), abs(cy))
+        rx, ry = get_dataarray_resolution(result)
+        assert (rx, ry) == result.attrs['res']

@@ -483,12 +483,11 @@ class TestRectangularPixels:
             err_msg=f"{backend_name} disagreed on (rx=2, ry=1) cell size")
 
     def test_rectangular_pixels_attrs_res(self):
-        """The resolved cell size lands on the output if a like attrs
-        dict is supplied with res; without like, no res attr is set --
-        this test pins that contract so callers know which path emits
-        the metadata."""
-        # No like -> no res attr.
+        """The resolved cell size always lands on the output ``res`` attr,
+        even without ``like`` (issue #3571).  Rectangular pixels also pin
+        the (x_res, y_res) ordering: resolution=(2, 1) over (0,0)-(10,10)
+        builds a 5x10 grid, so res is (2.0, 1.0)."""
         r = rasterize([(box(2, 2, 8, 8), 3.0)],
                       resolution=(2.0, 1.0),
                       bounds=(0, 0, 10, 10), fill=0)
-        assert 'res' not in r.attrs
+        assert r.attrs['res'] == (2.0, 1.0)
