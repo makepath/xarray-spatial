@@ -21,16 +21,10 @@ import xarray as xr
 from numba import cuda
 
 # local modules
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import _boundary_to_dask
-from xrspatial.utils import _pad_array
-from xrspatial.utils import _validate_boundary
-from xrspatial.utils import _validate_raster
-from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import _dask_task_name_kwargs
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, cuda_args,
+                             get_dataarray_resolution, ngjit)
 
 
 @ngjit
