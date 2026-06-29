@@ -480,3 +480,66 @@ def test_accessor_dataset():
     result = ds.xrs.preview(width=40)
     assert isinstance(result, xr.Dataset)
     assert result['elev'].shape == (20, 40)
+
+
+# ---- res attribute recomputed for the downsampled grid (issue #3569) ----
+
+def _expected_res(result):
+    """Pixel size implied by a result's x/y coordinate spacing."""
+    xs = np.asarray(result.coords['x'].values)
+    ys = np.asarray(result.coords['y'].values)
+    return (abs(float(xs[1] - xs[0])), abs(float(ys[1] - ys[0])))
+
+
+@pytest.mark.parametrize(
+    'method', ['mean', 'median', 'max', 'min', 'nearest', 'bilinear'],
+)
+def test_res_matches_downsampled_coords(method):
+    # create_test_raster seeds res=(0.5, 0.5) with matching 0.5 spacing;
+    # after a 10x downsample the copied res would be stale.
+    agg = _make_raster(200, 400)
+    assert agg.attrs['res'] == (0.5, 0.5)
+    result = preview(agg, width=40, method=method)
+    np.testing.assert_allclose(result.attrs['res'], _expected_res(result))
+    # the source-grid res must not survive unchanged
+    assert not np.allclose(result.attrs['res'], (0.5, 0.5))
+
+
+def test_res_does_not_mutate_input():
+    agg = _make_raster(200, 400)
+    preview(agg, width=40)
+    assert agg.attrs['res'] == (0.5, 0.5)
+
+
+def test_res_passthrough_unchanged():
+    """No downsampling means the original res is returned untouched."""
+    agg = _make_raster(5, 5)
+    result = preview(agg, width=100)
+    assert result.attrs['res'] == (0.5, 0.5)
+
+
+def test_no_res_attr_stays_absent():
+    """preview should not invent a res when the input never had one."""
+    data = np.random.default_rng(1).random((200, 400)).astype(np.float32)
+    agg = create_test_raster(data, attrs={'crs': 'EPSG: 5070'})
+    assert 'res' not in agg.attrs
+    result = preview(agg, width=40)
+    assert 'res' not in result.attrs
+
+
+@dask_array_available
+def test_res_dask_with_refinement():
+    # an odd target width forces the dask snap path to overshoot and the
+    # second-pass refinement to rebuild the coords.
+    agg = _make_raster(300, 600, backend='dask', chunks=(60, 60))
+    result = preview(agg, width=37).compute()
+    np.testing.assert_allclose(result.attrs['res'], _expected_res(result))
+    assert not np.allclose(result.attrs['res'], (0.5, 0.5))
+
+
+@cuda_and_cupy_available
+def test_res_cupy():
+    agg = _make_raster(200, 400, backend='cupy')
+    result = preview(agg, width=40, method='mean')
+    np.testing.assert_allclose(result.attrs['res'], _expected_res(result))
+    assert not np.allclose(result.attrs['res'], (0.5, 0.5))
