@@ -9,6 +9,7 @@ from xrspatial.tests.general_checks import (
     dask_array_available,
     general_output_checks,
 )
+from xrspatial.utils import has_dask_array
 
 
 # --- fixtures ---
@@ -388,6 +389,146 @@ def test_memory_guard_skipped_for_dask(monkeypatch, band_arrays):
     # Should not raise even though 1 byte is well below any sane budget.
     result = mahalanobis(dk_bands)
     assert result.shape == dk_bands[0].shape
+
+
+# --- Inf / -Inf handling (issue #3583) ---
+
+def _band_data_with_inf():
+    """Same correlated bands as ``_band_data`` but with Inf/-Inf cells."""
+    bands = _band_data()
+    # replace the injected NaNs with finite values so the only non-finite
+    # cells are the Inf/-Inf ones we add below
+    bands[0][0, 0] = 0.1
+    bands[1][3, 2] = -0.2
+    bands[2][7, 3] = 0.3
+    bands[0][2, 1] = np.inf
+    bands[1][5, 0] = -np.inf
+    bands[2][6, 2] = np.inf
+    return bands
+
+
+def test_inf_propagates_to_nan_numpy():
+    """A non-finite (Inf/-Inf) cell in any band -> NaN output, and the Inf
+    pixel is excluded from the auto-computed statistics."""
+    band_arrays = _band_data_with_inf()
+    bands = [create_test_raster(b, backend='numpy') for b in band_arrays]
+    result = mahalanobis(bands)
+
+    assert np.isnan(result.values[2, 1])
+    assert np.isnan(result.values[5, 0])
+    assert np.isnan(result.values[6, 2])
+    # everything else is finite and non-negative
+    finite = ~np.isnan(result.values)
+    assert np.all(np.isfinite(result.values[finite]))
+    assert np.all(result.values[finite] >= 0)
+
+
+@dask_array_available
+def test_inf_matches_numpy_dask():
+    band_arrays = _band_data_with_inf()
+    np_bands = [create_test_raster(b, backend='numpy') for b in band_arrays]
+    dk_bands = [create_test_raster(b, backend='dask+numpy', chunks=(4, 2))
+                for b in band_arrays]
+
+    np_result = mahalanobis(np_bands)
+    dk_result = mahalanobis(dk_bands)
+    np.testing.assert_allclose(
+        np_result.values, dk_result.values, rtol=1e-10, equal_nan=True
+    )
+
+
+@cuda_and_cupy_available
+def test_inf_matches_numpy_cupy():
+    band_arrays = _band_data_with_inf()
+    np_bands = [create_test_raster(b, backend='numpy') for b in band_arrays]
+    cu_bands = [create_test_raster(b, backend='cupy') for b in band_arrays]
+
+    np_result = mahalanobis(np_bands)
+    cu_result = mahalanobis(cu_bands)
+    np.testing.assert_allclose(
+        np_result.values, cu_result.data.get(), rtol=1e-10, equal_nan=True
+    )
+
+
+@cuda_and_cupy_available
+def test_inf_matches_numpy_dask_cupy():
+    band_arrays = _band_data_with_inf()
+    np_bands = [create_test_raster(b, backend='numpy') for b in band_arrays]
+    dc_bands = [create_test_raster(b, backend='dask+cupy', chunks=(4, 2))
+                for b in band_arrays]
+
+    np_result = mahalanobis(np_bands)
+    dc_result = mahalanobis(dc_bands)
+    np.testing.assert_allclose(
+        np_result.values, dc_result.data.compute().get(),
+        rtol=1e-10, equal_nan=True
+    )
+
+
+# --- not-enough-valid-pixels error path (Cat 2 all-NaN / Cat 4 error) ---
+
+def test_error_all_nan_input():
+    """All-NaN bands leave zero valid pixels -> the statistics phase raises."""
+    bands = [xr.DataArray(np.full((4, 4), np.nan), dims=['y', 'x'])
+             for _ in range(2)]
+    with pytest.raises(ValueError, match="Not enough valid pixels"):
+        mahalanobis(bands)
+
+
+def test_error_too_few_valid_pixels():
+    """Fewer finite pixels than n_bands+1 cannot form a covariance matrix."""
+    # 2 bands need >= 3 valid pixels; leave only 2 finite cells.
+    b1 = np.full((2, 2), np.nan)
+    b2 = np.full((2, 2), np.nan)
+    b1[0, 0] = 1.0
+    b1[0, 1] = 2.0
+    b2[0, 0] = 3.0
+    b2[0, 1] = 4.0
+    bands = [xr.DataArray(b, dims=['y', 'x']) for b in [b1, b2]]
+    with pytest.raises(ValueError, match="Not enough valid pixels"):
+        mahalanobis(bands)
+
+
+# --- degenerate shapes (Cat 3) ---
+
+def test_single_pixel_with_provided_stats():
+    """A 1x1 raster has no spread to auto-fit, but provided stats still
+    yield the correct distance for the lone pixel."""
+    b1 = xr.DataArray(np.array([[3.0]]), dims=['y', 'x'])
+    b2 = xr.DataArray(np.array([[4.0]]), dims=['y', 'x'])
+    result = mahalanobis([b1, b2], mean=np.zeros(2), inv_cov=np.eye(2))
+    # identity inv_cov -> Euclidean distance from origin = sqrt(9 + 16) = 5
+    assert result.shape == (1, 1)
+    np.testing.assert_allclose(result.values, [[5.0]], rtol=1e-12)
+
+
+def test_single_pixel_auto_stats_raises():
+    """Auto-computed stats need n_bands+1 valid pixels; 1x1 cannot supply
+    them."""
+    b1 = xr.DataArray(np.array([[3.0]]), dims=['y', 'x'])
+    b2 = xr.DataArray(np.array([[4.0]]), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="Not enough valid pixels"):
+        mahalanobis([b1, b2])
+
+
+@pytest.mark.parametrize("shape", [(1, 8), (8, 1)])
+def test_strip_shapes_match_numpy_dask(shape):
+    """1xN and Nx1 strips burn correctly and agree across numpy and dask."""
+    rng = np.random.default_rng(13)
+    band_arrays = [rng.standard_normal(shape) for _ in range(2)]
+
+    np_bands = [create_test_raster(b, backend='numpy') for b in band_arrays]
+    np_result = mahalanobis(np_bands)
+    assert np_result.shape == shape
+    assert np.all(np.isfinite(np_result.values))
+
+    if has_dask_array():
+        dk_bands = [create_test_raster(b, backend='dask+numpy', chunks=shape)
+                    for b in band_arrays]
+        dk_result = mahalanobis(dk_bands)
+        np.testing.assert_allclose(
+            np_result.values, dk_result.values, rtol=1e-10, equal_nan=True
+        )
 
 
 @cuda_and_cupy_available
