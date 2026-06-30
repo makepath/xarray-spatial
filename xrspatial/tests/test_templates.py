@@ -434,6 +434,24 @@ def test_explicit_dask_backend_chunk_count_raises():
 
 
 @dask_array_available
+def test_over_fine_dask_coord_alloc_raises():
+    # The dask cell-cap exemption keeps the grid data lazy, and the default
+    # tiling grows its block so the chunk count stays under _MAX_CHUNKS -- but
+    # the x/y coordinate vectors (width + height elements) are built eagerly, so
+    # a typo-level fine resolution would allocate tens of GB of coordinates at
+    # construction. conus @ 1 mm is ~9e9 coordinate elements (~72 GB) but only
+    # ~2e5 chunks, so it slips past the chunk-count guard. The coordinate guard
+    # must catch it first. Match its text specifically.
+    from xrspatial.templates import _MAX_COORD_CELLS
+    with pytest.raises(ValueError, match="coordinate vectors"):
+        from_template("conus", resolution=0.001, backend="dask+numpy")
+    # The promotion path (chunks given on an eager backend) is guarded too.
+    with pytest.raises(ValueError, match="coordinate vectors"):
+        from_template("conus", resolution=0.001, chunks=-1)
+    assert _MAX_COORD_CELLS == 1_000_000_000
+
+
+@dask_array_available
 def test_auto_chunks_exempt_from_chunk_cap():
     import dask.array as da
     # 'auto' sizes blocks to the dask chunk-size config (~128 MB), so even a very
