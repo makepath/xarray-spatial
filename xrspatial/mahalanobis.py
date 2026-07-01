@@ -13,16 +13,8 @@ from typing import List, Optional
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    _validate_raster,
-    has_cuda_and_cupy,
-    has_dask_array,
-    is_cupy_array,
-    is_dask_cupy,
-    validate_arrays,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             has_cuda_and_cupy, has_dask_array, is_cupy_array, validate_arrays)
 
 try:
     import dask
