@@ -13,16 +13,8 @@ from typing import List, Optional
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _dask_task_name_kwargs,
-    _validate_raster,
-    has_cuda_and_cupy,
-    has_dask_array,
-    is_cupy_array,
-    is_dask_cupy,
-    validate_arrays,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             has_cuda_and_cupy, has_dask_array, is_cupy_array, validate_arrays)
 
 try:
     import dask
@@ -386,13 +378,39 @@ def mahalanobis(
     inv_cov : numpy array, shape (N, N), optional
         Inverse covariance matrix.  Must be provided together with
         *mean*, or both omitted (auto-computed).
-    name : str
+    name : str, default='mahalanobis'
         Name for the output DataArray.
 
     Returns
     -------
     xr.DataArray
         2-D float64 raster with same coords/dims/attrs as ``bands[0]``.
+
+    Notes
+    -----
+    A pixel is set to NaN in the output when any band is non-finite at
+    that pixel.  When *mean* and *inv_cov* are omitted they are estimated
+    from the pixels that are finite across all bands, which requires at
+    least ``N + 1`` such pixels.  Supports the numpy, cupy, dask+numpy,
+    and dask+cupy backends.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.mahalanobis import mahalanobis
+
+        >>> red = xr.DataArray(
+                np.array([[0., 1.], [2., 3.]]), dims=['y', 'x'])
+        >>> green = xr.DataArray(
+                np.array([[0., np.nan], [1., 1.]]), dims=['y', 'x'])
+        >>> mahalanobis([red, green], mean=np.zeros(2), inv_cov=np.eye(2))
+        <xarray.DataArray 'mahalanobis' (y: 2, x: 2)>
+        array([[0.        ,        nan],
+               [2.23606798, 3.16227766]])
+        Dimensions without coordinates: y, x
     """
     # --- input validation ---
     if len(bands) < 2:

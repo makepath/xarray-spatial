@@ -14,8 +14,7 @@ import xarray as xr
 
 from xrspatial._template_data import (_CITIES, _CITY_DEFAULT_RESOLUTION, _COUNTRY_BBOXES,
                                       _COUNTRY_DEFAULT_RESOLUTION, _EQUAL_AREA_FALLBACK_EPSG,
-                                      _REGION_ALIASES, _REGIONS, _UPS_NORTH_EPSG,
-                                      _UPS_SOUTH_EPSG)
+                                      _REGION_ALIASES, _REGIONS, _UPS_NORTH_EPSG, _UPS_SOUTH_EPSG)
 from xrspatial.reproject._crs_utils import _require_pyproj, _resolve_crs
 from xrspatial.reproject._grid import _edge_samples, _make_output_coords, _transform_boundary
 
@@ -44,6 +43,20 @@ _MAX_CHUNKS = 1_000_000
 # map_overlap. 2048 is ~16 MB at float32: small enough to parallelize a
 # moderate grid, large enough that overlap halos stay cheap.
 _DASK_BLOCK = 2048
+
+# The grid data is lazy on a dask backend, but the x/y coordinate vectors are
+# not: _make_output_coords builds them eagerly with np.linspace on every path,
+# one element per column and per row. Their size grows with width + height, so a
+# typo-level fine resolution can ask for tens of GB of coordinates even though
+# the chunk graph stays small (the default tiling grows its block to keep the
+# count under _MAX_CHUNKS, so that guard never trips on resolution alone). Cap
+# the eager coordinate allocation so the dask cell-cap exemption can't be used to
+# blow up the client at construction time. Eager backends are already bounded by
+# _MAX_CELLS (width + height <= width * height for any other shape), so this only
+# constrains the otherwise-unbounded dask path. 1e9 elements is ~8 GB at float64
+# and leaves wide headroom over the finest legitimate grids (conus at 1 m is
+# ~9e6 coordinate elements).
+_MAX_COORD_CELLS = 1_000_000_000
 
 # Ceiling on the block count for the default tiling. A 2048-cell block would
 # explode the graph at a typo-level fine resolution, so for very large grids the
@@ -604,6 +617,18 @@ def from_template(name: str,
     else:
         effective_chunks = chunks
     if is_dask:
+        # The grid stays lazy, but the x/y coordinate vectors are built eagerly
+        # (width + height elements). Guard that allocation so the dask cell-cap
+        # exemption can't be turned into an out-of-memory at construction time.
+        n_coord_cells = width + height
+        if n_coord_cells > _MAX_COORD_CELLS:
+            raise ValueError(
+                f"{shape_desc} produces a {height} x {width} grid whose x/y "
+                f"coordinate vectors total {n_coord_cells:,} elements, exceeding "
+                f"the {_MAX_COORD_CELLS:,}-element limit. The grid data stays "
+                f"lazy on a dask backend, but the coordinates are built eagerly, "
+                f"so this would allocate them up front. {coarsen}."
+            )
         n_chunks = _estimate_n_chunks((height, width), effective_chunks)
         if n_chunks > _MAX_CHUNKS:
             # Report the request, not the expanded per-block tuple the default

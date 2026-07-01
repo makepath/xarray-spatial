@@ -434,6 +434,24 @@ def test_explicit_dask_backend_chunk_count_raises():
 
 
 @dask_array_available
+def test_over_fine_dask_coord_alloc_raises():
+    # The dask cell-cap exemption keeps the grid data lazy, and the default
+    # tiling grows its block so the chunk count stays under _MAX_CHUNKS -- but
+    # the x/y coordinate vectors (width + height elements) are built eagerly, so
+    # a typo-level fine resolution would allocate tens of GB of coordinates at
+    # construction. conus @ 1 mm is ~9e9 coordinate elements (~72 GB) but only
+    # ~2e5 chunks, so it slips past the chunk-count guard. The coordinate guard
+    # must catch it first. Match its text specifically.
+    from xrspatial.templates import _MAX_COORD_CELLS
+    with pytest.raises(ValueError, match="coordinate vectors"):
+        from_template("conus", resolution=0.001, backend="dask+numpy")
+    # The promotion path (chunks given on an eager backend) is guarded too.
+    with pytest.raises(ValueError, match="coordinate vectors"):
+        from_template("conus", resolution=0.001, chunks=-1)
+    assert _MAX_COORD_CELLS == 1_000_000_000
+
+
+@dask_array_available
 def test_auto_chunks_exempt_from_chunk_cap():
     import dask.array as da
     # 'auto' sizes blocks to the dask chunk-size config (~128 MB), so even a very
@@ -510,6 +528,19 @@ def test_explicit_chunks_bypass_default_tiling():
     agg = from_template("conus", resolution=1000, chunks=512)
     assert agg.data.chunks[0][0] == 512
     assert agg.data.chunks[1][0] == 512
+
+
+@dask_array_available
+def test_chunks_tuple_through_public_api():
+    import dask.array as da
+    # chunks may be a (chunk_y, chunk_x) tuple (a documented form); the public
+    # path must honor it verbatim and keep the resolution exact, the same as the
+    # int form. Only the int and 'auto' forms were exercised end-to-end before;
+    # the tuple form was checked only against the internal _estimate_n_chunks.
+    agg = from_template("conus", resolution=1000, chunks=(300, 400))
+    assert isinstance(agg.data, da.Array)
+    assert agg.data.chunksize == (300, 400)
+    assert agg.attrs["res"] == (1000.0, 1000.0)
 
 
 def test_single_pixel_grid():
@@ -1072,6 +1103,21 @@ def test_oversized_explicit_shape_cap_message_names_height_width():
         from_template("conus", height=30000, width=30000)  # 9e8 cells, eager
     assert "height=30000" in str(exc.value)
     assert "width=30000" in str(exc.value)
+    assert "resolution" not in str(exc.value)
+
+
+@dask_array_available
+def test_explicit_shape_chunk_count_message_names_height_width():
+    # The dask chunk-count guard on the height/width path must name the knob the
+    # caller actually set -- height/width -- not the derived resolution. chunks=
+    # promotes the eager default to dask and skips the cell cap, so this hits the
+    # chunk-count branch (not the cell-cap branch the message-naming test above
+    # covers). Only the resolution-path chunk-count message was tested before.
+    with pytest.raises(ValueError, match="chunk limit") as exc:
+        from_template("conus", height=2_000_000, width=2_000_000, chunks=512)
+    assert "height=2000000" in str(exc.value)
+    assert "width=2000000" in str(exc.value)
+    assert "smaller height/width" in str(exc.value)
     assert "resolution" not in str(exc.value)
 
 
