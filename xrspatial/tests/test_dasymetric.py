@@ -1070,7 +1070,7 @@ class TestLimitingVariableThreeClass:
 # ---------------------------------------------------------------------------
 
 class TestPycnophylacticEmptyValid:
-    """pycnophylactic crashes when no pixel is valid for smoothing (#3406).
+    """pycnophylactic with no pixel valid for smoothing (#3406).
 
     disaggregate handles the same inputs gracefully (all-NaN output); #3406
     makes pycnophylactic agree by returning the all-NaN surface instead of
