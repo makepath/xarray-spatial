@@ -779,7 +779,8 @@ def _write_streaming(dask_data, path: str, *,
                      photometric='auto',
                      restore_sentinel: bool = True,
                      allow_internal_only_jpeg: bool = False,
-                     allow_unparseable_crs: bool = False) -> None:
+                     allow_unparseable_crs: bool = False,
+                     chunk_observer=None) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -818,6 +819,15 @@ def _write_streaming(dask_data, path: str, *,
     allow_unparseable_crs : bool
         Opt in to writing an unparseable ``crs_wkt`` string into
         ``GTCitationGeoKey``. Default ``False``.
+    chunk_observer : callable, optional
+        Called once with every buffer the streaming write materialises
+        (a numpy array of logical values: after the dask compute and any
+        CuPy transfer, before the output-dtype cast and the
+        NaN-to-sentinel restore). The buffers partition the raster, so
+        an observer sees each pixel exactly once -- ``to_geotiff`` uses
+        this to accumulate the ``color_ramp`` symbology statistics
+        during the write instead of executing the source graph a second
+        time (issue #3597).
 
     Notes
     -----
@@ -1215,6 +1225,8 @@ def _write_streaming(dask_data, path: str, *,
                             if hasattr(band_np, 'get'):
                                 band_np = band_np.get()  # CuPy -> numpy
                             band_np = np.asarray(band_np)
+                            if chunk_observer is not None:
+                                chunk_observer(band_np)
 
                             if band_np.dtype != out_dtype:
                                 band_np = band_np.astype(out_dtype)
@@ -1263,6 +1275,8 @@ def _write_streaming(dask_data, path: str, *,
                                     if hasattr(seg_np, 'get'):
                                         seg_np = seg_np.get()  # CuPy -> numpy
                                     seg_np = np.asarray(seg_np)
+                                    if chunk_observer is not None:
+                                        chunk_observer(seg_np)
 
                                     if seg_np.dtype != out_dtype:
                                         seg_np = seg_np.astype(out_dtype)
@@ -1381,6 +1395,8 @@ def _write_streaming(dask_data, path: str, *,
                     if hasattr(band_np, 'get'):
                         band_np = band_np.get()  # CuPy -> numpy
                     band_np = np.asarray(band_np)
+                    if chunk_observer is not None:
+                        chunk_observer(band_np)
 
                     if band_np.dtype != out_dtype:
                         band_np = band_np.astype(out_dtype)

@@ -230,7 +230,76 @@ def _dask_finite_stats(arr, nodata):
             utils._to_float_scalar(mean), utils._to_float_scalar(std))
 
 
-def write_symbology_sidecars(path, data, *, stops, nodata=None, ramp_range=None):
+class StreamingStats:
+    """One-pass ``(min, max, mean, stddev)`` accumulator over streamed buffers.
+
+    The streaming dask writer already materialises every pixel exactly once
+    (issue #3597); feeding those buffers through :meth:`update` yields the
+    same statistics as :func:`_finite_stats` without a second execution of
+    the source graph. Matches ``_finite_stats`` semantics: non-finite values
+    and the *nodata* sentinel (unless it is NaN) are excluded, and the
+    stddev is the population stddev (``ddof=0``).
+
+    Mean and variance combine across buffers with Chan's parallel formula,
+    accumulated in float64, so the result is stable regardless of how the
+    writer bands / segments the raster.
+    """
+
+    def __init__(self, nodata=None):
+        if isinstance(nodata, float) and math.isnan(nodata):
+            nodata = None
+        self._nodata = nodata
+        self._count = 0
+        self._mean = 0.0
+        self._m2 = 0.0
+        self._min = math.inf
+        self._max = -math.inf
+
+    def update(self, buf):
+        """Fold one materialised numpy buffer into the running statistics."""
+        if buf.dtype.kind == 'f':
+            mask = np.isfinite(buf)
+            if self._nodata is not None:
+                mask &= (buf != self._nodata)
+            # ``buf[mask]`` copies; skip it for the common all-valid buffer.
+            vals = buf.ravel() if bool(mask.all()) else buf[mask]
+        elif self._nodata is not None:
+            mask = buf != self._nodata
+            vals = buf.ravel() if bool(mask.all()) else buf[mask]
+        else:
+            vals = buf.ravel()
+        # Plain ``int`` so the running count (and the moment arithmetic
+        # built on it) stays in unbounded Python ints, not numpy scalars.
+        n_b = int(vals.size)
+        if n_b == 0:
+            return
+        # Reductions with float64 accumulators on the original buffer:
+        # an ``astype(float64)`` copy here would double the memory
+        # traffic of every update for no precision gain.
+        mean_b = float(vals.mean(dtype=np.float64))
+        m2_b = float(vals.var(dtype=np.float64)) * n_b
+        self._min = min(self._min, float(vals.min()))
+        self._max = max(self._max, float(vals.max()))
+        if self._count == 0:
+            self._count, self._mean, self._m2 = n_b, mean_b, m2_b
+        else:
+            total = self._count + n_b
+            delta = mean_b - self._mean
+            self._m2 += m2_b + delta * delta * self._count * n_b / total
+            self._mean += delta * n_b / total
+            self._count = total
+
+    def result(self):
+        """Return ``(min, max, mean, stddev)``, or ``None`` if nothing valid
+        was accumulated -- the same contract as :func:`_finite_stats`."""
+        if self._count == 0:
+            return None
+        std = math.sqrt(max(self._m2 / self._count, 0.0))
+        return (self._min, self._max, self._mean, std)
+
+
+def write_symbology_sidecars(path, data, *, stops, nodata=None,
+                             ramp_range=None, stats=None):
     """Write continuous-raster symbology sidecars next to *path*.
 
     Writes band statistics into the PAM ``.aux.xml`` and, when the data range
@@ -241,6 +310,11 @@ def write_symbology_sidecars(path, data, *, stops, nodata=None, ramp_range=None)
     directly and skips the statistics reduction -- the escape hatch for large
     dask graphs -- so only ``STATISTICS_MINIMUM`` / ``STATISTICS_MAXIMUM`` are
     written (mean/stddev would need the pass it avoids).
+
+    *stats* is an optional :class:`StreamingStats` that already accumulated
+    the statistics during the write (the streaming dask path, issue #3597);
+    when given, its result replaces the :func:`_finite_stats` reduction so
+    the source graph is not executed a second time.
     """
     from . import _pam
 
@@ -249,20 +323,21 @@ def write_symbology_sidecars(path, data, *, stops, nodata=None, ramp_range=None)
 
     if ramp_range is not None:
         vmin, vmax = float(ramp_range[0]), float(ramp_range[1])
-        stats = {'STATISTICS_MINIMUM': vmin, 'STATISTICS_MAXIMUM': vmax}
+        stats_dict = {'STATISTICS_MINIMUM': vmin, 'STATISTICS_MAXIMUM': vmax}
     else:
-        result = _finite_stats(data, nodata)
+        result = (stats.result() if stats is not None
+                  else _finite_stats(data, nodata))
         if result is None:
             return
         vmin, vmax, vmean, vstd = result
-        stats = {
+        stats_dict = {
             'STATISTICS_MINIMUM': vmin,
             'STATISTICS_MAXIMUM': vmax,
             'STATISTICS_MEAN': vmean,
             'STATISTICS_STDDEV': vstd,
         }
 
-    _pam.write_stats_pam_sidecar(path, stats)
+    _pam.write_stats_pam_sidecar(path, stats_dict)
 
     # A constant raster (vmin == vmax) has no range to ramp across, so the
     # stats stretch is the useful part and the QML would be a degenerate
