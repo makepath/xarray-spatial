@@ -91,6 +91,9 @@ def _partition_bumps(data, locs, heights, spread):
     # vectorised pass.  Rescanning all of ``locs`` once per chunk would be
     # O(n_chunks * n_bumps), which runs eagerly during dask graph
     # construction and dominates the runtime for finely chunked rasters.
+    # Callers pass ``locs`` already clamped to ``[0, width) x [0, height)``
+    # (bump() draws them from ``range(w)`` / ``range(h)``), so searchsorted
+    # always lands inside the chunk grid.
     xi = np.searchsorted(x_offsets, locs[:, 0], side='right') - 1
     yi = np.searchsorted(y_offsets, locs[:, 1], side='right') - 1
 
