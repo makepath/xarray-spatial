@@ -87,20 +87,29 @@ def _partition_bumps(data, locs, heights, spread):
     ny = len(data.chunks[0])
     nx = len(data.chunks[1])
 
-    partitions = {}
-    for yi in range(ny):
-        y0, y1 = int(y_offsets[yi]), int(y_offsets[yi + 1])
-        for xi in range(nx):
-            x0, x1 = int(x_offsets[xi]), int(x_offsets[xi + 1])
-            mask = ((locs[:, 0] >= x0) & (locs[:, 0] < x1) &
-                    (locs[:, 1] >= y0) & (locs[:, 1] < y1))
-            if np.any(mask):
-                local_locs = locs[mask].copy()
-                local_locs[:, 0] -= x0
-                local_locs[:, 1] -= y0
-                partitions[(yi, xi)] = (local_locs, heights[mask].copy())
-            else:
-                partitions[(yi, xi)] = None
+    # Assign every bump to the chunk that holds its centre pixel in a single
+    # vectorised pass.  Rescanning all of ``locs`` once per chunk would be
+    # O(n_chunks * n_bumps), which runs eagerly during dask graph
+    # construction and dominates the runtime for finely chunked rasters.
+    xi = np.searchsorted(x_offsets, locs[:, 0], side='right') - 1
+    yi = np.searchsorted(y_offsets, locs[:, 1], side='right') - 1
+
+    partitions = {(a, b): None for a in range(ny) for b in range(nx)}
+    if len(locs):
+        flat = yi.astype(np.intp) * nx + xi
+        order = np.argsort(flat, kind='stable')
+        flat_sorted = flat[order]
+        bounds = np.nonzero(np.diff(flat_sorted))[0] + 1
+        starts = np.concatenate([[0], bounds])
+        ends = np.concatenate([bounds, [len(flat_sorted)]])
+        for s, e in zip(starts, ends):
+            idx = order[s:e]
+            a, b = divmod(int(flat_sorted[s]), nx)
+            x0, y0 = int(x_offsets[b]), int(y_offsets[a])
+            local_locs = locs[idx].copy()
+            local_locs[:, 0] -= x0
+            local_locs[:, 1] -= y0
+            partitions[(a, b)] = (local_locs, heights[idx].copy())
     return partitions
 
 
