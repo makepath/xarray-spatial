@@ -172,7 +172,8 @@ def read_pam_sidecar(path):
         if colors is not None:
             out['category_colors'] = colors
         return out
-    except (OSError, ValueError, TypeError, IndexError, ParseError):
+    except (OSError, ValueError, TypeError, IndexError, OverflowError,
+            ParseError):
         # A missing, malformed, or foreign sidecar is non-fatal auxiliary
         # metadata, not a read error -- never let it break open_geotiff.
         # IndexError covers a thematic RAT whose <Row> carries fewer <F>
@@ -182,7 +183,11 @@ def read_pam_sidecar(path):
         # adjacent sidecar. ParseError covers a truncated or otherwise
         # non-well-formed sidecar: safe_fromstring raises it (a SyntaxError
         # subclass, so not covered by the types above) and it would
-        # likewise escape and crash the read.
+        # likewise escape and crash the read. OverflowError covers a Value
+        # cell whose text parses to infinity ("1e400", "inf"):
+        # int(float(...)) in _parse_rat raises it, and it subclasses
+        # ArithmeticError rather than ValueError, so it too would escape
+        # and crash the read (issue #3590).
         return {}
 
 

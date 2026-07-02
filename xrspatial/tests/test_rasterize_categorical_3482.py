@@ -282,6 +282,30 @@ class TestPamHelpers:
         # Must never raise; worst case returns {}.
         assert read_pam_sidecar(path) == {}
 
+    def test_non_finite_rat_value_returns_empty(self, tmp_path):
+        """A RAT Value cell that parses to infinity must not crash the read.
+
+        _parse_rat converts the Value cell with int(float(text)); a cell
+        such as "1e400" or "inf" makes int() raise OverflowError, which
+        subclasses ArithmeticError rather than ValueError and so escaped
+        the read_pam_sidecar except tuple, crashing the open_geotiff call
+        that reads the sidecar for any local string source (issue #3590).
+        """
+        from xrspatial.geotiff._pam import read_pam_sidecar
+        path = str(tmp_path / 'inf_value_3590.tif')
+        with open(path + '.aux.xml', 'w') as fh:
+            fh.write('<PAMDataset><PAMRasterBand band="1">'
+                     '<GDALRasterAttributeTable tableType="thematic">'
+                     '<FieldDefn index="0"><Name>Value</Name><Type>1</Type>'
+                     '<Usage>5</Usage></FieldDefn>'
+                     '<FieldDefn index="1"><Name>Class</Name><Type>2</Type>'
+                     '<Usage>2</Usage></FieldDefn>'
+                     '<Row index="0"><F>1e400</F><F>water</F></Row>'
+                     '</GDALRasterAttributeTable>'
+                     '</PAMRasterBand></PAMDataset>')
+        # Must never raise; worst case returns {}.
+        assert read_pam_sidecar(path) == {}
+
     def test_non_well_formed_xml_sidecar_returns_empty(self, tmp_path):
         """A truncated / non-well-formed .aux.xml must not crash the read.
 
