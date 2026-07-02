@@ -82,11 +82,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
       (``SUPPORTED_FEATURES['writer.overviews']``): the
       ``overview_levels`` and ``overview_resampling`` knobs and the
       pyramid bytes themselves. Also explicit ``bigtiff=True``;
-      ``photometric=`` overrides; ``extra_tags`` pass-through.
+      ``photometric=`` overrides.
     * [experimental] GPU dispatch via ``gpu=True``;
       ``compression`` in ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` behind
       the explicit ``allow_experimental_codecs=True`` opt-in;
-      ``allow_unparseable_crs=True``.
+      ``allow_unparseable_crs=True``; ``attrs['extra_tags']`` /
+      ``attrs['gdal_metadata_xml']`` pass-through
+      (``SUPPORTED_FEATURES['writer.extra_tags']`` /
+      ``['writer.gdal_metadata_xml']``), gated behind the same
+      ``allow_experimental_codecs=True`` opt-in -- except for attrs
+      that came from an xrspatial read, whose round-trip stays
+      flag-free.
     * [internal-only] ``compression='jpeg'`` behind
       ``allow_internal_only_jpeg=True``. The produced files do not
       round-trip through libtiff / GDAL / rasterio; the path exists for
@@ -309,11 +315,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * An ``int`` -- written verbatim into Photometric for advanced
           callers (e.g. ``3`` for Palette, ``5`` for CMYK).
 
-        A user-supplied ``extra_tags`` entry of ``(TAG_PHOTOMETRIC,
-        ...)`` or ``(TAG_EXTRA_SAMPLES, ...)`` overrides the writer's
-        chosen value; only these two tag ids are overridable so other
-        auto-emitted tags such as ``ImageWidth`` or ``StripOffsets``
-        remain protected.
+        A user-supplied ``attrs['extra_tags']`` entry of
+        ``(TAG_PHOTOMETRIC, ...)`` or ``(TAG_EXTRA_SAMPLES, ...)``
+        overrides the writer's chosen value (the pass-through itself
+        rides the experimental tier; see the tier list above); only
+        these two tag ids are overridable so other auto-emitted tags
+        such as ``ImageWidth`` or ``StripOffsets`` remain protected.
     allow_experimental_codecs : bool
         [experimental] Opt in to the Tier 3 experimental codecs
         ``'lerc'``,
