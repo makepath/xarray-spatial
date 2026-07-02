@@ -19,7 +19,8 @@ import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._pam import build_stats_pam_xml
-from xrspatial.geotiff._symbology import _finite_stats, build_qml, qml_path, resolve_ramp
+from xrspatial.geotiff._symbology import (StreamingStats, _finite_stats, build_qml, qml_path,
+                                          resolve_ramp)
 
 from .._helpers.markers import requires_gpu
 
@@ -157,6 +158,66 @@ def test_finite_stats_constant_raster():
     vmin, vmax, vmean, vstd = _finite_stats(_continuous_da(arr), None)
     assert vmin == vmax == 7.0
     assert vstd == 0.0
+
+
+def test_finite_stats_dask_excludes_nodata_sentinel():
+    """The dask reduction excludes the nodata sentinel and matches numpy.
+    Backend parity was only asserted with ``nodata=None``; the ``where``
+    masking branch of ``_dask_finite_stats`` needs a sentinel to run."""
+    import dask.array as dsa
+
+    arr = np.linspace(1.0, 100.0, 8 * 8).reshape(8, 8).astype("float32")
+    arr[0, 0] = -9999.0
+    ref = _finite_stats(_continuous_da(arr), nodata=-9999.0)
+    got = _finite_stats(_continuous_da(dsa.from_array(arr, chunks=(4, 4))),
+                        nodata=-9999.0)
+    assert got == pytest.approx(ref, abs=1e-5)
+    assert got[0] > 0.0  # sentinel excluded, so min is not -9999
+
+
+def test_finite_stats_dask_all_nan_returns_none():
+    """A dask array with no finite cells returns ``None`` (the dask
+    ``count == 0`` branch), matching the eager all-NaN contract."""
+    import dask.array as dsa
+
+    arr = np.full((8, 8), np.nan, dtype="float32")
+    assert _finite_stats(
+        _continuous_da(dsa.from_array(arr, chunks=(4, 4))), None) is None
+
+
+@requires_gpu
+def test_finite_stats_dask_cupy_excludes_nodata_sentinel():
+    """dask+cupy stats also exclude the sentinel and match numpy."""
+    import cupy
+    import dask.array as dsa
+
+    arr = np.linspace(1.0, 100.0, 8 * 8).reshape(8, 8).astype("float32")
+    arr[0, 0] = -9999.0
+    ref = _finite_stats(_continuous_da(arr), nodata=-9999.0)
+    got = _finite_stats(
+        _continuous_da(dsa.from_array(cupy.asarray(arr), chunks=(4, 4))),
+        nodata=-9999.0)
+    assert got == pytest.approx(ref, abs=1e-5)
+
+
+def test_streaming_stats_int_buffer_excludes_nodata():
+    """``StreamingStats`` over an integer buffer excludes the nodata sentinel
+    when the buffer is not all-valid (the int ``buf[mask]`` branch)."""
+    ss = StreamingStats(nodata=5)
+    ss.update(np.array([[1, 5, 3], [5, 2, 4]], dtype="int32"))
+    vmin, vmax, vmean, _ = ss.result()
+    assert (vmin, vmax) == (1.0, 4.0)
+    assert vmean == pytest.approx(2.5)  # (1+3+2+4)/4, sentinel 5 dropped
+
+
+def test_streaming_stats_int_buffer_no_nodata():
+    """An integer buffer with no nodata sentinel folds in every cell (the
+    plain-``ravel`` branch), so the stats span the whole buffer."""
+    ss = StreamingStats()
+    ss.update(np.array([[1, 2], [3, 4]], dtype="int32"))
+    vmin, vmax, vmean, _ = ss.result()
+    assert (vmin, vmax) == (1.0, 4.0)
+    assert vmean == pytest.approx(2.5)
 
 
 # --------------------------------------------------------------------------
