@@ -645,6 +645,13 @@ def _pycnophylactic_numpy(zones_arr, values_dict, nodata_zone,
     # pixels that belong to some zone (valid for smoothing)
     valid = ~np.isnan(surface)
 
+    # no valid pixels (all-NaN zones, or no zone id matched values): the
+    # smoothing loop has nothing to converge on and np.nanmax over the
+    # empty valid slice would raise. Return the all-NaN surface, matching
+    # disaggregate's behaviour on the same inputs.
+    if not valid.any():
+        return surface
+
     for _ in range(max_iterations):
         # Laplacian smoothing: mean of 4-connected neighbours
         smoothed = np.full_like(surface, np.nan)
