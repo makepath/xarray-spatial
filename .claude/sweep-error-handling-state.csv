@@ -1,0 +1,2 @@
+module,last_inspected,issue,severity_max,categories_found,notes
+bump,2026-07-02,,HIGH,1;2;3;4,"bump() agg template unvalidated: plain ndarray -> ArrayTypeFunctionMapping 'Unsupported Array Type'; 3D/1D DataArray -> 'too many values to unpack'. count/spread unvalidated (internal numpy errors / silent). Added _validate_raster(agg,ndim=2) + _validate_scalar for count,spread. all 4 backends verified (CUDA present)."

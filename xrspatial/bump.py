@@ -17,6 +17,7 @@ except ImportError:
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _validate_raster,
     _validate_scalar,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -331,7 +332,15 @@ def bump(width: int = None,
             Description:  Example Bump Map
             units:        km
     """
+    _validate_scalar(spread, func_name='bump', name='spread',
+                     dtype=int, min_val=0)
+    if count is not None:
+        _validate_scalar(count, func_name='bump', name='count',
+                         dtype=int, min_val=0)
+
     if agg is not None:
+        _validate_raster(agg, func_name='bump', name='agg', ndim=2,
+                         numeric=False)
         h, w = agg.shape
     else:
         _validate_scalar(width, func_name='bump', name='width',
