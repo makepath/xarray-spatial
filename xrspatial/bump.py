@@ -180,11 +180,14 @@ def bump(width: int = None,
     height : int, optional
         Total height, in pixels, of the image.
         Not required when ``agg`` is provided.
-    count : int
-        Number of bumps to generate.
-    height_func : function which takes x, y and returns a height value
-        Function used to apply varying bump heights to different
-        elevations.
+    count : int, optional
+        Number of bumps to generate. When omitted, defaults to
+        ``min(width * height // 10, 10_000_000)``.
+    height_func : callable, optional
+        Called once as ``height_func(locations)``, where ``locations``
+        is an ``(count, 2)`` array of integer ``(x, y)`` bump
+        coordinates. It must return a 1D array of ``count`` bump
+        heights. When omitted, every bump is given a height of 1.
     spread : int, default=1
         Number of pixels to spread on all sides.
     agg : xarray.DataArray, optional
