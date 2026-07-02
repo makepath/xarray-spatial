@@ -15,13 +15,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_scalar,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    ngjit,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_scalar, has_cuda_and_cupy,
+                             is_cupy_array, ngjit)
 
 # Upper bound on bump count to prevent accidental OOM from the default
 # w*h//10 heuristic.  16 bytes per bump (int32 loc pair + float64 height),
