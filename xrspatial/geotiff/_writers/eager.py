@@ -131,6 +131,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     GPU write uses nvCOMP batch compression (deflate/ZSTD) and keeps
     the array on device. Falls back to CPU if nvCOMP is not available.
 
+    Every successful write to a string path refreshes the PAM
+    ``<path>.aux.xml`` sidecar: a sidecar already at that path (from a
+    previous write, or a foreign tool) is removed and re-created only
+    when this write carries its own categories
+    (``attrs['category_names']``) or ``color_ramp=`` statistics
+    (#3595). This matches GDAL's behaviour when creating a dataset
+    over an existing path. A ``.qml`` style file is never removed;
+    see ``color_ramp``.
+
     Parameters
     ----------
     data : xr.DataArray or np.ndarray
@@ -528,6 +537,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             try:
                 os.remove(sidecar_path(path))
             except OSError:
+                # Missing sidecar is the normal case; a locked one (e.g.
+                # PermissionError on Windows) is swallowed too, matching
+                # QuietDelete: the pixel write already succeeded, so a
+                # leftover sidecar beats failing the whole write.
                 pass
         if _cat_names:
             from .._pam import write_pam_sidecar

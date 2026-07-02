@@ -178,6 +178,32 @@ def test_vrt_write_removes_stale_sidecar(tmp_path):
     assert "category_names" not in open_geotiff(path).attrs
 
 
+def test_failed_write_keeps_old_sidecar(tmp_path, monkeypatch):
+    """A failed write leaves the old file and its sidecar consistent.
+
+    The removal runs in ``_write_sidecars``, which only executes at the
+    success return points, so a write that raises mid-pixel-write must not
+    strip the sidecar that still describes the untouched old file. This
+    pins that ordering against a refactor that moves the removal before
+    the pixel write.
+    """
+    path = str(tmp_path / "failed_3595.tif")
+    to_geotiff(_categorical_da(), path)
+    assert os.path.exists(path + ".aux.xml")
+
+    from xrspatial.geotiff._writers import eager as eager_mod
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated mid-write failure")
+
+    monkeypatch.setattr(eager_mod, "write", _boom)
+    with pytest.raises(RuntimeError, match="simulated mid-write"):
+        to_geotiff(_plain_da(), path)
+
+    assert os.path.exists(path + ".aux.xml")
+    assert open_geotiff(path).attrs["category_names"] == _NAMES
+
+
 @requires_gpu
 def test_gpu_overwrite_removes_sidecar(tmp_path):
     """The GPU (nvCOMP) write path refreshes the sidecar."""
