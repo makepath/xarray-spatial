@@ -1,0 +1,2 @@
+module,last_inspected,issue,severity_max,categories_found,notes
+bump,2026-07-02,,HIGH,1,"no bench existed; added benchmarks/benchmarks/bump.py (numpy+cupy+multi-chunk dask), all 3 verified running on CUDA host; Cat1 HIGH (dask+cupy backends were unbenchmarked); dask+cupy type not parameterized (matches suite convention, common.get_xr_dataarray has none); issue+PR drafts in scratchpad, gh writes blocked in auto mode"
