@@ -501,6 +501,14 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     images by eliminating spurious data or enhancing features in the
     data. Note that edges of output data array are filled with NaNs.
 
+    The kernel is applied by cross-correlation: it is overlaid on each
+    neighbourhood as given, without being flipped, which matches
+    ``scipy.ndimage.correlate``. This equals a true convolution only when
+    the kernel is symmetric, as the built-in ``circle_kernel`` and
+    ``annulus_kernel`` are. For an asymmetric kernel where you need
+    ``scipy.ndimage.convolve`` semantics, pass the kernel pre-flipped
+    (``kernel[::-1, ::-1]``).
+
     Parameters
     ----------
     agg : xarray.DataArray
