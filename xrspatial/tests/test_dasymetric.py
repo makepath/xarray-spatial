@@ -1070,12 +1070,11 @@ class TestLimitingVariableThreeClass:
 # ---------------------------------------------------------------------------
 
 class TestPycnophylacticEmptyValid:
-    """pycnophylactic crashes when no pixel is valid for smoothing (#3406).
+    """pycnophylactic with no pixel valid for smoothing (#3406).
 
-    disaggregate handles the same inputs gracefully (all-NaN output); these
-    are xfail(strict) until #3406 makes pycnophylactic agree.  When the
-    source fix lands, the tests start XPASSing and strict mode flips them
-    red, prompting removal of the marker.
+    disaggregate handles the same inputs gracefully (all-NaN output); #3406
+    makes pycnophylactic agree by returning the all-NaN surface instead of
+    raising on the empty-valid slice.
     """
 
     def test_disaggregate_all_nan_zones_is_all_nan(self):
@@ -1085,23 +1084,21 @@ class TestPycnophylacticEmptyValid:
         result = disaggregate(zones, {1: 100.0}, weight)
         assert np.all(np.isnan(result.values))
 
-    @pytest.mark.xfail(
-        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
-        strict=True,
-        raises=ValueError,
-    )
     def test_pycnophylactic_all_nan_zones(self):
         zones = create_test_raster(np.full((3, 3), np.nan), backend='numpy')
         result = pycnophylactic(zones, {1: 100.0})
         assert np.all(np.isnan(result.values))
 
-    @pytest.mark.xfail(
-        reason="#3406: pycnophylactic raises ValueError on empty-valid input",
-        strict=True,
-        raises=ValueError,
-    )
     def test_pycnophylactic_no_matching_zone(self):
         zones = create_test_raster(
             np.array([[1, 1], [2, 2]], dtype=np.float64), backend='numpy')
         result = pycnophylactic(zones, {99: 100.0})
         assert np.all(np.isnan(result.values))
+
+    @pytest.mark.skipif(not has_cuda_and_cupy(),
+                        reason="CUDA/CuPy not available")
+    def test_pycnophylactic_all_nan_zones_cupy(self):
+        """cupy fallback shares the numpy path; guard it too."""
+        zones = create_test_raster(np.full((3, 3), np.nan), backend='cupy')
+        result = pycnophylactic(zones, {1: 100.0})
+        assert np.all(np.isnan(result.data.get()))
