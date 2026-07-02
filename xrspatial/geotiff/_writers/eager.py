@@ -418,7 +418,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         data; for a dask source that means reading the graph once more (see
         ``color_ramp_range`` to skip it). Ignored when ``pack=True``, whose
         on-disk packed values would not match a ramp built from the logical
-        values.
+        values. Every string-path write refreshes the PAM ``.aux.xml``:
+        a sidecar left by a previous write at the same path is removed
+        and re-created only when this write carries its own categories
+        or statistics (#3595). A pre-existing ``.qml`` is kept unless
+        ``color_ramp`` replaces it -- QGIS treats it as user styling
+        that persists across data updates.
     color_ramp_range : tuple of (float, float) or None, default None
         [advanced] Explicit ``(min, max)`` for the ``color_ramp`` stretch.
         Skips the statistics reduction -- useful for large dask graphs -- so
@@ -507,6 +512,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                            else _resolve_nodata_attr(data.attrs))
 
     def _write_sidecars():
+        if isinstance(path, str):
+            # A pre-existing PAM sidecar describes whatever file this write
+            # just replaced, and ``open_geotiff`` merges it back onto attrs,
+            # so leaving it behind hands the old file's categories /
+            # statistics to the new pixels (#3595). GDAL's GTiff driver
+            # removes the PAM sidecar when creating a dataset over an
+            # existing path (``GDALDriver::QuietDelete``); match that. The
+            # ``write_*_sidecar`` calls below re-create it when this write
+            # carries its own categories or statistics. The ``.qml`` style
+            # sidecar is deliberately left alone: QGIS treats it as user
+            # styling that persists across data updates, so only a new
+            # ``color_ramp=`` write replaces it.
+            from .._pam import sidecar_path
+            try:
+                os.remove(sidecar_path(path))
+            except OSError:
+                pass
         if _cat_names:
             from .._pam import write_pam_sidecar
             write_pam_sidecar(path, _cat_names, _cat_colors)
