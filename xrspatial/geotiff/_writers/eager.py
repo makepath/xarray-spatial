@@ -152,6 +152,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ``docs/source/user_guide/attrs_contract.rst`` for the key
     definitions.
 
+    Every successful write to a string path also refreshes the PAM
+    ``<path>.aux.xml`` sidecar: a sidecar already at that path (from a
+    previous write, or a foreign tool) is removed and re-created only
+    when this write carries its own categories or statistics (#3595).
+    This matches GDAL's behaviour when creating a dataset over an
+    existing path. A ``.qml`` style file is never removed; see
+    ``color_ramp``.
+
     Parameters
     ----------
     data : xr.DataArray or np.ndarray
@@ -442,7 +450,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (``gpu=True``) and VRT (``.vrt``) write paths execute a dask source
         a second time for the statistics (see ``color_ramp_range`` to skip
         that). Ignored when ``pack=True``, whose on-disk packed values would
-        not match a ramp built from the logical values.
+        not match a ramp built from the logical values. Every string-path
+        write refreshes the PAM ``.aux.xml``: a sidecar left by a previous
+        write at the same path is removed and re-created only when this
+        write carries its own categories or statistics (#3595). A
+        pre-existing ``.qml`` is kept unless ``color_ramp`` replaces it --
+        QGIS treats it as user styling that persists across data updates.
     color_ramp_range : tuple of (float, float) or None, default None
         [advanced] Explicit ``(min, max)`` for the ``color_ramp`` stretch.
         Skips the statistics reduction -- useful for a dask source on the
@@ -534,6 +547,27 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                            else _resolve_nodata_attr(data.attrs))
 
     def _write_sidecars():
+        if isinstance(path, str):
+            # A pre-existing PAM sidecar describes whatever file this write
+            # just replaced, and ``open_geotiff`` merges it back onto attrs,
+            # so leaving it behind hands the old file's categories /
+            # statistics to the new pixels (#3595). GDAL's GTiff driver
+            # removes the PAM sidecar when creating a dataset over an
+            # existing path (``GDALDriver::QuietDelete``); match that. The
+            # ``write_*_sidecar`` calls below re-create it when this write
+            # carries its own categories or statistics. The ``.qml`` style
+            # sidecar is deliberately left alone: QGIS treats it as user
+            # styling that persists across data updates, so only a new
+            # ``color_ramp=`` write replaces it.
+            from .._pam import sidecar_path
+            try:
+                os.remove(sidecar_path(path))
+            except OSError:
+                # Missing sidecar is the normal case; a locked one (e.g.
+                # PermissionError on Windows) is swallowed too, matching
+                # QuietDelete: the pixel write already succeeded, so a
+                # leftover sidecar beats failing the whole write.
+                pass
         if _cat_names:
             from .._pam import write_pam_sidecar
             write_pam_sidecar(path, _cat_names, _cat_colors)
