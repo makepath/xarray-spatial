@@ -137,6 +137,23 @@ write.
      - str
      - Verbatim XML string of the ``GDAL_METADATA`` tag. Preferred
        over ``gdal_metadata`` by writers when both are present.
+   * - ``category_names``
+     - list of str
+     - Class labels for a categorical raster; the list index is the
+       pixel value. Unlike the other canonical keys, this one lives in
+       the GDAL PAM sidecar (``<file>.aux.xml``), not in the TIFF
+       itself: ``to_geotiff`` writes the sidecar whenever the attr is
+       present on a string destination, and ``open_geotiff`` merges the
+       attr back from the sidecar on local string-path reads (all
+       backends). A missing, malformed, or foreign sidecar (e.g. GDAL's
+       statistics-only PAM) leaves the attr unset. See issue #3482.
+   * - ``category_colors``
+     - list of tuples
+     - One ``(r, g, b, a)`` tuple (components 0-255) per entry in
+       ``category_names``. Carried in the same PAM sidecar as a
+       thematic RAT with color columns; round-trips through
+       ``to_geotiff`` / ``open_geotiff`` alongside ``category_names``.
+       Ignored when its length disagrees with ``category_names``.
    * - ``x_resolution``
      - float
      - ``XResolution`` TIFF tag value.
