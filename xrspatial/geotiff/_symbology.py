@@ -268,7 +268,9 @@ class StreamingStats:
             vals = buf.ravel() if bool(mask.all()) else buf[mask]
         else:
             vals = buf.ravel()
-        n_b = vals.size
+        # Plain ``int`` so the running count (and the moment arithmetic
+        # built on it) stays in unbounded Python ints, not numpy scalars.
+        n_b = int(vals.size)
         if n_b == 0:
             return
         # Reductions with float64 accumulators on the original buffer:

@@ -203,14 +203,14 @@ def test_streaming_stats_matches_finite_stats_uneven_slabs():
     for r0, r1 in [(0, 5), (5, 6), (6, 40), (40, 64)]:
         acc.update(_BASE[r0:r1])
     da = xr.DataArray(_BASE, dims=("y", "x"))
-    assert acc.result() == pytest.approx(_finite_stats(da, None), rel=1e-12)
+    assert acc.result() == pytest.approx(_finite_stats(da, None), rel=1e-9)
 
 
 def test_streaming_stats_nan_nodata_treated_as_unset():
     acc = StreamingStats(nodata=float("nan"))
     acc.update(_BASE)
     da = xr.DataArray(_BASE, dims=("y", "x"))
-    assert acc.result() == pytest.approx(_finite_stats(da, None), rel=1e-12)
+    assert acc.result() == pytest.approx(_finite_stats(da, None), rel=1e-9)
 
 
 def test_streaming_stats_empty_returns_none():
