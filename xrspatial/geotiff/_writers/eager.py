@@ -500,6 +500,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # when packing rather than emit a mismatched ramp.
         if color_ramp and not _cat_names and not pack:
             from .._symbology import resolve_ramp
+
             # Validate the ramp name now so a typo fails before any bytes.
             _sym_stops = resolve_ramp(color_ramp)
             _sym_data = data

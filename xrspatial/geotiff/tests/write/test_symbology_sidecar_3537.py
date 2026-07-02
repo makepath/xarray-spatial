@@ -19,8 +19,7 @@ import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._pam import build_stats_pam_xml
-from xrspatial.geotiff._symbology import (
-    _finite_stats, build_qml, qml_path, resolve_ramp)
+from xrspatial.geotiff._symbology import _finite_stats, build_qml, qml_path, resolve_ramp
 
 from .._helpers.markers import requires_gpu
 
@@ -117,6 +116,7 @@ def test_finite_stats_backend_parity():
 
     pytest.importorskip("cupy")
     import cupy
+
     from xrspatial.utils import has_cuda_and_cupy
     if not has_cuda_and_cupy():
         pytest.skip("no CUDA device")
