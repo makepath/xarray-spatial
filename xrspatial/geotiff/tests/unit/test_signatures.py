@@ -823,6 +823,27 @@ def test_validate_write_rich_tag_optin_exempts_round_trip():
     )
 
 
+def test_to_geotiff_docstring_extra_tags_tier_matches_supported_features():
+    """The tier list in ``to_geotiff``'s docstring must agree with
+    ``SUPPORTED_FEATURES`` on the rich-tag pass-through. The docstring
+    used to list ``extra_tags`` under ``[advanced]`` (which carries no
+    kwarg gate) while ``writer.extra_tags`` sits at ``experimental``
+    and ``_validate_write_rich_tag_optin`` rejects a fresh DataArray
+    without ``allow_experimental_codecs=True`` (#3593).
+    """
+    assert g.SUPPORTED_FEATURES['writer.extra_tags'] == 'experimental'
+    assert g.SUPPORTED_FEATURES['writer.gdal_metadata_xml'] == 'experimental'
+    # Only inspect the release-contract tier list at the top of the
+    # docstring, not the parameter docs further down (``photometric``
+    # legitimately mentions the extra_tags override there).
+    tier_list = to_geotiff.__doc__.split('Parameters')[0]
+    advanced = tier_list.split('[advanced]')[1].split('* [')[0]
+    assert 'extra_tags' not in advanced
+    experimental = tier_list.split('[experimental]')[1].split('* [')[0]
+    assert 'extra_tags' in experimental
+    assert 'allow_experimental_codecs' in experimental
+
+
 # --- Read end-to-end: write an experimental-codec file, then assert the
 # read side refuses without the matching opt-in and succeeds with it. ---
 
