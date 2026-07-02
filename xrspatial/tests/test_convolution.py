@@ -2,10 +2,26 @@ import numpy as np
 import pytest
 import xarray as xr
 
+import dask.array as da
+
 from xrspatial.convolution import circle_kernel, convolve_2d, custom_kernel
 
 
 KERNEL = circle_kernel(1, 1, 1)
+
+
+@pytest.mark.parametrize("dtype", [np.int32, np.float32, np.float64])
+def test_convolve_2d_dask_dtype_matches_numpy(dtype):
+    # The dask backend used to advertise float64 via ``meta=np.array(())``
+    # even when the eager numpy backend promoted an int32/float32 raster to
+    # float32, so ``result.dtype`` disagreed across backends and the lazy
+    # dtype did not match the computed chunks. The declared dask dtype must
+    # equal both the eager dtype and the actually-computed chunk dtype.
+    data = np.arange(64, dtype=dtype).reshape(8, 8)
+    eager = convolve_2d(data, KERNEL)
+    lazy = convolve_2d(da.from_array(data, chunks=(4, 4)), KERNEL)
+    assert lazy.dtype == eager.dtype
+    assert lazy.compute().dtype == eager.dtype
 
 
 def test_convolve_2d_rejects_boolean_dtype():
