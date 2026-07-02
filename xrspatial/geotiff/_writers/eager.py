@@ -137,6 +137,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     GPU write uses nvCOMP batch compression (deflate/ZSTD) and keeps
     the array on device. Falls back to CPU if nvCOMP is not available.
 
+    Styling sidecars for QGIS/GDAL land next to the file, not inside
+    it. A DataArray carrying ``attrs['category_names']`` (for example a
+    categorical ``rasterize`` result) gets a PAM ``<path>.aux.xml``
+    sidecar with the class labels and, when
+    ``attrs['category_colors']`` is present, an RGBA column per class.
+    No kwarg is involved; the attrs alone trigger the write, on every
+    dispatch path (eager, dask, GPU, and ``.vrt``). Continuous rasters
+    opt in through ``color_ramp``, which writes a QGIS ``.qml`` style
+    plus PAM statistics instead; the categorical sidecar wins when both
+    apply. File-like destinations skip sidecars (no path to anchor
+    them). ``open_geotiff`` merges the categorical attrs back on read,
+    so the labels round-trip; see
+    ``docs/source/user_guide/attrs_contract.rst`` for the key
+    definitions.
+
     Parameters
     ----------
     data : xr.DataArray or np.ndarray

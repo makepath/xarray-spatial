@@ -885,6 +885,19 @@ def open_geotiff(source: str | BinaryIO, *,
     non-finite, or fractional) leaves the source dtype, so
     ``dtype=<integer>`` works in that case.
 
+    Local string-path reads also pick up categorical metadata from a
+    GDAL PAM sidecar. When a ``<source>.aux.xml`` file sits next to the
+    source, ``category_names`` (and ``category_colors``, when the
+    sidecar's thematic RAT carries color columns) are merged into the
+    result's attrs. This runs on every backend -- eager, dask, GPU, and
+    VRT reads alike. ``to_geotiff`` writes the same sidecar for a
+    DataArray carrying ``attrs['category_names']``, so a categorical
+    write -> read round-trip keeps class labels and colors. A missing,
+    malformed, or foreign sidecar (for example GDAL's statistics-only
+    PAM) is ignored, and file-like sources skip the lookup. See the
+    attrs contract page (``docs/source/user_guide/attrs_contract.rst``)
+    for the key definitions.
+
     Examples
     --------
     Safe VRT usage. Write a ``.vrt`` mosaic with ``to_geotiff`` and read
