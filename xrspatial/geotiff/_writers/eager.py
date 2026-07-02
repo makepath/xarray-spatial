@@ -423,22 +423,25 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``<file>.aux.xml``. No-op for a categorical raster (one with
         ``attrs['category_names']`` -- those get the RAT sidecar instead), a
         multiband array, a file-like destination, or data with no finite
-        values. Computing the statistics is a separate reduction pass over the
-        data; for a dask source that means reading the graph once more (see
-        ``color_ramp_range`` to skip it). Ignored when ``pack=True``, whose
-        on-disk packed values would not match a ramp built from the logical
-        values. Every string-path write refreshes the PAM ``.aux.xml``:
-        a sidecar left by a previous write at the same path is removed
-        and re-created only when this write carries its own categories
-        or statistics (#3595). A pre-existing ``.qml`` is kept unless
-        ``color_ramp`` replaces it -- QGIS treats it as user styling
-        that persists across data updates.
+        values. Computing the statistics is an extra reduction pass over the
+        data. The streaming dask write accumulates them from the buffers it
+        materialises anyway, so the source graph still runs once; the GPU
+        (``gpu=True``) and VRT (``.vrt``) write paths execute a dask source
+        a second time for the statistics (see ``color_ramp_range`` to skip
+        that). Ignored when ``pack=True``, whose on-disk packed values would
+        not match a ramp built from the logical values. Every string-path
+        write refreshes the PAM ``.aux.xml``: a sidecar left by a previous
+        write at the same path is removed and re-created only when this
+        write carries its own categories or statistics (#3595). A
+        pre-existing ``.qml`` is kept unless ``color_ramp`` replaces it --
+        QGIS treats it as user styling that persists across data updates.
     color_ramp_range : tuple of (float, float) or None, default None
         [advanced] Explicit ``(min, max)`` for the ``color_ramp`` stretch.
-        Skips the statistics reduction -- useful for large dask graphs -- so
-        only ``STATISTICS_MINIMUM`` / ``STATISTICS_MAXIMUM`` are written
-        (mean/stddev need the pass it avoids). Ignored when ``color_ramp`` is
-        not set.
+        Skips the statistics reduction -- useful for a dask source on the
+        GPU or VRT write paths, which would otherwise read the graph once
+        more -- so only ``STATISTICS_MINIMUM`` / ``STATISTICS_MAXIMUM`` are
+        written (mean/stddev need the pass it avoids). Ignored when
+        ``color_ramp`` is not set.
 
     Returns
     -------
@@ -505,6 +508,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     _sym_data = None
     _sym_stops = None
     _sym_nodata = None
+    _sym_stream_stats = None
     if isinstance(path, str) and isinstance(data, xr.DataArray):
         _cat_names = data.attrs.get('category_names')
         _cat_colors = data.attrs.get('category_colors')
@@ -514,6 +518,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # when packing rather than emit a mismatched ramp.
         if color_ramp and not _cat_names and not pack:
             from .._symbology import resolve_ramp
+
             # Validate the ramp name now so a typo fails before any bytes.
             _sym_stops = resolve_ramp(color_ramp)
             _sym_data = data
@@ -550,7 +555,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             from .._symbology import write_symbology_sidecars
             write_symbology_sidecars(
                 path, _sym_data, stops=_sym_stops,
-                nodata=_sym_nodata, ramp_range=color_ramp_range)
+                nodata=_sym_nodata, ramp_range=color_ramp_range,
+                stats=_sym_stream_stats)
 
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
@@ -1132,6 +1138,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             # branch needs the guard.
             if epsg is None:
                 _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
+            # ``color_ramp`` statistics: rather than re-executing the
+            # source graph after the write (a second full read of the
+            # data, issue #3597), accumulate them from the buffers the
+            # streaming write materialises anyway. ``color_ramp_range``
+            # already skips statistics, and multiband data never gets
+            # symbology, so neither pays the accumulation cost.
+            _stream_chunk_observer = None
+            if _sym_stops is not None and color_ramp_range is None:
+                from .._symbology import StreamingStats, _is_single_band
+                if _is_single_band(data):
+                    _sym_stream_stats = StreamingStats(nodata=_sym_nodata)
+                    _stream_chunk_observer = _sym_stream_stats.update
             write_streaming(
                 dask_arr, path,
                 geo_transform=geo_transform,
@@ -1160,6 +1178,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 # rather than rejecting input the wrapper accepted.
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_unparseable_crs=allow_unparseable_crs,
+                chunk_observer=_stream_chunk_observer,
             )
             _write_sidecars()
             return path
