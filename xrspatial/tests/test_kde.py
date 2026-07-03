@@ -234,7 +234,32 @@ class TestNonFiniteInputs:
                      width=8, height=8)
         assert np.isfinite(result.x.values).all()
         assert np.isfinite(result.y.values).all()
+        # The filter runs before the extent is derived, so the result must
+        # be identical to calling kde on the finite points only.
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0, width=8, height=8)
+        np.testing.assert_array_equal(result.values, clean.values)
+        np.testing.assert_array_equal(result.x.values, clean.x.values)
+        np.testing.assert_array_equal(result.y.values, clean.y.values)
+
+    def test_nan_point_silverman_bandwidth_not_poisoned(self):
+        """Silverman's rule must see only the finite points (#3628)."""
+        result = kde([0.0, 1.0, 2.0, np.nan], [0.0, 1.0, 2.0, 0.5],
+                     bandwidth='silverman', width=8, height=8)
+        clean = kde([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                    bandwidth='silverman', width=8, height=8)
+        np.testing.assert_array_equal(result.values, clean.values)
         assert float(result.sum()) > 0.0
+
+    def test_geodataframe_nan_point_dropped(self, simple_grid):
+        gpd = pytest.importorskip("geopandas")
+        shapely_geometry = pytest.importorskip("shapely.geometry")
+        Point = shapely_geometry.Point
+        gdf = gpd.GeoDataFrame(
+            geometry=[Point(0.0, 0.0), Point(1.0, 1.0), Point(np.nan, 0.5)])
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        result = kde(gdf, bandwidth=1.0, template=simple_grid)
+        np.testing.assert_allclose(result.values, clean.values, rtol=1e-12)
 
     def test_all_nan_points_raises(self, simple_grid):
         with pytest.raises(ValueError, match='finite'):
@@ -274,7 +299,12 @@ class TestNonFiniteInputs:
                               [1.0, 1.0], bandwidth=0.5, width=16, height=16)
         assert np.isfinite(result.x.values).all()
         assert np.isfinite(result.y.values).all()
-        assert float(result.sum()) > 0.0
+        # Identical to the finite-only call, extent included.
+        clean = line_density([0.0], [0.0], [1.0], [1.0],
+                             bandwidth=0.5, width=16, height=16)
+        np.testing.assert_array_equal(result.values, clean.values)
+        np.testing.assert_array_equal(result.x.values, clean.x.values)
+        np.testing.assert_array_equal(result.y.values, clean.y.values)
 
     def test_line_density_all_nan_raises(self):
         with pytest.raises(ValueError, match='finite'):
