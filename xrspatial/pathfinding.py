@@ -847,8 +847,12 @@ def a_star_search(surface: xr.DataArray,
         2D array of values to bin.
     start : array-like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the starting point.
+        The point is mapped to the pixel whose cell center is nearest.
+        A point outside the raster bounds raises a ``ValueError``.
     goal : array like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the goal location.
+        Mapped to the nearest cell center; a point outside the raster
+        bounds raises a ``ValueError``.
     barriers : array like object, default=[]
         List of values inside the surface which are barriers
         (cannot cross).
