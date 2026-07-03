@@ -391,6 +391,8 @@ def _filter_points_to_tile(xs, ys, ws, tile_x0, tile_y0, dx, dy,
     # dx/dy may be negative (descending coordinates), so order the tile
     # edges with min/max before widening by the cutoff.  The unordered
     # version inverted the interval and dropped the points (#3627).
+    # tile_x1/tile_y1 overshoot the last pixel centre by one spacing,
+    # which keeps the filter conservative (never drops a contributor).
     tile_x1 = tile_x0 + tile_cols * dx
     tile_y1 = tile_y0 + tile_rows * dy
     x_lo = min(tile_x0, tile_x1) - cutoff

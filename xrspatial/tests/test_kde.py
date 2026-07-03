@@ -534,13 +534,17 @@ class TestCuPyParity:
 class TestDaskCupyDescending:
     """dask+cupy must not drop points on descending templates (#3627)."""
 
-    def test_dask_cupy_matches_numpy_descending_y(self, point_cluster):
+    @pytest.mark.parametrize('desc_y,desc_x', [(True, False), (False, True)])
+    def test_dask_cupy_matches_numpy_descending(self, point_cluster,
+                                                desc_y, desc_x):
         import cupy
         x, y = point_cluster
+        ys = np.linspace(4, -4, 16) if desc_y else np.linspace(-4, 4, 16)
+        xs = np.linspace(4, -4, 16) if desc_x else np.linspace(-4, 4, 16)
         template = xr.DataArray(
             np.zeros((16, 16), dtype=np.float64),
             dims=['y', 'x'],
-            coords={'y': np.linspace(4, -4, 16), 'x': np.linspace(-4, 4, 16)},
+            coords={'y': ys, 'x': xs},
         )
         np_result = kde(x, y, bandwidth=1.0, kernel='quartic',
                         template=template)
