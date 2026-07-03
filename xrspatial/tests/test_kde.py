@@ -199,6 +199,90 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Non-finite inputs (#3628)
+# ---------------------------------------------------------------------------
+
+class TestNonFiniteInputs:
+    """NaN/Inf points and weights are dropped, identically on all backends."""
+
+    def test_nan_point_dropped_matches_clean_input(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        with_nan = kde([0.0, 1.0, np.nan], [0.0, 1.0, 0.5], bandwidth=1.0,
+                       template=simple_grid)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+
+    def test_inf_point_dropped(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        with_inf = kde([0.0, 1.0, np.inf], [0.0, 1.0, 0.5], bandwidth=1.0,
+                       template=simple_grid)
+        np.testing.assert_allclose(with_inf.values, clean.values, rtol=1e-12)
+
+    def test_nan_weight_dropped(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], weights=[1.0, 2.0],
+                    bandwidth=1.0, template=simple_grid)
+        with_nan = kde([0.0, 1.0, 0.5], [0.0, 1.0, 0.5],
+                       weights=[1.0, 2.0, np.nan],
+                       bandwidth=1.0, template=simple_grid)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+        assert not np.isnan(with_nan.values).any()
+
+    def test_nan_point_auto_extent_not_poisoned(self):
+        """Without a template, the extent must come from finite points only."""
+        result = kde([0.0, 1.0, np.nan], [0.0, 1.0, 0.5], bandwidth=1.0,
+                     width=8, height=8)
+        assert np.isfinite(result.x.values).all()
+        assert np.isfinite(result.y.values).all()
+        assert float(result.sum()) > 0.0
+
+    def test_all_nan_points_raises(self, simple_grid):
+        with pytest.raises(ValueError, match='finite'):
+            kde([np.nan, np.nan], [0.0, 1.0], bandwidth=1.0,
+                template=simple_grid)
+
+    @cuda_and_cupy_available
+    def test_cupy_gaussian_nan_point_matches_numpy(self, simple_grid):
+        """Eager cupy gaussian previously returned an all-NaN grid (#3628)."""
+        import cupy
+        x = [0.0, 1.0, np.nan]
+        y = [0.0, 1.0, 0.5]
+        np_result = kde(x, y, bandwidth=1.0, kernel='gaussian',
+                        template=simple_grid)
+        cupy_template = simple_grid.copy(data=cupy.asarray(simple_grid.values))
+        cupy_result = kde(x, y, bandwidth=1.0, kernel='gaussian',
+                          template=cupy_template)
+        result_np = cupy_result.data.get()
+        assert not np.isnan(result_np).any()
+        # rtol matches TestCuPyParity; atol covers fringe pixels past the
+        # CPU kernel's 4*bw cutoff, which the GPU kernel does not have.
+        np.testing.assert_allclose(result_np, np_result.values,
+                                   rtol=1e-2, atol=1e-6)
+
+    def test_line_density_nan_endpoint_dropped(self):
+        clean = line_density([0.0], [0.0], [1.0], [1.0], bandwidth=0.5,
+                             x_range=(-1, 2), y_range=(-1, 2),
+                             width=16, height=16)
+        with_nan = line_density([0.0, np.nan], [0.0, 0.0], [1.0, 1.0],
+                                [1.0, 1.0], bandwidth=0.5,
+                                x_range=(-1, 2), y_range=(-1, 2),
+                                width=16, height=16)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+
+    def test_line_density_nan_endpoint_auto_extent(self):
+        result = line_density([0.0, np.nan], [0.0, 0.0], [1.0, 1.0],
+                              [1.0, 1.0], bandwidth=0.5, width=16, height=16)
+        assert np.isfinite(result.x.values).all()
+        assert np.isfinite(result.y.values).all()
+        assert float(result.sum()) > 0.0
+
+    def test_line_density_all_nan_raises(self):
+        with pytest.raises(ValueError, match='finite'):
+            line_density([np.nan], [0.0], [1.0], [1.0], bandwidth=0.5,
+                         width=8, height=8)
+
+
+# ---------------------------------------------------------------------------
 # Memory guard (#1287)
 # ---------------------------------------------------------------------------
 
