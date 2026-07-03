@@ -148,6 +148,19 @@ def _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y):
     out = np.empty((rows, cols), dtype=np.float64)
     out[:] = np.nan
 
+    # Ground azimuths, converted to unit steps in cell-index space so
+    # the sampled azimuths stay evenly spaced on the ground even when
+    # cells are rectangular.  Computed once, reused for every pixel.
+    dxs = np.empty(n_directions, dtype=np.float64)
+    dys = np.empty(n_directions, dtype=np.float64)
+    for d in range(n_directions):
+        angle = 2.0 * _pi * d / n_directions
+        dx = _cos(angle) / cellsize_x
+        dy = _sin(angle) / cellsize_y
+        dnorm = _sqrt(dx * dx + dy * dy)
+        dxs[d] = dx / dnorm
+        dys[d] = dy / dnorm
+
     for y in range(rows):
         for x in range(cols):
             center = data[y, x]
@@ -156,15 +169,8 @@ def _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y):
 
             svf_sum = 0.0
             for d in range(n_directions):
-                # Ground azimuth, converted to a unit step in cell-index
-                # space so the sampled azimuths stay evenly spaced on the
-                # ground even when cells are rectangular.
-                angle = 2.0 * _pi * d / n_directions
-                dx = _cos(angle) / cellsize_x
-                dy = _sin(angle) / cellsize_y
-                dnorm = _sqrt(dx * dx + dy * dy)
-                dx = dx / dnorm
-                dy = dy / dnorm
+                dx = dxs[d]
+                dy = dys[d]
 
                 max_elev_angle = 0.0
                 for r in range(1, max_radius + 1):
@@ -326,7 +332,10 @@ def sky_view_factor(
     as the elevation values (e.g. meters for both).  Ray azimuths are
     evenly spaced on the ground: with rectangular cells
     (``cellsize_x != cellsize_y``) each ray's cell-index direction is
-    adjusted so the ground azimuth spacing stays uniform.
+    adjusted so the ground azimuth spacing stays uniform.  The spacing
+    is nominal to within one cell of rounding, since rays sample whole
+    cells; at extreme aspect ratios (roughly beyond 4:1) the sampled
+    azimuths still quantize toward the grid axes.
 
     Parameters
     ----------
