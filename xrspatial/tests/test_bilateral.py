@@ -9,6 +9,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.bilateral import bilateral, _bilateral_numpy, _kernel_radius
+from xrspatial.utils import VALID_BOUNDARY_MODES
 from xrspatial.tests.general_checks import (
     assert_boundary_mode_correctness,
     create_test_raster,
@@ -335,21 +336,37 @@ def test_bilateral_boundary_modes(random_data_969):
 
 
 @cuda_and_cupy_available
-def test_bilateral_boundary_modes_gpu(random_data_969):
+@pytest.mark.parametrize('mode', VALID_BOUNDARY_MODES)
+def test_bilateral_boundary_modes_gpu(random_data_969, mode):
     """cupy must honor every boundary mode, matching numpy (issue #3625)."""
-    from xrspatial.utils import VALID_BOUNDARY_MODES
-
     numpy_agg = create_test_raster(random_data_969)
-    cupy_agg = create_test_raster(random_data_969, backend='cupy')
+    numpy_result = bilateral(numpy_agg, boundary=mode)
 
-    for mode in VALID_BOUNDARY_MODES:
-        numpy_result = bilateral(numpy_agg, boundary=mode)
-        cupy_result = bilateral(cupy_agg, boundary=mode)
-        np.testing.assert_allclose(
-            numpy_result.data, cupy_result.data.get(),
-            equal_nan=True, rtol=1e-6,
-            err_msg=f'cupy diverges from numpy for boundary={mode!r}',
-        )
+    cupy_agg = create_test_raster(random_data_969, backend='cupy')
+    cupy_result = bilateral(cupy_agg, boundary=mode)
+    np.testing.assert_allclose(
+        numpy_result.data, cupy_result.data.get(),
+        equal_nan=True, rtol=1e-6,
+        err_msg=f'cupy diverges from numpy for boundary={mode!r}',
+    )
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize('mode', VALID_BOUNDARY_MODES)
+def test_bilateral_boundary_modes_dask_gpu(random_data_969, mode):
+    """dask+cupy must honor every boundary mode, matching numpy."""
+    numpy_agg = create_test_raster(random_data_969)
+    numpy_result = bilateral(numpy_agg, boundary=mode)
+
+    dask_cupy_agg = create_test_raster(random_data_969, backend='dask+cupy',
+                                       chunks=(15, 15))
+    dask_cupy_result = bilateral(dask_cupy_agg, boundary=mode)
+    np.testing.assert_allclose(
+        numpy_result.data, dask_cupy_result.data.compute().get(),
+        equal_nan=True, rtol=1e-4,
+        err_msg=f'dask+cupy diverges from numpy for boundary={mode!r}',
+    )
 
 
 # ---- 3D multi-band test ----
