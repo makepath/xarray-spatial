@@ -1284,6 +1284,20 @@ def _nearest_neighbor_2opt(dist, start, end):
     return tour, _tour_cost(tour)
 
 
+def _segment_to_numpy(seg_data):
+    """Materialize an a_star_search segment result as a numpy array.
+
+    Handles all four backends: numpy passes through, cupy uses
+    ``.get()``, dask computes first (yielding cupy blocks for
+    dask+cupy, which then also need ``.get()``).
+    """
+    if da is not None and isinstance(seg_data, da.Array):
+        seg_data = seg_data.compute()
+    if hasattr(seg_data, 'get'):  # cupy -> numpy
+        seg_data = seg_data.get()
+    return np.asarray(seg_data)
+
+
 def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
                              connectivity, snap, friction, search_radius):
     """Build pairwise cost matrix and solve TSP with fixed endpoints.
@@ -1306,11 +1320,7 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
                 snap_start=snap, snap_goal=snap,
                 friction=friction, search_radius=search_radius,
             )
-            seg_data = seg.data
-            if hasattr(seg_data, 'get'):
-                seg_vals = seg_data.get()
-            else:
-                seg_vals = np.asarray(seg.values)
+            seg_vals = _segment_to_numpy(seg.data)
             goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
             goal_cost = seg_vals[goal_py, goal_px]
             if np.isfinite(goal_cost):
@@ -1452,11 +1462,7 @@ def multi_stop_search(surface: xr.DataArray,
             snap_start=snap, snap_goal=snap,
             friction=friction, search_radius=search_radius,
         )
-        seg_data = seg.data
-        if hasattr(seg_data, 'get'):
-            seg_vals = seg_data.get()  # cupy -> numpy
-        else:
-            seg_vals = np.asarray(seg.values)
+        seg_vals = _segment_to_numpy(seg.data)
 
         goal_py, goal_px = waypoint_pixels[i + 1]
 
@@ -1485,6 +1491,17 @@ def multi_stop_search(surface: xr.DataArray,
         path_data[mask] = seg_vals[mask] + cumulative_cost
         segment_costs.append(float(seg_goal_cost))
         cumulative_cost += seg_goal_cost
+
+    # Match the input's array type, like a_star_search does
+    if _is_dask:
+        chunks = surface_data.chunks
+        path_data = da.from_array(path_data, chunks=chunks)
+        if has_cuda_and_cupy() and is_dask_cupy(surface):
+            import cupy
+            path_data = path_data.map_blocks(cupy.asarray)
+    elif has_cuda_and_cupy() and is_cupy_array(surface_data):
+        import cupy
+        path_data = cupy.asarray(path_data)
 
     path_agg = xr.DataArray(
         path_data,

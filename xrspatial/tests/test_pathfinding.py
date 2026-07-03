@@ -978,6 +978,9 @@ def test_multi_stop_dask_matches_numpy():
     path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
     path_dask = multi_stop_search(agg_dask, [wp0, wp1, wp2])
 
+    # output should stay dask-backed, matching a_star_search
+    assert isinstance(path_dask.data, da.Array)
+
     np.testing.assert_allclose(
         np.asarray(path_dask.values),
         path_np.values,
@@ -999,11 +1002,47 @@ def test_multi_stop_cupy_matches_numpy():
     path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
     path_cupy = multi_stop_search(agg_cupy, [wp0, wp1, wp2])
 
+    # output should stay cupy-backed, matching a_star_search
+    import cupy
+    assert isinstance(path_cupy.data, cupy.ndarray)
+
     np.testing.assert_allclose(
-        path_cupy.data if not hasattr(path_cupy.data, 'get') else path_cupy.data,
+        path_cupy.data.get(),
         path_np.values,
         equal_nan=True, atol=1e-10,
     )
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_dask_cupy_matches_numpy():
+    """Dask+CuPy multi-stop should not crash and should match numpy."""
+    data = np.ones((8, 8))
+    wp0 = (7.0, 0.0)
+    wp1 = (4.0, 3.0)
+    wp2 = (0.0, 7.0)
+
+    agg_np = _make_raster(data, backend='numpy')
+    agg_dc = _make_raster(data, backend='dask+cupy', chunks=(4, 4))
+
+    path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    path_dc = multi_stop_search(agg_dc, [wp0, wp1, wp2])
+
+    # output should stay dask-backed with cupy blocks
+    assert isinstance(path_dc.data, da.Array)
+    computed = path_dc.data.compute()
+    assert hasattr(computed, 'get')  # cupy blocks
+    np.testing.assert_allclose(
+        computed.get(),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+    # optimize_order goes through the same extraction path
+    path_dc_opt = multi_stop_search(
+        agg_dc, [wp0, wp1, wp2], optimize_order=True)
+    computed_opt = path_dc_opt.data.compute()
+    assert np.isfinite(computed_opt.get()).any()
 
 
 # =====================================================================
