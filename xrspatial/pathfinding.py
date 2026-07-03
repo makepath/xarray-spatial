@@ -1383,7 +1383,8 @@ def multi_stop_search(surface: xr.DataArray,
     Returns
     -------
     xr.DataArray or xr.Dataset
-        Cumulative path cost surface.  Attributes include
+        Cumulative path cost surface, backed by the same array type as
+        *surface* (numpy, cupy, dask, or dask+cupy).  Attributes include
         ``waypoint_order``, ``segment_costs``, and ``total_cost``.
         A Dataset input returns a Dataset of per-variable results.
 
