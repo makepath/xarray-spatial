@@ -476,6 +476,36 @@ class TestDaskParity:
             dask_result.values, np_result.values, rtol=1e-12,
         )
 
+    @pytest.mark.parametrize('desc_y,desc_x', [
+        (True, False), (False, True), (True, True),
+    ])
+    @pytest.mark.parametrize('kernel', ['gaussian', 'epanechnikov', 'quartic'])
+    def test_dask_matches_numpy_descending_coords(self, point_cluster,
+                                                  desc_y, desc_x, kernel):
+        """Descending templates: dask tile filter must not drop points (#3627)."""
+        x, y = point_cluster
+        ys = np.linspace(4, -4, 16) if desc_y else np.linspace(-4, 4, 16)
+        xs = np.linspace(4, -4, 16) if desc_x else np.linspace(-4, 4, 16)
+        template = xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'], coords={'y': ys, 'x': xs},
+        )
+        np_result = kde(x, y, bandwidth=1.0, kernel=kernel, template=template)
+        dask_template = self._make_dask_template(template)
+        dask_result = kde(x, y, bandwidth=1.0, kernel=kernel,
+                          template=dask_template)
+        assert float(dask_result.sum()) > 0.0
+        if kernel == 'gaussian':
+            # Fringe pixels at the 4*bw box cutoff may land on either
+            # side of the tile filter; those values are ~exp(-8).
+            np.testing.assert_allclose(
+                dask_result.values, np_result.values, atol=1e-5,
+            )
+        else:
+            np.testing.assert_allclose(
+                dask_result.values, np_result.values, rtol=1e-12,
+            )
+
 
 @cuda_and_cupy_available
 class TestCuPyParity:
@@ -497,6 +527,30 @@ class TestCuPyParity:
         # Compact kernels match exactly.
         tol = 1e-2 if kernel == 'gaussian' else 1e-6
         np.testing.assert_allclose(result_np, np_result.values, rtol=tol)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestDaskCupyDescending:
+    """dask+cupy must not drop points on descending templates (#3627)."""
+
+    def test_dask_cupy_matches_numpy_descending_y(self, point_cluster):
+        import cupy
+        x, y = point_cluster
+        template = xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(4, -4, 16), 'x': np.linspace(-4, 4, 16)},
+        )
+        np_result = kde(x, y, bandwidth=1.0, kernel='quartic',
+                        template=template)
+        dask_cupy_template = template.copy(
+            data=da.from_array(cupy.asarray(template.values), chunks=(8, 8)))
+        result = kde(x, y, bandwidth=1.0, kernel='quartic',
+                     template=dask_cupy_template)
+        result_np = result.data.compute().get()
+        assert float(result_np.sum()) > 0.0
+        np.testing.assert_allclose(result_np, np_result.values, rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------
