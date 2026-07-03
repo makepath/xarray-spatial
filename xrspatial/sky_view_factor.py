@@ -139,7 +139,10 @@ def _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y):
     *cellsize_x* and *cellsize_y* are the ground distance per cell along
     the x and y axes, in the same units as the elevation values.  They
     are used to convert the integer ray step *r* into a true ground
-    distance for the horizon angle calculation.
+    distance for the horizon angle calculation, and to aim the rays so
+    the *n_directions* azimuths are evenly spaced on the ground.  For
+    rectangular cells a direction set that is uniform in cell-index
+    space is not uniform in ground azimuth (issue #3626).
     """
     rows, cols = data.shape
     out = np.empty((rows, cols), dtype=np.float64)
@@ -153,9 +156,15 @@ def _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y):
 
             svf_sum = 0.0
             for d in range(n_directions):
+                # Ground azimuth, converted to a unit step in cell-index
+                # space so the sampled azimuths stay evenly spaced on the
+                # ground even when cells are rectangular.
                 angle = 2.0 * _pi * d / n_directions
-                dx = _cos(angle)
-                dy = _sin(angle)
+                dx = _cos(angle) / cellsize_x
+                dy = _sin(angle) / cellsize_y
+                dnorm = _sqrt(dx * dx + dy * dy)
+                dx = dx / dnorm
+                dy = dy / dnorm
 
                 max_elev_angle = 0.0
                 for r in range(1, max_radius + 1):
@@ -201,9 +210,14 @@ def _svf_gpu(data, out, max_radius, n_directions, cellsize_x, cellsize_y):
     pi2 = 2.0 * 3.141592653589793
 
     for d in range(n_directions):
+        # Ground azimuth, converted to a unit step in cell-index space
+        # (see _svf_cpu).
         angle = pi2 * d / n_directions
-        dx = _cos(angle)
-        dy = _sin(angle)
+        dx = _cos(angle) / cellsize_x
+        dy = _sin(angle) / cellsize_y
+        dnorm = _sqrt(dx * dx + dy * dy)
+        dx = dx / dnorm
+        dy = dy / dnorm
 
         max_elev_angle = 0.0
         for r in range(1, max_radius + 1):
@@ -309,7 +323,10 @@ def sky_view_factor(
 
     The horizon angle along each ray uses true ground distance
     (``cell_step * cellsize``), so cell size must be in the same unit
-    as the elevation values (e.g. meters for both).
+    as the elevation values (e.g. meters for both).  Ray azimuths are
+    evenly spaced on the ground: with rectangular cells
+    (``cellsize_x != cellsize_y``) each ray's cell-index direction is
+    adjusted so the ground azimuth spacing stays uniform.
 
     Parameters
     ----------

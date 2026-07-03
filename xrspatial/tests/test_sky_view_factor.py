@@ -346,6 +346,56 @@ def test_anisotropic_cellsize():
     )
 
 
+def test_anisotropic_cellsize_ground_truth_consistency():
+    """The same physical surface sampled on square and rectangular cells
+    gives about the same SVF (#3626).
+
+    A planar 45-degree ramp has analytic SVF = 0.75 away from edges, so
+    the value cannot depend on how the grid happens to be cellated.
+    Before the fix, ray azimuths were uniform in cell-index space, and
+    the ramp gave 0.728 / 0.773 / 0.693 at cell aspect 1:1 / 1:2 / 2:1.
+    """
+    def svf_center(cx, cy):
+        ny = nx = 121
+        cols = np.arange(nx, dtype=np.float64)
+        # z rises 1 elevation unit per ground unit along x: 45-deg ramp
+        z = np.broadcast_to(cols * cx, (ny, nx)).copy()
+        agg = xr.DataArray(z, dims=['y', 'x'])
+        out = sky_view_factor(agg, max_radius=40, n_directions=32,
+                              cellsize_x=cx, cellsize_y=cy)
+        return float(out.data[60, 60])
+
+    square = svf_center(1.0, 1.0)
+    tall = svf_center(1.0, 2.0)
+    wide = svf_center(2.0, 1.0)
+    assert abs(tall - square) < 0.02, (
+        f"1:2 cells diverge from square: {tall} vs {square}")
+    assert abs(wide - square) < 0.02, (
+        f"2:1 cells diverge from square: {wide} vs {square}")
+
+
+@dask_array_available
+def test_anisotropic_numpy_equals_dask():
+    """Backend parity for rectangular cells (#3626)."""
+    data = np.random.default_rng(3626).random((30, 30)) * 100
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask', chunks=(10, 10))
+    func = lambda agg: sky_view_factor(agg, max_radius=5, n_directions=16,
+                                       cellsize_x=1.0, cellsize_y=3.0)
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=False)
+
+
+@cuda_and_cupy_available
+def test_anisotropic_numpy_equals_cupy():
+    """Backend parity for rectangular cells (#3626)."""
+    data = np.random.default_rng(3626).random((30, 30)) * 100
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    func = lambda agg: sky_view_factor(agg, max_radius=5, n_directions=16,
+                                       cellsize_x=1.0, cellsize_y=3.0)
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=False)
+
+
 def test_flat_surface_unaffected_by_cellsize():
     """SVF on flat terrain is 1 regardless of cell size."""
     data = np.full((30, 30), 100.0, dtype=np.float64)
