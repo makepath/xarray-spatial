@@ -2112,10 +2112,9 @@ def suggest_zonal_canvas(
     --------
     .. sourcecode:: python
 
-        >>> # Imports (datashader is optional: pip install datashader)
-        >>> from spatialpandas import GeoDataFrame
+        >>> import numpy as np
+        >>> import xarray as xr
         >>> import geopandas as gpd
-        >>> import datashader as ds
         >>> from xrspatial.zonal import suggest_zonal_canvas
 
         >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
@@ -2141,10 +2140,14 @@ def suggest_zonal_canvas(
             )
         >>> height, width
         (1537, 2376)
-        >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
-        >>>             plot_height=height, plot_width=width)
-        >>> spatial_df = GeoDataFrame(df, geometry='geometry')
-        >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
+        >>> # Build a template grid and rasterize the polygons onto it with
+        >>> # the .xrs.rasterize accessor (no datashader needed).
+        >>> xs = np.linspace(x_range[0], x_range[1], width)
+        >>> ys = np.linspace(y_range[0], y_range[1], height)
+        >>> template = xr.DataArray(
+        ...     np.full((height, width), np.nan),
+        ...     coords={'y': ys, 'x': xs}, dims=['y', 'x'])
+        >>> agg = template.xrs.rasterize(df, column='id', merge='max')
         >>> min_poly_id = df.area.argmin()
         >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
         >>> actual_min_pixels

@@ -885,7 +885,7 @@ def generate_terrain(agg: xr.DataArray,
     if 'x' in agg.coords and 'y' in agg.coords:
         coords = {'y': agg.coords['y'], 'x': agg.coords['x']}
     else:
-        # pixel-center coordinates (matches datashader Canvas convention)
+        # pixel-center coordinates (standard pixel-center grid convention)
         dx = (x_range[1] - x_range[0]) / width
         dy = (y_range[1] - y_range[0]) / height
         xs = np.linspace(x_range[0] + dx / 2, x_range[1] - dx / 2, width)
