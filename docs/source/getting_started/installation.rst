@@ -88,8 +88,9 @@ needed:
      - Additional ``polygonize`` return types and the ray-traced
        ``gpu_rtx`` functions (rtxpy also needs cupy).
    * - ``examples``
-     - datashader
-     - Used by some of the example notebooks.
+     - matplotlib, geopandas, shapely
+     - Used by the example notebooks for rendering and vector
+       rasterization. datashader is no longer required.
    * - ``doc``, ``tests``
      - sphinx, pytest, ...
      - Building this documentation and running the test suite.
