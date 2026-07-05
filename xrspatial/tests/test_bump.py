@@ -138,6 +138,19 @@ def test_bump_agg_infers_shape():
     np.testing.assert_array_equal(result.values, result2.values)
 
 
+def test_bump_names_output_like_siblings():
+    """bump() names its output DataArray, consistent with perlin/worley/
+    generate_terrain (API-consistency sweep 2026-07-02)."""
+    # default name
+    result = bump(10, 10)
+    assert result.name == 'bump'
+
+    # custom name, both with and without agg
+    agg = xr.DataArray(np.zeros((10, 10)), dims=['y', 'x'])
+    assert bump(agg=agg, name='ridges').name == 'ridges'
+    assert bump(10, 10, name='ridges').name == 'ridges'
+
+
 def test_bump_decay_strongest_at_center_1102():
     """Pixels adjacent to center should be taller than pixels far from center.
 

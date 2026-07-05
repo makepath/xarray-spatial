@@ -170,7 +170,8 @@ def bump(width: int = None,
          height_func=None,
          spread: int = 1,
          *,
-         agg: xr.DataArray = None) -> xr.DataArray:
+         agg: xr.DataArray = None,
+         name: str = 'bump') -> xr.DataArray:
     """
     Generate a simple bump map to simulate the appearance of land
     features.
@@ -187,8 +188,9 @@ def bump(width: int = None,
     height : int, optional
         Total height, in pixels, of the image.
         Not required when ``agg`` is provided.
-    count : int
-        Number of bumps to generate.
+    count : int, optional
+        Number of bumps to generate. Defaults to ``width * height // 10``
+        (capped at 10,000,000) when not provided.
     height_func : function which takes x, y and returns a height value
         Function used to apply varying bump heights to different
         elevations.
@@ -198,6 +200,10 @@ def bump(width: int = None,
         Template raster whose shape, chunks, and backend (NumPy, CuPy,
         Dask, Dask+CuPy) determine the output type.  When provided,
         ``width`` and ``height`` are inferred from ``agg.shape``.
+    name : str, default='bump'
+        Name of the output DataArray, for consistency with the other
+        synthetic-terrain generators (``perlin``, ``worley``,
+        ``generate_terrain``).
 
     Returns
     -------
@@ -408,7 +414,9 @@ def bump(width: int = None,
         return DataArray(out,
                          coords=agg.coords,
                          dims=agg.dims,
-                         attrs=dict(res=1))
+                         attrs=dict(res=1),
+                         name=name)
     else:
         bumps = _finish_bump(w, h, locs, heights, spread)
-        return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1))
+        return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1),
+                         name=name)
