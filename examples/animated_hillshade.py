@@ -3,7 +3,7 @@
 Generates a synthetic terrain, places trees and water on it, and renders a
 rotating-hillshade GIF plus a composited build-up GIF.
 
-Requires: numpy, xarray, matplotlib, pillow.
+Requires: numpy, xarray, matplotlib, pillow, xrspatial.
 """
 from functools import partial
 
@@ -117,10 +117,9 @@ def _composite(layers):
     base = layers[0].astype(np.float64)
     for top in layers[1:]:
         a = (top[..., 3:4] / 255.0)
-        base = top[..., :3] * a + base[..., :3] * (1 - a)
-        base_a = np.maximum(top[..., 3:4], base[..., 3:4] if base.shape[-1] == 4
-                            else np.full_like(a, 255))
-        base = np.concatenate([base, base_a * 255], axis=-1)
+        rgb = top[..., :3] * a + base[..., :3] * (1 - a)
+        out_a = np.maximum(top[..., 3:4], base[..., 3:4])
+        base = np.concatenate([rgb, out_a], axis=-1)
     return np.clip(base, 0, 255).astype(np.uint8)
 
 
