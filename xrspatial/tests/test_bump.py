@@ -138,6 +138,19 @@ def test_bump_agg_infers_shape():
     np.testing.assert_array_equal(result.values, result2.values)
 
 
+def test_bump_names_output_like_siblings():
+    """bump() names its output DataArray, consistent with perlin/worley/
+    generate_terrain (API-consistency sweep 2026-07-02)."""
+    # default name
+    result = bump(10, 10)
+    assert result.name == 'bump'
+
+    # custom name, both with and without agg
+    agg = xr.DataArray(np.zeros((10, 10)), dims=['y', 'x'])
+    assert bump(agg=agg, name='ridges').name == 'ridges'
+    assert bump(10, 10, name='ridges').name == 'ridges'
+
+
 def test_bump_decay_strongest_at_center_1102():
     """Pixels adjacent to center should be taller than pixels far from center.
 
@@ -269,6 +282,63 @@ def test_bump_dask_partitioned_matches_numpy():
     result_dask = bump(agg=agg_dask, count=50, spread=2)
 
     np.testing.assert_array_equal(result_np.values, result_dask.values)
+
+
+# --- Issue #3612 regression test ---
+
+@dask_array_available
+def test_partition_bumps_matches_bruteforce():
+    """Vectorised _partition_bumps must assign each bump to the chunk that
+    holds its centre pixel, with chunk-local coordinates and original order
+    preserved (#3612).
+
+    The reference is the original per-chunk boolean-mask partition, checked
+    across an irregular chunk layout and empty chunks.
+    """
+    from xrspatial.bump import _partition_bumps
+
+    def _reference(data, locs, heights):
+        y_off = np.concatenate([[0], np.cumsum(data.chunks[0])])
+        x_off = np.concatenate([[0], np.cumsum(data.chunks[1])])
+        ny, nx = len(data.chunks[0]), len(data.chunks[1])
+        parts = {}
+        for yi in range(ny):
+            y0, y1 = int(y_off[yi]), int(y_off[yi + 1])
+            for xi in range(nx):
+                x0, x1 = int(x_off[xi]), int(x_off[xi + 1])
+                mask = ((locs[:, 0] >= x0) & (locs[:, 0] < x1) &
+                        (locs[:, 1] >= y0) & (locs[:, 1] < y1))
+                if np.any(mask):
+                    ll = locs[mask].copy()
+                    ll[:, 0] -= x0
+                    ll[:, 1] -= y0
+                    parts[(yi, xi)] = (ll, heights[mask].copy())
+                else:
+                    parts[(yi, xi)] = None
+        return parts
+
+    n = 400
+    data = da.zeros((n, n), dtype=np.float64).rechunk(
+        {0: (50, 120, 80, 150), 1: (70, 90, 110, 130)}
+    )
+    rng = np.random.default_rng(3612)
+    count = 2000
+    locs = np.empty((count, 2), dtype=np.int32)
+    locs[:, 0] = rng.integers(0, n, count)
+    locs[:, 1] = rng.integers(0, n, count)
+    heights = rng.random(count)
+
+    got = _partition_bumps(data, locs, heights, 1)
+    ref = _reference(data, locs, heights)
+
+    assert set(got) == set(ref)
+    for key in ref:
+        g, r = got[key], ref[key]
+        assert (g is None) == (r is None), key
+        if r is None:
+            continue
+        np.testing.assert_array_equal(g[0], r[0])   # chunk-local locs + order
+        np.testing.assert_array_equal(g[1], r[1])   # heights + order
 
 
 # --- Issue #1231 regression tests ---
