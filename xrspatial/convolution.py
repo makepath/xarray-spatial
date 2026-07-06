@@ -127,7 +127,7 @@ def calc_cellsize(raster):
         >>> raster_3['y'] = np.linspace(1, h, h)
         >>> raster_3['x'] = np.linspace(1, w, w)
         >>> calc_cellsize(raster_3)
-        >>> (1000.0, 1000.0)
+        (1000.0, 1000.0)
     """
 
     if 'unit' in raster.attrs:
@@ -281,20 +281,20 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         >>> # Create Kernel
         >>> kernel = annulus_kernel(1, 1, 3, 1)
         >>> print(kernel)
-        [[0., 0., 0., 1., 0., 0., 0.],
-         [0., 1., 1., 1., 1., 1., 0.],
-         [0., 1., 1., 0., 1., 1., 0.],
-         [1., 1., 0., 0., 0., 1., 1.],
-         [0., 1., 1., 0., 1., 1., 0.],
-         [0., 1., 1., 1., 1., 1., 0.],
-         [0., 0., 0., 1., 0., 0., 0.]]
+        [[0. 0. 0. 1. 0. 0. 0.]
+         [0. 1. 1. 1. 1. 1. 0.]
+         [0. 1. 1. 0. 1. 1. 0.]
+         [1. 1. 0. 0. 0. 1. 1.]
+         [0. 1. 1. 0. 1. 1. 0.]
+         [0. 1. 1. 1. 1. 1. 0.]
+         [0. 0. 0. 1. 0. 0. 0.]]
         >>> kernel = annulus_kernel(1, 2, 5, 2)
         >>> print(kernel)
-        [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-         [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-         [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        [[0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0.]
+         [0. 1. 1. 1. 1. 0. 1. 1. 1. 1. 0.]
+         [1. 1. 1. 0. 0. 0. 0. 0. 1. 1. 1.]
+         [0. 1. 1. 1. 1. 0. 1. 1. 1. 1. 0.]
+         [0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0.]]
     """
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)
@@ -317,7 +317,35 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
 
 def custom_kernel(kernel):
     """
-    Validates a custom kernel. If the kernel is valid, returns itself.
+    Validates a custom convolution kernel. If the kernel is valid, returns
+    it unchanged; otherwise raises ValueError. A valid kernel is a 2D NumPy
+    array with an odd number of rows and columns.
+
+    Parameters
+    ----------
+    kernel : numpy.ndarray
+        2D array with an odd number of rows and columns.
+
+    Returns
+    -------
+    kernel : numpy.ndarray
+        The input kernel, unchanged.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> from xrspatial.convolution import custom_kernel
+        >>> kernel = custom_kernel(np.array([
+        ...     [0, 1, 0],
+        ...     [1, 1, 1],
+        ...     [0, 1, 0],
+        ... ]))
+        >>> kernel
+        array([[0, 1, 0],
+               [1, 1, 1],
+               [0, 1, 0]])
     """
 
     if not isinstance(kernel, np.ndarray):
@@ -496,6 +524,33 @@ def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
 
 
 def convolve_2d(data, kernel, boundary='nan'):
+    """
+    Applies a 2D convolution kernel to a raw array. This is the array-level
+    engine behind :func:`convolution_2d`; it takes and returns a raw array
+    rather than an ``xarray.DataArray``. Edges where the kernel would extend
+    beyond the array are handled per the ``boundary`` mode.
+
+    Parameters
+    ----------
+    data : numpy.ndarray, cupy.ndarray, or dask.array.Array
+        2D array of values to convolve. Integer inputs are promoted to at
+        least float32.
+    kernel : numpy.ndarray
+        Impulse kernel with an odd number of rows and columns.
+    boundary : str, default='nan'
+        How to handle edges where the kernel extends beyond the array.
+        ``'nan'``     -- fill missing neighbours with NaN (default).
+        ``'nearest'`` -- repeat edge values.
+        ``'reflect'`` -- mirror at boundary.
+        ``'wrap'``    -- periodic / toroidal.
+
+    Returns
+    -------
+    out : same array type as ``data``
+        2D array of convolved values with the same shape as ``data``. Under
+        ``boundary='nan'`` the outer ring of width ``kernel_size // 2`` is
+        filled with NaN.
+    """
     # Wrap raw arrays so _validate_raster can check dtype/ndim consistently
     # across numpy, cupy, and dask backends before the kernel runs.
     agg = xr.DataArray(data)
@@ -530,8 +585,9 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     Parameters
     ----------
     agg : xarray.DataArray
-        2D array of values to processed. Can be NumPy backed, CuPybacked,
-        or Dask with NumPy backed DataArray.
+        2D array of values to be processed. Can be a NumPy-backed,
+        CuPy-backed, Dask-with-NumPy-backed, or Dask-with-CuPy-backed
+        DataArray.
     kernel : array-like object
         Impulse kernel, determines area to apply impulse function for
         each cell.
@@ -607,7 +663,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
         array([[nan, nan, nan, nan, nan, nan],
                [nan,  4.,  4.,  4.,  4., nan],
                [nan,  4.,  4.,  4.,  4., nan],
-               [nan, nan, nan, nan, nan, nan]], dtype=float32)
+               [nan, nan, nan, nan, nan, nan]])
 
     convolution_2d() works with CuPy backed DataArray.
     .. sourcecode:: python
@@ -630,7 +686,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
         >>> convolved_agg = convolution_2d(raster_cupy, kernel)
         >>> type(convolved_agg.data)
-        <class 'cupy.core.core.ndarray'>
+        <class 'cupy.ndarray'>
         >>> convolved_agg
         <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
         array([[ nan,  nan,  nan,  nan,  nan,  nan],
