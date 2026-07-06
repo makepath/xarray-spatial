@@ -4,6 +4,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.convolution import circle_kernel, convolve_2d, custom_kernel
+from xrspatial.tests.general_checks import cuda_and_cupy_available
 
 KERNEL = circle_kernel(1, 1, 1)
 
@@ -20,6 +21,27 @@ def test_convolve_2d_dask_dtype_matches_numpy(dtype):
     lazy = convolve_2d(da.from_array(data, chunks=(4, 4)), KERNEL)
     assert lazy.dtype == eager.dtype
     assert lazy.compute().dtype == eager.dtype
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("dtype", [np.int32, np.float32, np.float64])
+def test_convolve_2d_cupy_dtype_matches_numpy(dtype):
+    # The dask+cupy backend carried the same untyped ``meta=cupy.array(())``
+    # float64 mismatch the numpy path had, so the GPU dtypes need the same
+    # check: cupy and dask+cupy must declare (and compute) the promoted dtype
+    # the eager numpy backend returns.
+    import cupy
+
+    data = np.arange(64, dtype=dtype).reshape(8, 8)
+    eager = convolve_2d(data, KERNEL)
+
+    cupy_out = convolve_2d(cupy.asarray(data), KERNEL)
+    assert cupy_out.dtype == eager.dtype
+
+    dask_cupy_out = convolve_2d(
+        da.from_array(cupy.asarray(data), chunks=(4, 4)), KERNEL)
+    assert dask_cupy_out.dtype == eager.dtype
+    assert dask_cupy_out.compute().dtype == eager.dtype
 
 
 def test_convolve_2d_rejects_boolean_dtype():
