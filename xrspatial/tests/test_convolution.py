@@ -48,3 +48,25 @@ def test_convolve_2d_accepts_float64():
     # Centre cell is finite; edges are NaN by default boundary mode.
     assert np.isfinite(out[2, 2])
     assert np.isnan(out[0, 0])
+
+
+def test_convolve_2d_uses_correlation_convention():
+    # Golden values verified against scipy.ndimage 1.16.1: convolve_2d
+    # applies the kernel by cross-correlation (kernel NOT flipped), so it
+    # matches scipy.ndimage.correlate, not scipy.ndimage.convolve. An
+    # asymmetric kernel distinguishes the two. This pins the documented
+    # convention so a rename/refactor cannot silently flip the kernel.
+    data = np.arange(24, dtype=np.float64).reshape(4, 6)
+    kernel = custom_kernel(np.array([[1., 0., 0.],
+                                     [1., 1., 0.],
+                                     [1., 0., 0.]]))
+    out = convolve_2d(data, kernel)
+    # scipy.ndimage.correlate(data, kernel)[1:-1, 1:-1]
+    expected_correlate = np.array([[25., 29., 33., 37.],
+                                   [49., 53., 57., 61.]])
+    np.testing.assert_array_equal(out[1:-1, 1:-1], expected_correlate)
+    # A true convolution (scipy.ndimage.convolve, kernel flipped) would
+    # instead give these values; convolve_2d must NOT match them.
+    expected_convolve = np.array([[31., 35., 39., 43.],
+                                  [55., 59., 63., 67.]])
+    assert not np.array_equal(out[1:-1, 1:-1], expected_convolve)
