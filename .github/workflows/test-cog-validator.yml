@@ -70,6 +70,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up micromamba env (conda-forge rio-cogeo + GDAL)
+      # libjxl is pinned to 0.11.* because conda-forge published libjxl
+      # 0.12.0 (2026-07-03) before rebuilding libgdal-core / rasterio
+      # against it, so an unpinned solve pairs a GDAL linked to
+      # libjxl.so.0.11 with only 0.12 installed and rasterio fails to
+      # import. Drop the pin once conda-forge ships libgdal-core /
+      # rasterio builds linked against libjxl 0.12.
       uses: mamba-org/setup-micromamba@v1
       with:
         environment-name: xrspatial-cog-validator
@@ -80,6 +86,7 @@ jobs:
           rio-cogeo
           pyyaml
           tifffile
+          libjxl=0.11.*
         condarc: |
           channels:
             - conda-forge

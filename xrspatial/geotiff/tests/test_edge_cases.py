@@ -40,6 +40,26 @@ class TestWriteInvalidInputs:
         with pytest.raises(ValueError, match="Expected 2D"):
             to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
+    def test_1d_dataarray(self, tmp_path):
+        # A 1D DataArray used to reach ``coords_to_transform`` (which
+        # indexes ``dims[-2]``) and raise an opaque ``IndexError: tuple
+        # index out of range`` instead of the clear message a 1D numpy
+        # array or a 4D DataArray already gets.
+        da = xr.DataArray(np.zeros(10, dtype=np.float32), dims=('x',))
+        with pytest.raises(ValueError, match="Expected 2D or 3D array, got 1D"):
+            to_geotiff(da, str(tmp_path / 'bad.tif'))
+
+    def test_0d_dataarray(self, tmp_path):
+        da = xr.DataArray(np.float32(42.0))
+        with pytest.raises(ValueError, match="Expected 2D or 3D array, got 0D"):
+            to_geotiff(da, str(tmp_path / 'bad.tif'))
+
+    def test_1d_dataarray_vrt(self, tmp_path):
+        # The ``.vrt`` write path shares the same pre-dispatch guard.
+        da = xr.DataArray(np.zeros(10, dtype=np.float32), dims=('x',))
+        with pytest.raises(ValueError, match="Expected 2D or 3D array, got 1D"):
+            to_geotiff(da, str(tmp_path / 'bad.vrt'))
+
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
         # ``to_geotiff`` validates ``compression`` up-front. The
