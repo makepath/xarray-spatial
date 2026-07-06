@@ -6,10 +6,9 @@ import numpy as np
 import xarray as xr
 from numba import cuda, jit, prange
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, _validate_raster, cuda_args,
-                             get_dataarray_resolution, not_implemented_func)
-from xrspatial.utils import _dask_task_name_kwargs
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, cuda_args,
+                             get_dataarray_resolution)
 
 # 3rd-party
 try:
