@@ -181,8 +181,9 @@ def bump(width: int = None,
     height : int, optional
         Total height, in pixels, of the image.
         Not required when ``agg`` is provided.
-    count : int
+    count : int, optional
         Number of bumps to generate.
+        Defaults to ``width * height // 10`` (capped) when not provided.
     height_func : function which takes x, y and returns a height value
         Function used to apply varying bump heights to different
         elevations.
