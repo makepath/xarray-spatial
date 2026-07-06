@@ -839,6 +839,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     _is_vrt_path = (
         isinstance(path, str) and path.lower().endswith('.vrt'))
 
+    # Reject arrays that are not 2D or 3D before any backend dispatch or
+    # georef resolution. ``.ndim`` is defined on DataArray, numpy, cupy,
+    # and dask inputs. Without this, a 0D/1D *DataArray* reaches
+    # ``coords_to_transform`` (which indexes ``dims[-2]``) and dies with an
+    # opaque ``IndexError: tuple index out of range`` pointing at
+    # ``_coords.py`` internals, while a 0D/1D numpy array or a 4D
+    # DataArray already gets the clear message below. Running the check
+    # here up front makes every backend (eager, VRT, GPU) reject the same
+    # bad shapes identically.
+    _ndim = getattr(data, 'ndim', None)
+    if _ndim is not None and _ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or 3D array, got {_ndim}D")
+
     # Resolve GPU dispatch up front so the JPEG opt-in warning fires
     # exactly once. ``_write_geotiff_gpu`` emits its own warning on the
     # GPU path; emitting here as well would double-warn callers of
