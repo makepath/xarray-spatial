@@ -127,7 +127,7 @@ def calc_cellsize(raster):
         >>> raster_3['y'] = np.linspace(1, h, h)
         >>> raster_3['x'] = np.linspace(1, w, w)
         >>> calc_cellsize(raster_3)
-        >>> (1000.0, 1000.0)
+        (1000.0, 1000.0)
     """
 
     if 'unit' in raster.attrs:
