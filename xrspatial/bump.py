@@ -15,14 +15,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    _validate_scalar,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    ngjit,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, _validate_scalar,
+                             has_cuda_and_cupy, is_cupy_array, ngjit)
 
 # Upper bound on bump count to prevent accidental OOM from the default
 # w*h//10 heuristic.  16 bytes per bump (int32 loc pair + float64 height),
@@ -88,20 +82,32 @@ def _partition_bumps(data, locs, heights, spread):
     ny = len(data.chunks[0])
     nx = len(data.chunks[1])
 
-    partitions = {}
-    for yi in range(ny):
-        y0, y1 = int(y_offsets[yi]), int(y_offsets[yi + 1])
-        for xi in range(nx):
-            x0, x1 = int(x_offsets[xi]), int(x_offsets[xi + 1])
-            mask = ((locs[:, 0] >= x0) & (locs[:, 0] < x1) &
-                    (locs[:, 1] >= y0) & (locs[:, 1] < y1))
-            if np.any(mask):
-                local_locs = locs[mask].copy()
-                local_locs[:, 0] -= x0
-                local_locs[:, 1] -= y0
-                partitions[(yi, xi)] = (local_locs, heights[mask].copy())
-            else:
-                partitions[(yi, xi)] = None
+    # Assign every bump to the chunk that holds its centre pixel in a single
+    # vectorised pass.  Rescanning all of ``locs`` once per chunk would be
+    # O(n_chunks * n_bumps), which runs eagerly during dask graph
+    # construction and dominates the runtime for finely chunked rasters.
+    # Callers pass ``locs`` already clamped to ``[0, width) x [0, height)``
+    # (bump() draws them from ``range(w)`` / ``range(h)``), so searchsorted
+    # always lands inside the chunk grid.
+    xi = np.searchsorted(x_offsets, locs[:, 0], side='right') - 1
+    yi = np.searchsorted(y_offsets, locs[:, 1], side='right') - 1
+
+    partitions = {(a, b): None for a in range(ny) for b in range(nx)}
+    if len(locs):
+        flat = yi.astype(np.intp) * nx + xi
+        order = np.argsort(flat, kind='stable')
+        flat_sorted = flat[order]
+        bounds = np.nonzero(np.diff(flat_sorted))[0] + 1
+        starts = np.concatenate([[0], bounds])
+        ends = np.concatenate([bounds, [len(flat_sorted)]])
+        for s, e in zip(starts, ends):
+            idx = order[s:e]
+            a, b = divmod(int(flat_sorted[s]), nx)
+            x0, y0 = int(x_offsets[b]), int(y_offsets[a])
+            local_locs = locs[idx].copy()
+            local_locs[:, 0] -= x0
+            local_locs[:, 1] -= y0
+            partitions[(a, b)] = (local_locs, heights[idx].copy())
     return partitions
 
 
@@ -164,7 +170,8 @@ def bump(width: int = None,
          height_func=None,
          spread: int = 1,
          *,
-         agg: xr.DataArray = None) -> xr.DataArray:
+         agg: xr.DataArray = None,
+         name: str = 'bump') -> xr.DataArray:
     """
     Generate a simple bump map to simulate the appearance of land
     features.
@@ -182,8 +189,8 @@ def bump(width: int = None,
         Total height, in pixels, of the image.
         Not required when ``agg`` is provided.
     count : int, optional
-        Number of bumps to generate.
-        Defaults to ``width * height // 10`` (capped) when not provided.
+        Number of bumps to generate. Defaults to ``width * height // 10``
+        (capped at 10,000,000) when not provided.
     height_func : function which takes x, y and returns a height value
         Function used to apply varying bump heights to different
         elevations.
@@ -193,6 +200,10 @@ def bump(width: int = None,
         Template raster whose shape, chunks, and backend (NumPy, CuPy,
         Dask, Dask+CuPy) determine the output type.  When provided,
         ``width`` and ``height`` are inferred from ``agg.shape``.
+    name : str, default='bump'
+        Name of the output DataArray, for consistency with the other
+        synthetic-terrain generators (``perlin``, ``worley``,
+        ``generate_terrain``).
 
     Returns
     -------
@@ -411,7 +422,9 @@ def bump(width: int = None,
         return DataArray(out,
                          coords=agg.coords,
                          dims=agg.dims,
-                         attrs=dict(res=1))
+                         attrs=dict(res=1),
+                         name=name)
     else:
         bumps = _finish_bump(w, h, locs, heights, spread)
-        return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1))
+        return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1),
+                         name=name)

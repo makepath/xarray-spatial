@@ -1,0 +1,2 @@
+module,last_inspected,issue,severity_max,categories_found,notes
+geotiff,2026-07-02,3603,HIGH,1;2,"No benchmark existed for geotiff; open_geotiff/to_geotiff had zero asv coverage across numpy/dask/cupy. Added benchmarks/benchmarks/geotiff.py: WriteGeoTIFF (numpy/dask/cupy streaming), WriteCOG (numpy/cupy overview pyramid), ReadGeoTIFF (numpy/cupy decode), ReadGeoTIFFChunked (dask). All classes executed locally via direct call; cupy paths run on this GPU host. asv check discover fails suite-wide from an asv_runner + py3.14 metadata bug, unrelated to this file."
