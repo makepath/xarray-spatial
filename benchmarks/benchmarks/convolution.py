@@ -17,7 +17,11 @@ class Convolve2d:
 
     def time_convolve_2d(self, nx, kernelsize, type):
         # convolve_2d takes the backing array, not the DataArray wrapper.
-        convolve_2d(self.agg.data, self.kernel)
+        result = convolve_2d(self.agg.data, self.kernel)
+        # dask returns a lazy array; force the compute so the benchmark
+        # times the kernel, not just graph construction.
+        if hasattr(result, 'compute'):
+            result.compute()
 
 
 class CircleKernel:
