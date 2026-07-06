@@ -1,4 +1,5 @@
 import re
+import threading
 from functools import partial
 
 import numpy as np
@@ -343,7 +344,16 @@ def custom_kernel(kernel):
     return kernel
 
 
-@jit(nopython=True, nogil=True)
+# Numba parallel=True kernels must not be launched concurrently from multiple
+# Python threads: the default 'workqueue' threading layer is not threadsafe and
+# aborts the process (SIGABRT on macOS) when two host threads enter a parallel
+# region at once.  _convolve_2d_dask_numpy calls the kernel per chunk under
+# dask's threaded scheduler, so the kernel launch is serialized behind this
+# lock.  Same hazard and fix as the terrain and reproject kernels (#3141).
+_PARALLEL_KERNEL_LOCK = threading.Lock()
+
+
+@jit(nopython=True, nogil=True, parallel=True)
 def _convolve_2d_numpy(data, kernel):
     # apply kernel to data image.
     # Caller must ensure data is a float type (float32 or float64).
@@ -373,14 +383,23 @@ def _convolve_2d_numpy(data, kernel):
     return out
 
 
+def _convolve_2d_numpy_locked(data, kernel):
+    # Serialize the parallel=True kernel launch across host threads; see the
+    # comment on _PARALLEL_KERNEL_LOCK. A single numpy call takes the lock
+    # uncontended and still runs across all cores; concurrent dask chunk calls
+    # run one at a time, each internally parallel.
+    with _PARALLEL_KERNEL_LOCK:
+        return _convolve_2d_numpy(data, kernel)
+
+
 def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
     data = data.astype(_promote_float(data.dtype))
     if boundary == 'nan':
-        return _convolve_2d_numpy(data, kernel)
+        return _convolve_2d_numpy_locked(data, kernel)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     padded = _pad_array(data, (pad_h, pad_w), boundary)
-    result = _convolve_2d_numpy(padded, kernel)
+    result = _convolve_2d_numpy_locked(padded, kernel)
     r0 = pad_h if pad_h else None
     r1 = -pad_h if pad_h else None
     c0 = pad_w if pad_w else None
@@ -392,7 +411,7 @@ def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
     data = data.astype(_promote_float(data.dtype))
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
-    _func = partial(_convolve_2d_numpy, kernel=kernel)
+    _func = partial(_convolve_2d_numpy_locked, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
