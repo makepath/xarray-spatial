@@ -238,8 +238,13 @@ def _parse_rat(rat):
     if not rows:
         return None, None
 
-    max_val = max(r[0] for r in rows)
-    min_val = min(r[0] for r in rows)
+    min_val = max_val = rows[0][0]
+    for r in rows:
+        v = r[0]
+        if v < min_val:
+            min_val = v
+        if v > max_val:
+            max_val = v
     if min_val < 0 or max_val >= _MAX_CATEGORIES:
         return None, None
 
