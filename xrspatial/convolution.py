@@ -464,14 +464,15 @@ def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
-    data = data.astype(_promote_float(data.dtype))
+    fdtype = _promote_float(data.dtype)
+    data = data.astype(fdtype)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_numpy_locked, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()),
+                           meta=np.array((), dtype=fdtype),
                            **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
@@ -539,14 +540,15 @@ def _convolve_2d_cupy(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
-    data = data.astype(_promote_float(data.dtype))
+    fdtype = _promote_float(data.dtype)
+    data = data.astype(fdtype)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_cupy, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()),
+                           meta=cupy.array((), dtype=fdtype),
                            **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
