@@ -534,7 +534,11 @@ def _hpa_star_search(surface_data, friction_data, start_py, start_px,
         local_gy = g_py - min_row
         local_gx = g_px - min_col
         if sub_path is None or not np.isfinite(sub_path[local_gy, local_gx]):
-            return path_img  # partial result
+            # Refinement could not connect this segment even at the
+            # largest radius.  Return all-NaN ("no path found") rather
+            # than a partial cost trail that dead-ends mid-grid, matching
+            # the no-path contract of the other search paths.
+            return np.full((h, w), np.nan, dtype=np.float64)
 
         seg_goal_cost = sub_path[local_gy, local_gx]
         sh, sw = sub_path.shape

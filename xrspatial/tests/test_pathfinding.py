@@ -776,6 +776,29 @@ def test_hpa_star_correctness():
         assert (r, c) != (np.nan, np.nan)
 
 
+def test_hpa_star_unreachable_goal_all_nan():
+    """HPA* returns all-NaN when no path exists, not a partial trail.
+
+    The coarse grid sees blocks containing a thin NaN wall as passable
+    (each block still has valid cells), so the coarse route crosses the
+    wall and refinement fails. The output must follow the no-path
+    contract (all NaN) instead of keeping the already-refined segments.
+    """
+    H = W = 200
+    data = np.ones((H, W))
+    data[:, 100] = np.nan  # complete wall: goal unreachable
+
+    dy, dx, dd = _neighborhood_structure(1.0, 1.0, 8)
+    barriers = np.array([], dtype=np.float64)
+
+    path_img = _hpa_star_search(
+        data, None, 0, 0, 199, 199,
+        barriers, dy, dx, dd,
+        1.0, False, 1.0, 1.0, H, W)
+
+    assert not np.isfinite(path_img).any()
+
+
 def test_auto_radius_selection():
     """When mocked low memory, auto-radius kicks in and finds path."""
     data = np.ones((20, 20))
