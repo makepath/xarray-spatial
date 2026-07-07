@@ -372,6 +372,34 @@ def custom_kernel(kernel):
     return kernel
 
 
+def _validate_kernel(kernel, func_name='convolve_2d'):
+    """Validate a convolution kernel: a 2D array with odd side lengths.
+
+    Duck-typed on ``ndim``/``shape`` so numpy and cupy kernels both pass.
+    Rejects up front so a malformed kernel raises a clear ValueError
+    instead of an inscrutable numba ``TypingError`` (or silent off-center
+    output for even side lengths). Mirrors ``custom_kernel``'s odd-shape
+    contract.
+    """
+    if not hasattr(kernel, 'ndim') or not hasattr(kernel, 'shape'):
+        raise ValueError(
+            f"{func_name}(): `kernel` must be a 2D array with odd side "
+            f"lengths, got {type(kernel).__module__}."
+            f"{type(kernel).__qualname__}"
+        )
+    if kernel.ndim != 2:
+        raise ValueError(
+            f"{func_name}(): `kernel` must be a 2D array, got {kernel.ndim}D "
+            f"with shape {tuple(kernel.shape)}"
+        )
+    rows, cols = kernel.shape
+    if rows % 2 == 0 or cols % 2 == 0:
+        raise ValueError(
+            f"{func_name}(): `kernel` must have odd side lengths so it has a "
+            f"well-defined center, got shape {(rows, cols)}"
+        )
+
+
 # Numba parallel=True kernels must not be launched concurrently from multiple
 # Python threads: the default 'workqueue' threading layer is not threadsafe and
 # aborts the process (SIGABRT on macOS) when two host threads enter a parallel
@@ -558,6 +586,7 @@ def convolve_2d(data, kernel, boundary='nan'):
     agg = xr.DataArray(data)
     _validate_raster(agg, func_name='convolve_2d', ndim=2)
     _validate_boundary(boundary)
+    _validate_kernel(kernel, func_name='convolve_2d')
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_convolve_2d_numpy_boundary,
         cupy_func=_convolve_2d_cupy,
@@ -699,6 +728,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     """
 
     # wrapper of convolve_2d
+    _validate_raster(agg, func_name='convolution_2d', ndim=2)
     out = convolve_2d(agg.data, kernel, boundary)
     return xr.DataArray(out,
                         name=name,

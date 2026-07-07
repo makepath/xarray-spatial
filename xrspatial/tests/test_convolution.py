@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.convolution import circle_kernel, convolve_2d, custom_kernel
+from xrspatial.convolution import circle_kernel, convolution_2d, convolve_2d, custom_kernel
 from xrspatial.tests.general_checks import cuda_and_cupy_available
 
 KERNEL = circle_kernel(1, 1, 1)
@@ -84,6 +84,51 @@ def test_convolve_2d_accepts_float64():
     # Centre cell is finite; edges are NaN by default boundary mode.
     assert np.isfinite(out[2, 2])
     assert np.isnan(out[0, 0])
+
+
+DATA = np.arange(25, dtype=np.float64).reshape(5, 5)
+
+
+@pytest.mark.parametrize("bad_kernel", [
+    None,
+    np.ones(3, dtype=np.float64),            # 1D
+    np.ones((3, 3, 3), dtype=np.float64),    # 3D
+    [[0, 1, 0], [1, 1, 1], [0, 1, 0]],       # python list, not an array
+])
+def test_convolve_2d_rejects_bad_kernel(bad_kernel):
+    # Bad kernels used to crash deep in numba with a cryptic TypingError.
+    # convolve_2d must reject them up front with a clear message that names
+    # `kernel`.
+    with pytest.raises(ValueError, match="kernel"):
+        convolve_2d(DATA, bad_kernel)
+
+
+@pytest.mark.parametrize("even_kernel", [
+    np.ones((2, 2), dtype=np.float64),
+    np.ones((4, 4), dtype=np.float64),
+    np.ones((2, 3), dtype=np.float64),
+])
+def test_convolve_2d_rejects_even_kernel(even_kernel):
+    # An even side length has no well-defined center; convolve_2d used to
+    # silently produce an off-center result. custom_kernel already rejects
+    # even kernels, so convolve_2d must too.
+    with pytest.raises(ValueError, match="odd"):
+        convolve_2d(DATA, even_kernel)
+
+
+def test_convolution_2d_rejects_non_dataarray():
+    # Passing a plain numpy array used to fail with an inscrutable
+    # "'memoryview' object has no attribute 'astype'"; validate up front.
+    with pytest.raises(TypeError, match="DataArray"):
+        convolution_2d(DATA, KERNEL)
+
+
+def test_convolution_2d_accepts_dataarray():
+    # Positive path unchanged.
+    agg = xr.DataArray(DATA, dims=['y', 'x'])
+    out = convolution_2d(agg, KERNEL)
+    assert isinstance(out, xr.DataArray)
+    assert out.shape == agg.shape
 
 
 def test_convolve_2d_uses_correlation_convention():
