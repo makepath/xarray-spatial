@@ -191,13 +191,21 @@ def read_pam_sidecar(path):
         return {}
 
 
+_MAX_CATEGORIES = 1_000_000
+
+
 def _parse_rat(rat):
     """Return (names, colors) from a thematic ``<GDALRasterAttributeTable>``.
 
     Returns ``(None, None)`` when the table has no Name column, i.e. it does
-    not describe categories. ``names`` is ordered by the row's Value column;
-    ``colors`` is the RGBA list when the RAT defines color columns, else
-    ``None``.
+    not describe categories. ``names`` is index-aligned to pixel values
+    (index == pixel value), padded with empty strings for gaps between
+    sparse RAT rows. ``colors`` is the RGBA list when the RAT defines color
+    columns, else ``None``; gaps are padded with ``(0, 0, 0, 0)``.
+
+    Fails closed (returns ``(None, None)``) on negative pixel values or a
+    maximum value exceeding ``_MAX_CATEGORIES``, which would otherwise
+    allocate a list large enough to OOM.
     """
     usage_to_col = {}
     for fd in rat.findall('FieldDefn'):
@@ -230,7 +238,19 @@ def _parse_rat(rat):
     if not rows:
         return None, None
 
-    rows.sort(key=lambda r: r[0])
-    names = [name for _, name, _ in rows]
-    colors = [color for _, _, color in rows] if have_colors else None
+    max_val = max(r[0] for r in rows)
+    min_val = min(r[0] for r in rows)
+    if min_val < 0 or max_val >= _MAX_CATEGORIES:
+        return None, None
+
+    names = [''] * (max_val + 1)
+    if have_colors:
+        colors = [(0, 0, 0, 0)] * (max_val + 1)
+    else:
+        colors = None
+    for value, name, color in rows:
+        names[value] = name
+        if have_colors:
+            colors[value] = color
+
     return names, colors
