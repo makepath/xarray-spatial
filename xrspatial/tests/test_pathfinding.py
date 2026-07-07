@@ -158,6 +158,83 @@ def test_a_star_search_connectivity(
 
 
 # -----------------------------------------------------------------------
+# Point -> pixel mapping (issue #3629)
+# -----------------------------------------------------------------------
+
+def _make_unit_raster(h=5, w=5):
+    import xarray as xr
+    r = xr.DataArray(np.ones((h, w)), dims=['y', 'x'],
+                     attrs={'res': (1.0, 1.0)})
+    r['y'] = np.linspace(h - 1, 0, h)   # descending
+    r['x'] = np.linspace(0, w - 1, w)
+    return r
+
+
+def test_get_pixel_id_nearest_center():
+    from xrspatial.pathfinding import _get_pixel_id
+
+    agg = _make_unit_raster()
+    # exact centers map to themselves
+    assert _get_pixel_id((4.0, 0.0), agg, 'x', 'y') == (0, 0)
+    assert _get_pixel_id((0.0, 4.0), agg, 'x', 'y') == (4, 4)
+    # a point in the upper half of a cell maps to the nearest center,
+    # not the truncated lower-index cell
+    assert _get_pixel_id((4.0, 2.6), agg, 'x', 'y') == (0, 3)
+    assert _get_pixel_id((1.6, 0.0), agg, 'x', 'y') == (2, 0)
+
+    # float noise at an exact center: on a 0.1-res grid the pixel-3
+    # center is 0.30000000000000004; a user-typed 0.3 must still map
+    # to pixel 3
+    import xarray as xr
+    agg2 = xr.DataArray(np.ones((2, 10)), dims=['y', 'x'])
+    agg2['y'] = [0.1, 0.0]
+    agg2['x'] = np.arange(10) * 0.1
+    assert _get_pixel_id((0.0, 0.3), agg2, 'x', 'y') == (1, 3)
+
+
+def test_get_pixel_id_ascending_coords():
+    from xrspatial.pathfinding import _get_pixel_id
+    import xarray as xr
+
+    agg = xr.DataArray(np.ones((5, 5)), dims=['y', 'x'],
+                       attrs={'res': (1.0, 1.0)})
+    agg['y'] = np.linspace(0, 4, 5)   # ascending
+    agg['x'] = np.linspace(0, 4, 5)
+    assert _get_pixel_id((0.0, 0.0), agg, 'x', 'y') == (0, 0)
+    assert _get_pixel_id((4.0, 2.6), agg, 'x', 'y') == (4, 3)
+    # outside on the low side -> negative index (rejected by _is_inside)
+    py, px = _get_pixel_id((-1.0, 0.0), agg, 'x', 'y')
+    assert py < 0
+
+
+def test_a_star_search_out_of_bounds_raises():
+    """Points outside the raster must raise on every side, not fold inside."""
+    agg = _make_unit_raster()   # y in [0, 4] descending, x in [0, 4]
+
+    inside = (2.0, 2.0)
+    outside_points = [
+        (5.0, 2.0),    # above the top edge (y_coords[0] side)
+        (-1.0, 2.0),   # below the bottom edge
+        (2.0, -1.0),   # left of the first column (x_coords[0] side)
+        (2.0, 5.0),    # right of the last column
+    ]
+    for pt in outside_points:
+        with pytest.raises(ValueError, match="start location outside"):
+            a_star_search(agg, pt, inside)
+        with pytest.raises(ValueError, match="goal location outside"):
+            a_star_search(agg, inside, pt)
+
+
+def test_multi_stop_out_of_bounds_waypoint_raises():
+    from xrspatial import multi_stop_search
+
+    agg = _make_unit_raster()
+    # waypoint above the top edge previously folded to an interior row
+    with pytest.raises(ValueError, match="outside the surface bounds"):
+        multi_stop_search(agg, [(5.0, 0.0), (0.0, 4.0)])
+
+
+# -----------------------------------------------------------------------
 # Helper for multi-backend test rasters
 # -----------------------------------------------------------------------
 

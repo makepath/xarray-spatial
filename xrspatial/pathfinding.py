@@ -44,8 +44,22 @@ def _get_pixel_id(point, raster, xdim=None, ydim=None):
     x_coords = raster.coords[xdim].data
 
     cellsize_x, cellsize_y = get_dataarray_resolution(raster, xdim, ydim)
-    py = int(abs(point[0] - y_coords[0]) / cellsize_y)
-    px = int(abs(point[1] - x_coords[0]) / cellsize_x)
+    cellsize_x = abs(float(cellsize_x))
+    cellsize_y = abs(float(cellsize_y))
+
+    # coords may be ascending or descending; use a signed step so points
+    # outside the raster get out-of-range indices (rejected by _is_inside)
+    # instead of folding back inside through abs().
+    sign_y = -1.0 if len(y_coords) > 1 and y_coords[1] < y_coords[0] else 1.0
+    sign_x = -1.0 if len(x_coords) > 1 and x_coords[1] < x_coords[0] else 1.0
+
+    # round to the nearest cell center (not truncate) so a point in the
+    # upper half of a cell, or float noise at an exact center, does not
+    # shift the pixel by one.
+    py = int(round(
+        (float(point[0]) - float(y_coords[0])) / (sign_y * cellsize_y)))
+    px = int(round(
+        (float(point[1]) - float(x_coords[0])) / (sign_x * cellsize_x)))
 
     # return index of row and column where the `point` located.
     return py, px
@@ -833,8 +847,12 @@ def a_star_search(surface: xr.DataArray,
         2D array of values to bin.
     start : array-like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the starting point.
+        The point is mapped to the pixel whose cell center is nearest.
+        A point outside the raster bounds raises a ``ValueError``.
     goal : array like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the goal location.
+        Mapped to the nearest cell center; a point outside the raster
+        bounds raises a ``ValueError``.
     barriers : array like object, default=[]
         List of values inside the surface which are barriers
         (cannot cross).
