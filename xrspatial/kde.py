@@ -519,6 +519,8 @@ def kde(
     x, y : array-like
         1-D arrays of point coordinates.  Alternatively, pass a GeoDataFrame
         of Point geometries as the first argument and leave *y* unset.
+        Points with non-finite (NaN or infinite) coordinates or weights
+        are dropped; a ``ValueError`` is raised if no finite points remain.
     weights : array-like, optional
         Per-point weights.  Defaults to uniform weights of 1.
     column : str, optional
@@ -588,6 +590,20 @@ def kde(
             raise ValueError("weights must have the same length as x and y")
     else:
         w_arr = np.ones(n, dtype=np.float64)
+
+    # Drop points with non-finite coordinates or weights (#3628).  Same
+    # policy as xrspatial.interpolate: without this, a single NaN poisons
+    # the auto-computed extent (all backends) or the whole grid (cupy
+    # gaussian, which has no cutoff), while the other backends silently
+    # skip the point.
+    valid = np.isfinite(x_arr) & np.isfinite(y_arr) & np.isfinite(w_arr)
+    if not valid.all():
+        x_arr, y_arr, w_arr = x_arr[valid], y_arr[valid], w_arr[valid]
+        if x_arr.shape[0] == 0:
+            raise ValueError(
+                "kde(): no valid (finite) points remain after filtering "
+                "non-finite coordinates and weights"
+            )
 
     kid = _kernel_id(kernel)
 
@@ -712,7 +728,9 @@ def line_density(
     Parameters
     ----------
     x1, y1, x2, y2 : array-like
-        Start and end coordinates of each line segment.
+        Start and end coordinates of each line segment.  Segments with
+        non-finite (NaN or infinite) endpoints or weights are dropped;
+        a ``ValueError`` is raised if no finite segments remain.
     weights : array-like, optional
         Per-segment weights.  Defaults to uniform weights of 1.
     bandwidth : float or ``'silverman'``
@@ -753,6 +771,20 @@ def line_density(
             )
     else:
         w_arr = np.ones(n, dtype=np.float64)
+
+    # Drop segments with non-finite endpoints or weights (#3628); a
+    # single NaN endpoint otherwise poisons the auto-computed extent
+    # and the output collapses to zeros with NaN coordinates.
+    valid = (np.isfinite(x1a) & np.isfinite(y1a) &
+             np.isfinite(x2a) & np.isfinite(y2a) & np.isfinite(w_arr))
+    if not valid.all():
+        x1a, y1a, x2a, y2a, w_arr = (
+            x1a[valid], y1a[valid], x2a[valid], y2a[valid], w_arr[valid])
+        if x1a.shape[0] == 0:
+            raise ValueError(
+                "line_density(): no valid (finite) segments remain after "
+                "filtering non-finite endpoints and weights"
+            )
 
     kid = _kernel_id(kernel)
 
