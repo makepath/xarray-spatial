@@ -138,6 +138,19 @@ def test_bump_agg_infers_shape():
     np.testing.assert_array_equal(result.values, result2.values)
 
 
+def test_bump_names_output_like_siblings():
+    """bump() names its output DataArray, consistent with perlin/worley/
+    generate_terrain (API-consistency sweep 2026-07-02)."""
+    # default name
+    result = bump(10, 10)
+    assert result.name == 'bump'
+
+    # custom name, both with and without agg
+    agg = xr.DataArray(np.zeros((10, 10)), dims=['y', 'x'])
+    assert bump(agg=agg, name='ridges').name == 'ridges'
+    assert bump(10, 10, name='ridges').name == 'ridges'
+
+
 def test_bump_decay_strongest_at_center_1102():
     """Pixels adjacent to center should be taller than pixels far from center.
 
@@ -366,3 +379,54 @@ def test_bump_dask_bypasses_raster_guard():
     result = bump(agg=agg, count=10, spread=0)
     assert result.shape == (100_000, 100_000)
     assert isinstance(result.data, da.Array)
+
+
+# --- Input-validation regression tests ---
+
+def test_bump_agg_must_be_dataarray():
+    """A plain ndarray template raises a clear TypeError naming `agg`,
+    not an inscrutable 'Unsupported Array Type' from the dispatcher."""
+    import pytest
+
+    with pytest.raises(TypeError, match=r"bump\(\): `agg` must be an "
+                       r"xarray\.DataArray"):
+        bump(agg=np.zeros((10, 10)))
+
+
+def test_bump_agg_must_be_2d():
+    """A 3D or 1D template raises a clear ValueError naming `agg` and the
+    2D requirement, not 'too many values to unpack'."""
+    import pytest
+
+    with pytest.raises(ValueError, match=r"bump\(\): `agg` must be 2D"):
+        bump(agg=xr.DataArray(np.zeros((3, 10, 10)), dims=['b', 'y', 'x']))
+    with pytest.raises(ValueError, match=r"bump\(\): `agg` must be 2D"):
+        bump(agg=xr.DataArray(np.zeros(10), dims=['x']))
+
+
+def test_bump_count_validated():
+    """`count` gets the same clean validation as width/height instead of
+    surfacing raw numpy errors."""
+    import pytest
+
+    with pytest.raises(ValueError, match=r"bump\(\): `count` must be >= 0"):
+        bump(width=10, height=10, count=-5)
+    with pytest.raises(TypeError, match=r"bump\(\): `count` must be int"):
+        bump(width=10, height=10, count=5.0)
+
+
+def test_bump_spread_validated():
+    """`spread` is documented as int; negative and non-int values raise
+    instead of being silently ignored."""
+    import pytest
+
+    with pytest.raises(ValueError, match=r"bump\(\): `spread` must be >= 0"):
+        bump(width=10, height=10, spread=-3)
+    with pytest.raises(TypeError, match=r"bump\(\): `spread` must be int"):
+        bump(width=10, height=10, spread=2.5)
+
+
+def test_bump_spread_zero_still_allowed():
+    """spread=0 (single-pixel bumps) must remain valid."""
+    result = bump(width=10, height=10, count=5, spread=0)
+    assert result.shape == (10, 10)
