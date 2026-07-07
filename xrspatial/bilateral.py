@@ -185,6 +185,15 @@ def _bilateral_cupy(data, radius, sigma_spatial, sigma_range):
     return out
 
 
+def _bilateral_cupy_boundary(data, radius, sigma_spatial, sigma_range,
+                             boundary='nan'):
+    if boundary == 'nan':
+        return _bilateral_cupy(data, radius, sigma_spatial, sigma_range)
+    padded = _pad_array(data, radius, boundary)
+    result = _bilateral_cupy(padded, radius, sigma_spatial, sigma_range)
+    return result[radius:-radius, radius:-radius]
+
+
 # ---------------------------------------------------------------------------
 # Dask + CuPy backend
 # ---------------------------------------------------------------------------
@@ -216,7 +225,10 @@ def _bilateral(data, radius, sigma_spatial, sigma_range, boundary='nan'):
             _bilateral_numpy_boundary,
             boundary=boundary,
         ),
-        cupy_func=_bilateral_cupy,
+        cupy_func=partial(
+            _bilateral_cupy_boundary,
+            boundary=boundary,
+        ),
         dask_func=partial(
             _bilateral_dask_numpy,
             boundary=boundary,
