@@ -1226,6 +1226,12 @@ def cost_distance(
     to reach the nearest target pixel, where traversal cost along each
     edge equals ``geometric_distance * mean_friction_of_endpoints``.
 
+    Cost-distance supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of `cost_distance`
+    are of the same type as the input type: a NumPy-backed input gives a
+    NumPy-backed result, a CuPy-backed input gives a CuPy-backed result,
+    and a Dask-backed input gives a Dask-backed result.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
@@ -1254,6 +1260,38 @@ def cost_distance(
     xr.DataArray or xr.Dataset
         2-D array of accumulated cost-distance values (float32).
         Source pixels have cost 0.  Unreachable pixels are NaN.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> source = np.array([
+        ...     [0., 0., 0.],
+        ...     [0., 1., 0.],
+        ...     [0., 0., 0.],
+        ... ])
+        >>> friction = np.ones((3, 3))
+        >>> n, m = source.shape
+        >>> raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
+        >>> friction_da = xr.DataArray(
+        ...     friction, dims=['y', 'x'], name='friction')
+        >>> friction_da['y'] = np.arange(n)[::-1]
+        >>> friction_da['x'] = np.arange(m)
+
+        >>> from xrspatial import cost_distance
+        >>> result = cost_distance(raster, friction_da)
+        >>> result
+        <xarray.DataArray (y: 3, x: 3)>
+        array([[1.4142135, 1.       , 1.4142135],
+               [1.       , 0.       , 1.       ],
+               [1.4142135, 1.       , 1.4142135]], dtype=float32)
+        Coordinates:
+          * y        (y) int64 2 1 0
+          * x        (x) int64 0 1 2
     """
     # --- validation ---
     _validate_raster(raster, func_name='cost_distance', name='raster')
