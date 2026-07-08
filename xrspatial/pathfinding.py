@@ -1344,13 +1344,30 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
             )
             seg_vals = _segment_to_numpy(seg.data)
             goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
+            # If snap is on, the actual goal pixel may differ from the
+            # requested one; read the cost at the true (snapped) goal,
+            # which is the max-finite-cost pixel, like the segment loop.
+            if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
+                finite = np.isfinite(seg_vals)
+                if finite.any():
+                    max_idx = np.nanargmax(seg_vals)
+                    goal_py, goal_px = np.unravel_index(
+                        max_idx, seg_vals.shape)
             goal_cost = seg_vals[goal_py, goal_px]
             if np.isfinite(goal_cost):
                 dist[i][j] = goal_cost
 
     # Fixed endpoints: first=0, last=n-1
     if n <= 12:
-        order, _ = _held_karp(dist, 0, n - 1)
+        order, total = _held_karp(dist, 0, n - 1)
+        # An infinite total means no ordering visits every waypoint
+        # (some waypoint is unreachable).  Held-Karp's reconstruction
+        # would return only [start, end], silently dropping the
+        # interior waypoints, so raise instead.
+        if not np.isfinite(total):
+            raise ValueError(
+                "optimize_order: no feasible route visits all waypoints "
+                "(some waypoints are unreachable from the others)")
     else:
         order, _ = _nearest_neighbor_2opt(dist, 0, n - 1)
 

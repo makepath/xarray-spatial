@@ -1044,6 +1044,62 @@ def test_optimize_order_finds_better_route():
     assert optimized.attrs['total_cost'] <= naive.attrs['total_cost'] + 1e-10
 
 
+def test_optimize_order_unreachable_waypoint_raises():
+    """Unreachable interior waypoint raises instead of being dropped (#3646).
+
+    Without optimize_order the segment loop raises "no path between
+    waypoints"; with optimize_order the infeasible tour used to make
+    _held_karp return only [start, end], silently dropping the interior
+    waypoint and returning a finite route.
+    """
+    data = np.ones((8, 8))
+    data[4, :] = np.nan   # wall: bottom rows unreachable from top rows
+
+    agg = _make_raster(data)
+
+    wp0 = (7.0, 0.0)      # pixel (0, 0), above the wall
+    wp_mid = (0.0, 0.0)   # pixel (7, 0), below the wall (unreachable)
+    wp_end = (7.0, 7.0)   # pixel (0, 7), above the wall
+
+    with pytest.raises(ValueError, match="unreachable"):
+        multi_stop_search(agg, [wp0, wp_mid, wp_end], optimize_order=True)
+
+
+@pytest.mark.filterwarnings("ignore:End at a non crossable location:Warning")
+@pytest.mark.filterwarnings("ignore:Start at a non crossable location:Warning")
+def test_optimize_order_with_snap_keeps_waypoints():
+    """optimize_order must not drop waypoints that need snapping (#3646).
+
+    The pairwise distance matrix used to read the segment cost at the
+    unsnapped goal pixel (NaN when the waypoint sits on an invalid cell),
+    so every snapped waypoint got an infinite distance and was dropped
+    through the infeasible-tour hole.
+    """
+    data = np.ones((8, 8))
+    data[3, 3] = np.nan   # single invalid cell; snap moves off it
+
+    agg = _make_raster(data)
+
+    wp0 = (7.0, 0.0)      # pixel (0, 0)
+    wp_mid = (4.0, 3.0)   # pixel (3, 3) -> NaN cell, needs snapping
+    wp_end = (0.0, 7.0)   # pixel (7, 7)
+
+    result = multi_stop_search(
+        agg, [wp0, wp_mid, wp_end], snap=True, optimize_order=True)
+
+    order = result.attrs['waypoint_order']
+    assert len(order) == 3
+    assert len(result.attrs['segment_costs']) == 2
+    assert tuple(order[0]) == wp0
+    assert tuple(order[-1]) == wp_end
+
+    # Same route as the unoptimized call (the input order is already
+    # optimal here), so costs must match too.
+    plain = multi_stop_search(agg, [wp0, wp_mid, wp_end], snap=True)
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], plain.attrs['total_cost'], atol=1e-10)
+
+
 def test_optimize_order_preserves_endpoints():
     """First and last waypoints should remain fixed after optimization."""
     data = np.ones((10, 10))
