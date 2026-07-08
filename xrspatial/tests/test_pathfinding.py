@@ -1096,15 +1096,25 @@ def test_optimize_order_symmetric_matrix_call_count():
     assert sorted(order) == sorted(wps)
 
 
+@pytest.mark.filterwarnings("ignore:Start at a non crossable location:Warning")
+@pytest.mark.filterwarnings("ignore:End at a non crossable location:Warning")
 def test_optimize_order_snap_keeps_both_directions():
     """With snap=True the reverse searches still run (snapping can move
-    the requested pixels, so symmetry is not guaranteed)."""
+    the requested pixels, so symmetry is not guaranteed).
+
+    The middle waypoint sits on a NaN cell so snapping really relocates
+    it: the direction ending at that waypoint reads its cost at the
+    requested (NaN) pixel while the reverse starts from the snapped
+    pixel, which is the asymmetry the double computation protects.
+    """
     import xrspatial.pathfinding as pf
 
     data = np.ones((10, 10))
+    data[5, 5] = np.nan  # snap target: waypoint below lands here
     agg = _make_raster(data)
 
-    wps = [(9.0, 0.0), (5.0, 5.0), (0.0, 9.0)]
+    # coords: y=[9..0], x=[0..9]; (4.0, 5.0) maps to pixel (5, 5)
+    wps = [(9.0, 0.0), (4.0, 5.0), (0.0, 9.0)]
     n = len(wps)
 
     calls = []
@@ -1116,10 +1126,17 @@ def test_optimize_order_snap_keeps_both_directions():
 
     from unittest.mock import patch
     with patch.object(pf, 'a_star_search', side_effect=counting):
-        pf._optimize_waypoint_order(
+        order = pf._optimize_waypoint_order(
             agg, wps, [], 'x', 'y', 8, True, None, None)
 
     assert len(calls) == n * (n - 1)
+    assert order[0] == wps[0]
+    assert order[-1] == wps[-1]
+    # Note: the NaN waypoint may be missing from the returned order.
+    # That is pre-existing behavior tracked in issue #3646 (waypoints
+    # silently dropped when the matrix has no finite tour), not part
+    # of the call-count contract under test here.
+    assert set(order) <= set(wps)
 
 
 # --- Cross-backend tests ---
