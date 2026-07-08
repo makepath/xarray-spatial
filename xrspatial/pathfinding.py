@@ -818,6 +818,9 @@ def a_star_search(surface: xr.DataArray,
     The output is an equal-sized ``xr.DataArray`` with NaN for non-path
     pixels and the accumulated cost at each path pixel.
 
+    NaN cells in *surface* are always impassable, whether or not they
+    appear in ``barriers``.
+
     **Backend support**
 
     =============  ===========================================================
@@ -859,10 +862,11 @@ def a_star_search(surface: xr.DataArray,
         bounds raises a ``ValueError``.
     barriers : array like object, default=[]
         List of values inside the surface which are barriers
-        (cannot cross).
+        (cannot cross).  Cells whose value is NaN are always
+        impassable, regardless of this list.
     x : str, default='x'
         Name of the x coordinate in input surface raster.
-    y: str, default='y'
+    y : str, default='y'
         Name of the y coordinate in input surface raster.
     connectivity : int, default=8
     snap_start: bool, default=False
@@ -899,7 +903,7 @@ def a_star_search(surface: xr.DataArray,
 
     Examples
     --------
-    ... sourcecode:: python
+    .. sourcecode:: python
 
         >>> import numpy as np
         >>> import xarray as xr
@@ -1386,7 +1390,8 @@ def multi_stop_search(surface: xr.DataArray,
         Sequence of ``(y, x)`` coordinate pairs to visit.  Must contain
         at least two points.
     barriers : list, default=[]
-        Surface values that are impassable.
+        Surface values that are impassable.  Cells whose value is NaN
+        are always impassable, regardless of this list.
     x, y : str, default ``'x'`` / ``'y'``
         Coordinate dimension names.
     connectivity : int, default=8
@@ -1416,6 +1421,35 @@ def multi_stop_search(surface: xr.DataArray,
         If the surface is not 2-D, fewer than two waypoints are given,
         waypoints fall outside the surface bounds, or a segment is
         unreachable.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import multi_stop_search
+        >>> agg = xr.DataArray(np.array([
+        ...     [0, 1, 0, 0],
+        ...     [1, 1, 0, 0],
+        ...     [0, 1, 2, 2],
+        ...     [1, 0, 2, 0],
+        ...     [0, 2, 2, 2]
+        ... ], dtype=np.float64), dims=['lat', 'lon'])
+        >>> height, width = agg.shape
+        >>> agg['lon'] = np.linspace(0, width - 1, width)
+        >>> agg['lat'] = np.linspace(height - 1, 0, height)
+
+        >>> # visit 3 waypoints; pixels with value 0 are barriers
+        >>> waypoints = [(3, 0), (1, 2), (0, 1)]
+        >>> path_agg = multi_stop_search(
+        ...     agg, waypoints, barriers=[0], x='lon', y='lat')
+        >>> path_agg.attrs['waypoint_order']
+        [(3, 0), (1, 2), (0, 1)]
+        >>> path_agg.attrs['segment_costs']
+        [2.8284271247461903, 1.4142135623730951]
+        >>> path_agg.attrs['total_cost']
+        4.242640687119286
     """
     # --- Input validation ---
     _validate_raster(surface, func_name='multi_stop_search',

@@ -1195,3 +1195,83 @@ class TestPathfindingInputValidation:
         too_many = [(i % 10, (i * 7) % 10) for i in range(_MAX_WAYPOINTS + 1)]
         with pytest.raises(ValueError, match=f"at most {_MAX_WAYPOINTS}"):
             multi_stop_search(s, too_many)
+
+
+@pytest.mark.parametrize("func_name", ["a_star_search", "multi_stop_search"])
+def test_docstring_params_match_signature(func_name):
+    # Every parameter documented in the numpy-style "Parameters" section
+    # must exist in the signature (and vice versa). Same guard as
+    # test_multispectral.py::test_docstring_params_match_signature, plus
+    # support for grouped entries like "x, y : str".
+    import inspect
+    import re
+
+    import xrspatial.pathfinding as pf
+
+    func = getattr(pf, func_name)
+    sig_params = set(inspect.signature(func).parameters)
+
+    doc = inspect.getdoc(func) or ""
+    lines = doc.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "Parameters")
+    documented = set()
+    for ln in lines[start + 2:]:
+        if ln.strip() in ("Returns", "Raises", "References", "Notes",
+                          "Examples"):
+            break
+        m = re.match(r"^(\w+(?:\s*,\s*\w+)*)\s*:", ln)
+        if m:
+            documented.update(re.split(r"\s*,\s*", m.group(1)))
+
+    assert documented == sig_params, (
+        f"{func_name}: documented params {sorted(documented)} != "
+        f"signature params {sorted(sig_params)}"
+    )
+
+
+@pytest.mark.parametrize("func_name", ["a_star_search", "multi_stop_search"])
+def test_docstring_structure(func_name):
+    # Both public functions carry the required numpydoc sections (issue
+    # #3651: multi_stop_search shipped without an Examples section), use
+    # the two-dot sourcecode directive (three dots render as literal
+    # text), and document that NaN cells are impassable.
+    import inspect
+
+    import xrspatial.pathfinding as pf
+
+    doc = inspect.getdoc(getattr(pf, func_name))
+    for section in ("Parameters", "Returns", "Examples"):
+        assert f"\n{section}\n" in doc, f"{func_name}: missing {section}"
+    assert "... sourcecode::" not in doc
+    assert ".. sourcecode:: python" in doc
+    assert "always impassable" in doc
+
+
+def test_multi_stop_search_docstring_example():
+    # Run the multi_stop_search docstring example and pin its documented
+    # attrs output.
+    import xarray as xr
+
+    from xrspatial import multi_stop_search
+
+    agg = xr.DataArray(np.array([
+        [0, 1, 0, 0],
+        [1, 1, 0, 0],
+        [0, 1, 2, 2],
+        [1, 0, 2, 0],
+        [0, 2, 2, 2]
+    ], dtype=np.float64), dims=['lat', 'lon'])
+    height, width = agg.shape
+    agg['lon'] = np.linspace(0, width - 1, width)
+    agg['lat'] = np.linspace(height - 1, 0, height)
+
+    waypoints = [(3, 0), (1, 2), (0, 1)]
+    path_agg = multi_stop_search(
+        agg, waypoints, barriers=[0], x='lon', y='lat')
+
+    assert path_agg.attrs['waypoint_order'] == [(3, 0), (1, 2), (0, 1)]
+    np.testing.assert_allclose(
+        path_agg.attrs['segment_costs'],
+        [2.8284271247461903, 1.4142135623730951])
+    np.testing.assert_allclose(
+        path_agg.attrs['total_cost'], 4.242640687119286)
