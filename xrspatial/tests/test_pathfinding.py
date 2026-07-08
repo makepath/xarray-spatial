@@ -1062,6 +1062,66 @@ def test_optimize_order_preserves_endpoints():
     assert tuple(order[-1]) == wp3
 
 
+def test_optimize_order_symmetric_matrix_call_count():
+    """Cost matrix reuses symmetric costs: N(N-1)/2 A* runs, not N(N-1).
+
+    Issue #3661: the pixel graph is undirected and edge costs use the
+    mean friction of both endpoints, so cost(i->j) == cost(j->i) and
+    the reverse searches are redundant when snap is off.
+    """
+    import xrspatial.pathfinding as pf
+
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    wps = [(9.0, 0.0), (5.0, 5.0), (5.0, 0.0), (9.0, 9.0), (0.0, 9.0)]
+    n = len(wps)
+
+    calls = []
+    orig = pf.a_star_search
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    from unittest.mock import patch
+    with patch.object(pf, 'a_star_search', side_effect=counting):
+        order = pf._optimize_waypoint_order(
+            agg, wps, [], 'x', 'y', 8, False, None, None)
+
+    assert len(calls) == n * (n - 1) // 2
+    # endpoints stay fixed and all waypoints are kept
+    assert order[0] == wps[0]
+    assert order[-1] == wps[-1]
+    assert sorted(order) == sorted(wps)
+
+
+def test_optimize_order_snap_keeps_both_directions():
+    """With snap=True the reverse searches still run (snapping can move
+    the requested pixels, so symmetry is not guaranteed)."""
+    import xrspatial.pathfinding as pf
+
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    wps = [(9.0, 0.0), (5.0, 5.0), (0.0, 9.0)]
+    n = len(wps)
+
+    calls = []
+    orig = pf.a_star_search
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    from unittest.mock import patch
+    with patch.object(pf, 'a_star_search', side_effect=counting):
+        pf._optimize_waypoint_order(
+            agg, wps, [], 'x', 'y', 8, True, None, None)
+
+    assert len(calls) == n * (n - 1)
+
+
 # --- Cross-backend tests ---
 
 @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")

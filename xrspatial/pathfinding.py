@@ -1330,23 +1330,34 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
     INF = float('inf')
     dist = [[INF] * n for _ in range(n)]
 
+    def _pair_cost(a, b):
+        seg = a_star_search(
+            surface, waypoints[a], waypoints[b],
+            barriers=barriers, x=x, y=y,
+            connectivity=connectivity,
+            snap_start=snap, snap_goal=snap,
+            friction=friction, search_radius=search_radius,
+        )
+        seg_vals = _segment_to_numpy(seg.data)
+        goal_py, goal_px = _get_pixel_id(waypoints[b], surface, x, y)
+        goal_cost = seg_vals[goal_py, goal_px]
+        return float(goal_cost) if np.isfinite(goal_cost) else INF
+
     for i in range(n):
-        for j in range(n):
-            if i == j:
-                dist[i][j] = 0.0
-                continue
-            seg = a_star_search(
-                surface, waypoints[i], waypoints[j],
-                barriers=barriers, x=x, y=y,
-                connectivity=connectivity,
-                snap_start=snap, snap_goal=snap,
-                friction=friction, search_radius=search_radius,
-            )
-            seg_vals = _segment_to_numpy(seg.data)
-            goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
-            goal_cost = seg_vals[goal_py, goal_px]
-            if np.isfinite(goal_cost):
-                dist[i][j] = goal_cost
+        dist[i][i] = 0.0
+        for j in range(i + 1, n):
+            dist[i][j] = _pair_cost(i, j)
+            if snap:
+                # Snapping can move the requested start and goal pixels,
+                # so the reverse direction may read its cost at a
+                # different pixel; compute it explicitly.
+                dist[j][i] = _pair_cost(j, i)
+            else:
+                # The pixel graph is undirected and edge costs use the
+                # mean friction of both endpoints, so the cost matrix is
+                # symmetric: reuse cost(i -> j) as cost(j -> i) instead
+                # of running the reverse A* search.
+                dist[j][i] = dist[i][j]
 
     # Fixed endpoints: first=0, last=n-1
     if n <= 12:
