@@ -895,6 +895,7 @@ def a_star_search(surface: xr.DataArray,
     path_agg: xr.DataArray of the same type as `surface`.
         2D array of pathfinding values.
         All other input attributes are preserved.
+        A Dataset input returns a Dataset of per-variable results.
 
     References
     ----------

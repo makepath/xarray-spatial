@@ -1235,7 +1235,11 @@ def test_a_star_search_accepts_dataset():
 
 
 def test_barriers_default_none_matches_empty_list():
-    """barriers=None (new default) behaves like the old barriers=[]."""
+    """barriers=None (new default) behaves like the old barriers=[].
+
+    Numpy only: the None -> [] substitution happens before backend
+    dispatch, so it is backend-independent.
+    """
     data = np.ones((6, 6))
     agg = _make_raster(data)
     start, goal = (5.0, 0.0), (0.0, 5.0)
