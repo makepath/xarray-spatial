@@ -56,6 +56,8 @@ def _validate_barriers(barriers):
             f"barriers must be a 1-D list or array of cell values, "
             f"got {arr.ndim}-D input.{hint}"
         )
+    # bool arrays are rejected on purpose: barrier entries are cell
+    # values, and [True] is far more likely a mistake than "cells == 1"
     if arr.size > 0 and not (
         np.issubdtype(arr.dtype, np.integer)
         or np.issubdtype(arr.dtype, np.floating)
@@ -924,7 +926,8 @@ def a_star_search(surface: xr.DataArray,
         bounds raises a ``ValueError``.
     barriers : array like object, default=[]
         List of values inside the surface which are barriers
-        (cannot cross).
+        (cannot cross). Must be a 1-D sequence of numeric values;
+        anything else raises before the search runs.
     x : str, default='x'
         Name of the x coordinate in input surface raster.
     y: str, default='y'
@@ -945,6 +948,7 @@ def a_star_search(surface: xr.DataArray,
     search_radius : int, optional
         Limit the A* search to a bounding box of
         ``±search_radius`` pixels around the start and goal.
+        Must be a non-negative integer (or ``None``).
         Dramatically reduces memory for large grids when start and
         goal are relatively close.  If ``None`` (default) and the
         full grid would exceed 50 % of available RAM, an automatic
@@ -1483,6 +1487,9 @@ def multi_stop_search(surface: xr.DataArray,
         If the surface is not 2-D, fewer than two waypoints are given,
         waypoints fall outside the surface bounds, or a segment is
         unreachable.
+    TypeError
+        If *barriers* contains non-numeric values or *search_radius*
+        is not an integer.
     """
     # --- Input validation ---
     _validate_raster(surface, func_name='multi_stop_search',
@@ -1493,6 +1500,10 @@ def multi_stop_search(surface: xr.DataArray,
                          name='friction', ndim=2)
 
     _validate_surface_dims(surface, x, y, 'multi_stop_search')
+
+    # fail at the API boundary rather than inside the first segment's
+    # a_star_search call (re-validation there is idempotent)
+    barriers = _validate_barriers(barriers)
 
     if len(waypoints) < 2:
         raise ValueError("at least 2 waypoints are required")

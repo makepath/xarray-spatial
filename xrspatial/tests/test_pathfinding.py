@@ -1231,6 +1231,13 @@ class TestPathfindingErrorHandling:
                              barriers=np.array([0]))
         assert not np.isfinite(path.values).any()
 
+    def test_string_barriers_raise_in_multi_stop(self):
+        # validated at the multi_stop boundary, not inside the first
+        # a_star_search segment call
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 2.0)], barriers=['0'])
+
     @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
     def test_string_barriers_raise_on_dask(self):
         r = self._wall_surface()
