@@ -1145,6 +1145,39 @@ def test_multi_stop_dask_cupy_matches_numpy():
     assert np.isfinite(computed_opt.get()).any()
 
 
+# --- Output name consistency (dask graph-token leak) ---
+
+def _name_check_backends():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _name_check_backends())
+def test_output_name_consistent_across_backends(backend):
+    """Outputs must not adopt the dask graph token as .name.
+
+    Without the post-construction reset, dask-backed results were named
+    'concatenate-<hash>' / 'array-<hash>' while numpy/cupy returned None.
+    Same bug class as zonal #2611 and focal #2733.
+    """
+    data = np.ones((5, 5))
+    agg = _make_raster(data, backend=backend)
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path = a_star_search(agg, start, goal)
+    assert path.name is None
+
+    multi = multi_stop_search(agg, [start, goal])
+    assert multi.name is None
+
+
 # =====================================================================
 # Issue #1439: input validation
 # =====================================================================
