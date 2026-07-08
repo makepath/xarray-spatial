@@ -30,6 +30,71 @@ NONE = -1
 _MAX_WAYPOINTS = 1000
 
 
+def _validate_surface_dims(surface, x, y, func_name):
+    """Raise ValueError if *surface* dims do not match the (y, x) names."""
+    if surface.dims != (y, x):
+        raise ValueError(
+            f"{func_name}(): expected `surface` to have dims ({y!r}, {x!r}), "
+            f"got {surface.dims}. Pass the actual dimension names via the "
+            f"`x=` and `y=` parameters."
+        )
+
+
+def _validate_barriers(barriers):
+    """Coerce *barriers* to a 1-D float64 array or raise a clear error.
+
+    Numba compares the (float) cell value against each barrier element,
+    so a non-numeric dtype would either fail deep inside the kernel with
+    a TypingError (0-d input) or, worse, compare unequal everywhere and
+    silently disable all barriers (string input).
+    """
+    arr = np.asarray(barriers)
+    if arr.ndim != 1:
+        hint = (f" Did you mean barriers=[{barriers!r}]?"
+                if arr.ndim == 0 else "")
+        raise ValueError(
+            f"barriers must be a 1-D list or array of cell values, "
+            f"got {arr.ndim}-D input.{hint}"
+        )
+    if arr.size > 0 and not (
+        np.issubdtype(arr.dtype, np.integer)
+        or np.issubdtype(arr.dtype, np.floating)
+    ):
+        raise TypeError(
+            f"barriers must contain numeric cell values, "
+            f"got dtype {arr.dtype} from {barriers!r}"
+        )
+    return arr.astype(np.float64)
+
+
+def _validate_search_radius(search_radius):
+    """Raise if *search_radius* is not None or a non-negative integer."""
+    if search_radius is None:
+        return
+    if not isinstance(search_radius, (int, np.integer)):
+        raise TypeError(
+            f"search_radius must be a non-negative integer or None, "
+            f"got {type(search_radius).__name__} {search_radius!r}"
+        )
+    if search_radius < 0:
+        raise ValueError(
+            f"search_radius must be non-negative, got {search_radius}"
+        )
+
+
+def _validate_point(point, name, func_name):
+    """Raise ValueError if *point* is not a 2-element (y, x) pair."""
+    try:
+        n = len(point)
+    except TypeError:
+        n = None
+    if n != 2:
+        raise ValueError(
+            f"{func_name}(): `{name}` must have exactly 2 elements (y, x), "
+            f"got {point!r}"
+        )
+
+
 def _get_pixel_id(point, raster, xdim=None, ydim=None):
     # get location in `raster` pixel space for `point` in y-x coordinate space
     # point: (y, x) - coordinates of the point
@@ -930,12 +995,14 @@ def a_star_search(surface: xr.DataArray,
         _validate_raster(friction, func_name='a_star_search',
                          name='friction', ndim=2)
 
-    if surface.dims != (y, x):
-        raise ValueError("`surface.coords` should be named as coordinates:"
-                         "({}, {})".format(y, x))
+    _validate_surface_dims(surface, x, y, 'a_star_search')
 
     if connectivity != 4 and connectivity != 8:
         raise ValueError("Use either 4 or 8-connectivity.")
+
+    _validate_search_radius(search_radius)
+    _validate_point(start, 'start', 'a_star_search')
+    _validate_point(goal, 'goal', 'a_star_search')
 
     # Detect backend
     surface_data = surface.data
@@ -964,7 +1031,7 @@ def a_star_search(surface: xr.DataArray,
     if not _is_inside(goal_py, goal_px, h, w):
         raise ValueError("goal location outside the surface graph.")
 
-    barriers = np.asarray(barriers)
+    barriers = _validate_barriers(barriers)
 
     # --- Snap / crossability checks ---
     if _is_dask:
@@ -1425,6 +1492,8 @@ def multi_stop_search(surface: xr.DataArray,
         _validate_raster(friction, func_name='multi_stop_search',
                          name='friction', ndim=2)
 
+    _validate_surface_dims(surface, x, y, 'multi_stop_search')
+
     if len(waypoints) < 2:
         raise ValueError("at least 2 waypoints are required")
 
@@ -1436,9 +1505,7 @@ def multi_stop_search(surface: xr.DataArray,
         )
 
     for idx, wp in enumerate(waypoints):
-        if len(wp) != 2:
-            raise ValueError(
-                f"waypoint {idx} must have exactly 2 elements (y, x)")
+        _validate_point(wp, f'waypoint {idx}', 'multi_stop_search')
 
     h, w = surface.shape
     for idx, wp in enumerate(waypoints):

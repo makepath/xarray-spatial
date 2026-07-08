@@ -1195,3 +1195,119 @@ class TestPathfindingInputValidation:
         too_many = [(i % 10, (i * 7) % 10) for i in range(_MAX_WAYPOINTS + 1)]
         with pytest.raises(ValueError, match=f"at most {_MAX_WAYPOINTS}"):
             multi_stop_search(s, too_many)
+
+
+class TestPathfindingErrorHandling:
+    """Error-handling sweep findings: barriers, search_radius, points, dims (#3649)."""
+
+    @staticmethod
+    def _wall_surface():
+        import xarray as xr
+        data = np.ones((5, 9))
+        data[:, 4] = 0.0  # wall of zeros across the middle column
+        r = xr.DataArray(data, dims=('y', 'x'), attrs={'res': (1.0, 1.0)})
+        r['y'] = np.linspace(4, 0, 5)
+        r['x'] = np.linspace(0, 8, 9)
+        return r
+
+    # --- barriers ---
+
+    def test_string_barriers_raise_instead_of_silently_ignored(self):
+        # barriers=['0'] used to route straight through a wall that
+        # barriers=[0] blocks, with no error or warning
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=['0'])
+
+    def test_scalar_barriers_raise_with_hint(self):
+        # barriers=0 used to die with a numba TypingError deep in the kernel
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match=r"1-D.*barriers=\[0\]"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=0)
+
+    def test_numeric_barriers_still_block(self):
+        r = self._wall_surface()
+        path = a_star_search(r, (2.0, 0.0), (2.0, 8.0),
+                             barriers=np.array([0]))
+        assert not np.isfinite(path.values).any()
+
+    @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+    def test_string_barriers_raise_on_dask(self):
+        r = self._wall_surface()
+        r.data = da.from_array(r.data, chunks=(3, 3))
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=['0'])
+
+    # --- search_radius ---
+
+    def test_negative_search_radius_raises(self):
+        # used to silently return all-NaN ("no path") though a path exists
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="search_radius must be non-negative"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), search_radius=-1)
+
+    def test_float_search_radius_raises(self):
+        # used to crash with "slice indices must be integers" for some
+        # start/goal geometries and work for others
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="search_radius must be a non-negative integer"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), search_radius=2.5)
+
+    def test_zero_search_radius_accepted(self):
+        r = self._wall_surface()
+        path = a_star_search(r, (2.0, 0.0), (2.0, 2.0), search_radius=0)
+        assert np.isfinite(path.values[2, 2])
+
+    def test_negative_search_radius_raises_in_multi_stop(self):
+        # used to surface as a misleading "no path between waypoints 0 and 1"
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="search_radius must be non-negative"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 2.0)], search_radius=-1)
+
+    # --- start / goal ---
+
+    def test_scalar_start_raises(self):
+        # used to raise "'float' object is not subscriptable" in _get_pixel_id
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`start` must have exactly 2 elements"):
+            a_star_search(r, 3.0, (2.0, 2.0))
+
+    def test_three_element_goal_raises(self):
+        # used to silently drop the extra element
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`goal` must have exactly 2 elements"):
+            a_star_search(r, (2.0, 0.0), (2.0, 2.0, 7.0))
+
+    def test_scalar_waypoint_raises(self):
+        # used to raise "object of type 'float' has no len()"
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`waypoint 1` must have exactly 2 elements"):
+            multi_stop_search(r, [(2.0, 0.0), 3.0])
+
+    # --- dims consistency ---
+
+    @staticmethod
+    def _latlon_surface():
+        import xarray as xr
+        r = xr.DataArray(np.ones((5, 5)), dims=('lat', 'lon'),
+                         attrs={'res': (1.0, 1.0)})
+        r['lat'] = np.linspace(4, 0, 5)
+        r['lon'] = np.linspace(0, 4, 5)
+        return r
+
+    def test_a_star_dims_mismatch_names_actual_dims(self):
+        r = self._latlon_surface()
+        with pytest.raises(ValueError, match=r"got \('lat', 'lon'\)"):
+            a_star_search(r, (2.0, 0.0), (2.0, 4.0))
+
+    def test_multi_stop_dims_mismatch_raises_value_error(self):
+        # used to raise a bare KeyError: 'y' from inside xarray
+        r = self._latlon_surface()
+        with pytest.raises(ValueError, match="expected `surface` to have dims"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 4.0)])
+
+    def test_multi_stop_custom_dims_still_work(self):
+        r = self._latlon_surface()
+        result = multi_stop_search(r, [(2.0, 0.0), (2.0, 4.0)],
+                                   x='lon', y='lat')
+        assert np.isfinite(result.values).any()
