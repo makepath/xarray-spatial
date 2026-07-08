@@ -472,10 +472,16 @@ def _hpa_star_search(surface_data, friction_data, start_py, start_px,
     c_dy, c_dx, c_dd = _neighborhood_structure(coarse_cx, coarse_cy, 8)
 
     # --- Route on coarse grid ---
+    # Coarse cell values are block means of the non-barrier fine cells,
+    # so testing them against the exact barrier values is meaningless: a
+    # passable block whose values average to a barrier value would be
+    # falsely blocked.  _coarsen_surface already encodes fully-barrier
+    # blocks as NaN, so route the coarse grid with no value barriers.
+    no_barriers = np.empty(0, dtype=barriers.dtype)
     coarse_path = np.full((ch, cw), np.nan, dtype=np.float64)
     _a_star_search(coarse_surface, coarse_path,
                    cs_py, cs_px, cg_py, cg_px,
-                   barriers, c_dy, c_dx, c_dd,
+                   no_barriers, c_dy, c_dx, c_dd,
                    coarse_friction, f_min, use_friction,
                    coarse_cx, coarse_cy)
 
