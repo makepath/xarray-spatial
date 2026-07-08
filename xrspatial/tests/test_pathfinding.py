@@ -1191,6 +1191,10 @@ def _golden_friction_6x6():
 
 
 def _golden_raster(data, cx=30.0, cy=30.0):
+    # Deliberately NOT _make_raster: that helper stores attrs['res'] with
+    # the y spacing first, while get_dataarray_resolution reads attrs['res']
+    # as (cellsize_x, cellsize_y) -- with anisotropic cells that would flip
+    # cx and cy. No 'res' attr here, so resolution comes from the coords.
     import xarray as xr
     h, w = data.shape
     r = xr.DataArray(data.astype(np.float64), dims=['y', 'x'])
@@ -1203,36 +1207,37 @@ def _pixel_coords(raster, py, px):
     return (float(raster['y'].values[py]), float(raster['x'].values[px]))
 
 
-# (case id, connectivity, start px, goal px, expected goal cost)
+# (connectivity, start px, goal px, expected goal cost)
 _GOLDEN_OPEN_GRID = [
     # 6x6 open grid, 30 m square cells; closed form:
     # 5 diagonals of sqrt(2)*30, or 10 cardinals of 30
-    ('open-8conn', 8, (0, 0), (5, 5), 212.13203435596427),
-    ('open-4conn', 4, (0, 0), (5, 5), 300.0),
+    pytest.param(8, (0, 0), (5, 5), 212.13203435596427, id='open-8conn'),
+    pytest.param(4, (0, 0), (5, 5), 300.0, id='open-4conn'),
 ]
 
 _GOLDEN_MAZE = [
-    ('maze-corner', (0, 0), (7, 7), 296.98484809834997),
-    ('maze-mid', (7, 0), (4, 4), 174.8528137423857),
-    ('maze-no-path', (7, 0), (0, 7), np.nan),
+    pytest.param((0, 0), (7, 7), 296.98484809834997, id='maze-corner'),
+    pytest.param((7, 0), (4, 4), 174.8528137423857, id='maze-mid'),
+    pytest.param((7, 0), (0, 7), np.nan, id='maze-no-path'),
 ]
 
 _GOLDEN_FRICTION = [
-    ('friction-diag', (0, 0), (5, 5), 416.6432249718464),
-    ('friction-anti-diag', (5, 0), (0, 5), 452.5139715437149),
+    pytest.param((0, 0), (5, 5), 416.6432249718464, id='friction-diag'),
+    pytest.param((5, 0), (0, 5), 452.5139715437149,
+                 id='friction-anti-diag'),
 ]
 
 _GOLDEN_ANISO = [
     # cx=30, cy=10: diagonal = sqrt(30^2 + 10^2)
-    ('aniso-8conn', 8, (0, 0), (5, 5), 158.11388300841895),
-    ('aniso-4conn', 4, (0, 3), (5, 0), 140.0),
+    pytest.param(8, (0, 0), (5, 5), 158.11388300841895, id='aniso-8conn'),
+    pytest.param(4, (0, 3), (5, 0), 140.0, id='aniso-4conn'),
 ]
 
 
 @pytest.mark.parametrize("backend", _backends)
-@pytest.mark.parametrize("case,connectivity,start_px,goal_px,expected",
+@pytest.mark.parametrize("connectivity,start_px,goal_px,expected",
                          _GOLDEN_OPEN_GRID)
-def test_golden_open_grid(backend, case, connectivity, start_px, goal_px,
+def test_golden_open_grid(backend, connectivity, start_px, goal_px,
                           expected):
     agg = _golden_raster(np.ones((6, 6)))
     if backend == 'dask+numpy':
@@ -1245,8 +1250,8 @@ def test_golden_open_grid(backend, case, connectivity, start_px, goal_px,
 
 
 @pytest.mark.parametrize("backend", _backends)
-@pytest.mark.parametrize("case,start_px,goal_px,expected", _GOLDEN_MAZE)
-def test_golden_barrier_maze(backend, case, start_px, goal_px, expected):
+@pytest.mark.parametrize("start_px,goal_px,expected", _GOLDEN_MAZE)
+def test_golden_barrier_maze(backend, start_px, goal_px, expected):
     agg = _golden_raster(_golden_maze_8x8())
     if backend == 'dask+numpy':
         agg.data = da.from_array(agg.data, chunks=(4, 4))
@@ -1264,8 +1269,8 @@ def test_golden_barrier_maze(backend, case, start_px, goal_px, expected):
 
 
 @pytest.mark.parametrize("backend", _backends)
-@pytest.mark.parametrize("case,start_px,goal_px,expected", _GOLDEN_FRICTION)
-def test_golden_friction(backend, case, start_px, goal_px, expected):
+@pytest.mark.parametrize("start_px,goal_px,expected", _GOLDEN_FRICTION)
+def test_golden_friction(backend, start_px, goal_px, expected):
     agg = _golden_raster(np.ones((6, 6)))
     friction = _golden_raster(_golden_friction_6x6())
     if backend == 'dask+numpy':
@@ -1279,9 +1284,9 @@ def test_golden_friction(backend, case, start_px, goal_px, expected):
 
 
 @pytest.mark.parametrize("backend", _backends)
-@pytest.mark.parametrize("case,connectivity,start_px,goal_px,expected",
+@pytest.mark.parametrize("connectivity,start_px,goal_px,expected",
                          _GOLDEN_ANISO)
-def test_golden_anisotropic_cellsize(backend, case, connectivity, start_px,
+def test_golden_anisotropic_cellsize(backend, connectivity, start_px,
                                      goal_px, expected):
     agg = _golden_raster(np.ones((6, 6)), cx=30.0, cy=10.0)
     if backend == 'dask+numpy':
