@@ -8,19 +8,16 @@ import numpy as np
 import xarray as xr
 
 try:
-    import dask.array as da
     import dask
+    import dask.array as da
 except ImportError:
     da = None
     dask = None
 
-from xrspatial.cost_distance import _heap_push, _heap_pop
+from xrspatial.cost_distance import _heap_pop, _heap_push
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (
-    _validate_raster,
-    get_dataarray_resolution, ngjit,
-    has_cuda_and_cupy, is_cupy_array, is_dask_cupy, has_dask_array,
-)
+from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 NONE = -1
 
@@ -1060,6 +1057,7 @@ def a_star_search(surface: xr.DataArray,
 
     elif _is_cupy_backend:
         import cupy
+
         # Transfer to CPU, run numpy kernel, transfer back
         if 'surface_np' not in dir():
             surface_np = surface_data.get()
