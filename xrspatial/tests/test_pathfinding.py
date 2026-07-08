@@ -1232,6 +1232,29 @@ def test_dask_barriers_match_numpy():
     )
 
 
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_cupy_barriers_match_numpy():
+    """Dask+cupy A* honors barriers through the cupy chunk conversion."""
+    agg_np = _make_raster(_barrier_grid, backend='numpy')
+    agg_dc = _make_raster(_barrier_grid, backend='dask+cupy', chunks=(2, 2))
+
+    start = (4.0, 1.0)
+    goal = (0.0, 1.0)
+
+    path_np = a_star_search(agg_np, start, goal, barriers=[0])
+    path_dc = a_star_search(agg_dc, start, goal, barriers=[0])
+
+    dc_computed = path_dc.data.compute()
+    if hasattr(dc_computed, 'get'):
+        dc_computed = dc_computed.get()
+    np.testing.assert_allclose(
+        dc_computed,
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
 @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
 def test_dask_nan_wall_no_path():
     """Dask A* returns all-NaN when NaN cells block every route."""
@@ -1347,6 +1370,11 @@ def test_degenerate_shapes_cupy():
     path2 = a_star_search(agg2, (0.0, 0.0), (0.0, 4.0))
     np.testing.assert_allclose(
         path2.data.get(), [[0., 1., 2., 3., 4.]], atol=1e-10)
+
+    agg3 = _make_raster(np.ones((5, 1)), backend='cupy')
+    path3 = a_star_search(agg3, (4.0, 0.0), (0.0, 0.0))
+    np.testing.assert_allclose(
+        path3.data.get().ravel(), [0., 1., 2., 3., 4.], atol=1e-10)
 
 
 # --- Parameter / error-path coverage ---
