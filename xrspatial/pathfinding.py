@@ -1392,6 +1392,10 @@ def multi_stop_search(surface: xr.DataArray,
     minimize total travel cost (TSP), keeping the first and last
     waypoints fixed.
 
+    Dask-backed surfaces are routed sparsely and the segments are
+    stitched lazily, so the full grid is never materialized in memory;
+    peak memory scales with the chunk size and the explored corridor.
+
     Parameters
     ----------
     surface : xr.DataArray or xr.Dataset
@@ -1521,6 +1525,10 @@ def multi_stop_search(surface: xr.DataArray,
                 raise ValueError(
                     f"no path between waypoints {i} and {i + 1}")
 
+            # Each segment adds one da.where layer over every chunk, so
+            # the task graph grows as n_waypoints * n_chunks elementwise
+            # tasks.  _MAX_WAYPOINTS bounds this; the eager alternative
+            # materializes the full grid.
             shifted = seg.data + cumulative_cost  # NaN stays NaN
             if path_data is None:
                 path_data = shifted

@@ -266,6 +266,30 @@ def _make_raster(data, dims=None, res=None, backend='numpy', chunks=(3, 3)):
     return raster
 
 
+def _tracking_np_full(threshold_cells, large_allocs):
+    """Build an np.full replacement that records allocations of
+    ``threshold_cells`` cells or more into *large_allocs*.
+
+    Used to assert that dask code paths never materialise full-size
+    arrays.  Patch with ``patch('numpy.full', side_effect=...)``.
+    """
+    original_full = np.full
+
+    def tracking_full(shape, *args, **kwargs):
+        result = original_full(shape, *args, **kwargs)
+        if hasattr(shape, '__len__'):
+            total = 1
+            for s in shape:
+                total *= s
+        else:
+            total = shape
+        if total >= threshold_cells:
+            large_allocs.append(('full', shape))
+        return result
+
+    return tracking_full
+
+
 # -----------------------------------------------------------------------
 # Weighted A* tests — parametrized for numpy and dask
 # -----------------------------------------------------------------------
@@ -493,23 +517,11 @@ def test_dask_no_large_numpy_arrays():
     goal = (0.0, float(width - 1))
 
     # Track large numpy allocations
-    original_full = np.full
     large_allocs = []
 
-    def tracking_full(shape, *args, **kwargs):
-        result = original_full(shape, *args, **kwargs)
-        if hasattr(shape, '__len__'):
-            total = 1
-            for s in shape:
-                total *= s
-        else:
-            total = shape
-        if total >= height * width:
-            large_allocs.append(('full', shape))
-        return result
-
     from unittest.mock import patch
-    with patch('numpy.full', side_effect=tracking_full):
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
         result = a_star_search(agg, start, goal, friction=friction_agg)
 
     # Result should be dask-backed
@@ -1105,23 +1117,11 @@ def test_multi_stop_dask_no_large_numpy_arrays():
     wp1 = (float(height // 2), float(width // 2))
     wp2 = (0.0, float(width - 1))
 
-    original_full = np.full
     large_allocs = []
 
-    def tracking_full(shape, *args, **kwargs):
-        result = original_full(shape, *args, **kwargs)
-        if hasattr(shape, '__len__'):
-            total = 1
-            for s in shape:
-                total *= s
-        else:
-            total = shape
-        if total >= height * width:
-            large_allocs.append(('full', shape))
-        return result
-
     from unittest.mock import patch
-    with patch('numpy.full', side_effect=tracking_full):
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
         result = multi_stop_search(agg, [wp0, wp1, wp2])
 
     # Result should be dask-backed
@@ -1162,23 +1162,11 @@ def test_multi_stop_optimize_order_dask_no_large_numpy_arrays():
     wp2 = (float(height - 1), float(width // 2))
     wp3 = (0.0, float(width // 2))
 
-    original_full = np.full
     large_allocs = []
 
-    def tracking_full(shape, *args, **kwargs):
-        result = original_full(shape, *args, **kwargs)
-        if hasattr(shape, '__len__'):
-            total = 1
-            for s in shape:
-                total *= s
-        else:
-            total = shape
-        if total >= height * width:
-            large_allocs.append(('full', shape))
-        return result
-
     from unittest.mock import patch
-    with patch('numpy.full', side_effect=tracking_full):
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
         result = multi_stop_search(
             agg, [wp0, wp1, wp2, wp3], optimize_order=True)
 
