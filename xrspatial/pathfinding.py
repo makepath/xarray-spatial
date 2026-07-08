@@ -869,10 +869,10 @@ def a_star_search(surface: xr.DataArray,
     y : str, default='y'
         Name of the y coordinate in input surface raster.
     connectivity : int, default=8
-    snap_start: bool, default=False
+    snap_start : bool, default=False
         Snap the start location to the nearest valid value before
         beginning pathfinding.
-    snap_goal: bool, default=False
+    snap_goal : bool, default=False
         Snap the goal location to the nearest valid value before
         beginning pathfinding.
     friction : xr.DataArray, optional
