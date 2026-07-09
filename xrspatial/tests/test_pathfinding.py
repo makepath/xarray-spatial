@@ -799,6 +799,31 @@ def test_hpa_star_unreachable_goal_all_nan():
     assert not np.isfinite(path_img).any()
 
 
+def test_hpa_star_barrier_valued_block_means():
+    """Coarse routing must not re-apply value barriers to block means (#3647).
+
+    Alternating -1/+1 columns make every coarse block mean exactly 0.0.
+    With barriers=[0] no fine cell is a barrier, but the coarse grid used
+    to be entirely blocked, returning all-NaN on a fully passable grid.
+    """
+    H = W = 200
+    data = np.full((H, W), 1.0)
+    data[:, ::2] = -1.0
+    barriers = np.array([0.0])
+    assert not np.any(data == 0.0)  # every fine cell is passable
+
+    dy, dx, dd = _neighborhood_structure(1.0, 1.0, 8)
+
+    path_img = _hpa_star_search(
+        data, None, 0, 0, H - 1, W - 1,
+        barriers, dy, dx, dd,
+        1.0, False, 1.0, 1.0, H, W)
+
+    assert np.isfinite(path_img[0, 0])
+    assert np.isfinite(path_img[H - 1, W - 1])
+    assert path_img[H - 1, W - 1] > 0.0
+
+
 def test_auto_radius_selection():
     """When mocked low memory, auto-radius kicks in and finds path."""
     data = np.ones((20, 20))
