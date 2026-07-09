@@ -1189,6 +1189,11 @@ def a_star_search(surface: xr.DataArray,
                             coords=surface.coords,
                             dims=surface.dims,
                             attrs=surface.attrs)
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'concatenate-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg
 
@@ -1559,5 +1564,10 @@ def multi_stop_search(surface: xr.DataArray,
             'total_cost': cumulative_cost,
         },
     )
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'array-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg
