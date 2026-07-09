@@ -266,6 +266,30 @@ def _make_raster(data, dims=None, res=None, backend='numpy', chunks=(3, 3)):
     return raster
 
 
+def _tracking_np_full(threshold_cells, large_allocs):
+    """Build an np.full replacement that records allocations of
+    ``threshold_cells`` cells or more into *large_allocs*.
+
+    Used to assert that dask code paths never materialise full-size
+    arrays.  Patch with ``patch('numpy.full', side_effect=...)``.
+    """
+    original_full = np.full
+
+    def tracking_full(shape, *args, **kwargs):
+        result = original_full(shape, *args, **kwargs)
+        if hasattr(shape, '__len__'):
+            total = 1
+            for s in shape:
+                total *= s
+        else:
+            total = shape
+        if total >= threshold_cells:
+            large_allocs.append(('full', shape))
+        return result
+
+    return tracking_full
+
+
 # -----------------------------------------------------------------------
 # Weighted A* tests — parametrized for numpy and dask
 # -----------------------------------------------------------------------
@@ -493,23 +517,11 @@ def test_dask_no_large_numpy_arrays():
     goal = (0.0, float(width - 1))
 
     # Track large numpy allocations
-    original_full = np.full
     large_allocs = []
 
-    def tracking_full(shape, *args, **kwargs):
-        result = original_full(shape, *args, **kwargs)
-        if hasattr(shape, '__len__'):
-            total = 1
-            for s in shape:
-                total *= s
-        else:
-            total = shape
-        if total >= height * width:
-            large_allocs.append(('full', shape))
-        return result
-
     from unittest.mock import patch
-    with patch('numpy.full', side_effect=tracking_full):
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
         result = a_star_search(agg, start, goal, friction=friction_agg)
 
     # Result should be dask-backed
@@ -1187,6 +1199,91 @@ def test_multi_stop_dask_matches_numpy():
         np.asarray(path_dask.values),
         path_np.values,
         equal_nan=True, atol=1e-10,
+    )
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_dask_no_large_numpy_arrays():
+    """Dask multi-stop should not materialise full-size numpy arrays.
+
+    Same guard as test_dask_no_large_numpy_arrays, but for
+    multi_stop_search (issue #3660): segments must be stitched lazily
+    and per-segment goal costs read from a single block.
+    """
+    height, width = 50, 60
+    data = np.ones((height, width))
+
+    agg = _make_raster(data, backend='dask+numpy', chunks=(25, 30))
+
+    wp0 = (float(height - 1), 0.0)
+    wp1 = (float(height // 2), float(width // 2))
+    wp2 = (0.0, float(width - 1))
+
+    large_allocs = []
+
+    from unittest.mock import patch
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
+        result = multi_stop_search(agg, [wp0, wp1, wp2])
+
+    # Result should be dask-backed
+    assert isinstance(result.data, da.Array)
+
+    # No full-size arrays should have been allocated while routing
+    assert len(large_allocs) == 0, (
+        f"Unexpected large allocations: {large_allocs}")
+
+    # And it should still match the numpy backend
+    agg_np = _make_raster(data, backend='numpy')
+    expected = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    np.testing.assert_allclose(
+        np.asarray(result.values),
+        expected.values,
+        equal_nan=True, atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], expected.attrs['total_cost'],
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        result.attrs['segment_costs'], expected.attrs['segment_costs'],
+        atol=1e-10,
+    )
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_optimize_order_dask_no_large_numpy_arrays():
+    """optimize_order on dask must not materialise full-size arrays either."""
+    height, width = 50, 60
+    data = np.ones((height, width))
+
+    agg = _make_raster(data, backend='dask+numpy', chunks=(25, 30))
+
+    wp0 = (float(height - 1), 0.0)
+    wp1 = (0.0, float(width - 1))
+    wp2 = (float(height - 1), float(width // 2))
+    wp3 = (0.0, float(width // 2))
+
+    large_allocs = []
+
+    from unittest.mock import patch
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
+        result = multi_stop_search(
+            agg, [wp0, wp1, wp2, wp3], optimize_order=True)
+
+    assert isinstance(result.data, da.Array)
+    assert len(large_allocs) == 0, (
+        f"Unexpected large allocations: {large_allocs}")
+
+    # Optimization behavior itself must match the numpy backend
+    agg_np = _make_raster(data, backend='numpy')
+    expected = multi_stop_search(
+        agg_np, [wp0, wp1, wp2, wp3], optimize_order=True)
+    assert result.attrs['waypoint_order'] == expected.attrs['waypoint_order']
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], expected.attrs['total_cost'],
+        atol=1e-10,
     )
 
 

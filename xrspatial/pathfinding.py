@@ -1336,6 +1336,21 @@ def _segment_to_numpy(seg_data):
     return np.asarray(seg_data)
 
 
+def _cost_at_pixel(seg_data, py, px):
+    """Read the cost of one pixel of an a_star_search result as a float.
+
+    On dask backends this computes only the block containing the pixel
+    (a cheap delayed block from ``_path_to_dask_array``), so the full
+    segment is never materialized.
+    """
+    value = seg_data[py, px]
+    if da is not None and isinstance(value, da.Array):
+        value = value.compute()
+    if hasattr(value, 'get'):  # cupy scalar -> numpy
+        value = value.get()
+    return float(value)
+
+
 def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
                              connectivity, snap, friction, search_radius):
     """Build pairwise cost matrix and solve TSP with fixed endpoints.
@@ -1354,10 +1369,11 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
             snap_start=snap, snap_goal=snap,
             friction=friction, search_radius=search_radius,
         )
-        seg_vals = _segment_to_numpy(seg.data)
         goal_py, goal_px = _get_pixel_id(waypoints[b], surface, x, y)
-        goal_cost = seg_vals[goal_py, goal_px]
-        return float(goal_cost) if np.isfinite(goal_cost) else INF
+        # Single-pixel read: on dask backends this computes only the
+        # block containing the goal instead of the whole segment.
+        goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+        return goal_cost if np.isfinite(goal_cost) else INF
 
     for i in range(n):
         dist[i][i] = 0.0
@@ -1402,6 +1418,10 @@ def multi_stop_search(surface: xr.DataArray,
     ``optimize_order=True``, the interior waypoints are reordered to
     minimize total travel cost (TSP), keeping the first and last
     waypoints fixed.
+
+    Dask-backed surfaces are routed sparsely and the segments are
+    stitched lazily, so the full grid is never materialized in memory;
+    peak memory scales with the chunk size and the explored corridor.
 
     Parameters
     ----------
@@ -1501,7 +1521,11 @@ def multi_stop_search(surface: xr.DataArray,
             )
 
     # --- Segment-by-segment routing ---
-    path_data = np.full(surface.shape, np.nan, dtype=np.float64)
+    if _is_dask:
+        # Built lazily below; never allocate the full grid in memory.
+        path_data = None
+    else:
+        path_data = np.full(surface.shape, np.nan, dtype=np.float64)
     cumulative_cost = 0.0
     segment_costs = []
 
@@ -1516,44 +1540,68 @@ def multi_stop_search(surface: xr.DataArray,
             snap_start=snap, snap_goal=snap,
             friction=friction, search_radius=search_radius,
         )
-        seg_vals = _segment_to_numpy(seg.data)
 
         goal_py, goal_px = waypoint_pixels[i + 1]
 
-        # If snap is on, the actual goal pixel may differ from the
-        # requested one.  Find the pixel with maximum finite cost
-        # (the true goal of this segment).
-        if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
-            finite = np.isfinite(seg_vals)
-            if finite.any():
-                max_idx = np.nanargmax(seg_vals)
-                goal_py, goal_px = np.unravel_index(max_idx, seg_vals.shape)
-                waypoint_pixels[i + 1] = (goal_py, goal_px)
+        if _is_dask:
+            # Lazy stitching: reading the goal cost computes only the
+            # block containing it, and the cumulative-cost overlay stays
+            # chunked.  snap is rejected for dask inputs above, so the
+            # goal pixel is always the requested one.  Junction pixels
+            # need no masking: the overwriting value (segment-start cost
+            # 0 plus the cumulative offset) equals what the previous
+            # segment wrote there.
+            seg_goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+            if not np.isfinite(seg_goal_cost):
+                raise ValueError(
+                    f"no path between waypoints {i} and {i + 1}")
 
-        seg_goal_cost = seg_vals[goal_py, goal_px]
+            # Each segment adds one da.where layer over every chunk, so
+            # the task graph grows as n_waypoints * n_chunks elementwise
+            # tasks.  _MAX_WAYPOINTS bounds this; the eager alternative
+            # materializes the full grid.
+            shifted = seg.data + cumulative_cost  # NaN stays NaN
+            if path_data is None:
+                path_data = shifted
+            else:
+                path_data = da.where(
+                    da.isfinite(shifted), shifted, path_data)
+        else:
+            seg_vals = _segment_to_numpy(seg.data)
 
-        if not np.isfinite(seg_goal_cost):
-            raise ValueError(
-                f"no path between waypoints {i} and {i + 1}")
+            # If snap is on, the actual goal pixel may differ from the
+            # requested one.  Find the pixel with maximum finite cost
+            # (the true goal of this segment).
+            if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
+                finite = np.isfinite(seg_vals)
+                if finite.any():
+                    max_idx = np.nanargmax(seg_vals)
+                    goal_py, goal_px = np.unravel_index(
+                        max_idx, seg_vals.shape)
+                    waypoint_pixels[i + 1] = (goal_py, goal_px)
 
-        mask = np.isfinite(seg_vals)
-        if i > 0:
-            # Don't overwrite the junction pixel (set by previous segment)
-            sp_y, sp_x = waypoint_pixels[i]
-            mask[sp_y, sp_x] = False
+            seg_goal_cost = seg_vals[goal_py, goal_px]
 
-        path_data[mask] = seg_vals[mask] + cumulative_cost
+            if not np.isfinite(seg_goal_cost):
+                raise ValueError(
+                    f"no path between waypoints {i} and {i + 1}")
+
+            mask = np.isfinite(seg_vals)
+            if i > 0:
+                # Don't overwrite the junction pixel
+                # (set by previous segment)
+                sp_y, sp_x = waypoint_pixels[i]
+                mask[sp_y, sp_x] = False
+
+            path_data[mask] = seg_vals[mask] + cumulative_cost
+
         segment_costs.append(float(seg_goal_cost))
         cumulative_cost += seg_goal_cost
 
-    # Match the input's array type, like a_star_search does
-    if _is_dask:
-        chunks = surface_data.chunks
-        path_data = da.from_array(path_data, chunks=chunks)
-        if has_cuda_and_cupy() and is_dask_cupy(surface):
-            import cupy
-            path_data = path_data.map_blocks(cupy.asarray)
-    elif has_cuda_and_cupy() and is_cupy_array(surface_data):
+    # Match the input's array type, like a_star_search does.  On dask
+    # backends path_data is already a lazy array with the surface's
+    # chunking (and cupy blocks for dask+cupy).
+    if not _is_dask and has_cuda_and_cupy() and is_cupy_array(surface_data):
         import cupy
         path_data = cupy.asarray(path_data)
 
