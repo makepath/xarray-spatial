@@ -1425,3 +1425,64 @@ class TestPathfindingInputValidation:
         too_many = [(i % 10, (i * 7) % 10) for i in range(_MAX_WAYPOINTS + 1)]
         with pytest.raises(ValueError, match=f"at most {_MAX_WAYPOINTS}"):
             multi_stop_search(s, too_many)
+
+
+# --- API consistency tests (#3644) ---
+
+def test_multi_stop_search_preserves_input_attrs():
+    """Input attrs survive alongside the routing attrs."""
+    data = np.ones((8, 8))
+    agg = _make_raster(data)
+    agg.attrs['crs'] = 4326
+    agg.attrs['units'] = 'm'
+
+    result = multi_stop_search(agg, [(7.0, 0.0), (0.0, 7.0)])
+
+    # input attrs preserved
+    assert result.attrs['crs'] == 4326
+    assert result.attrs['units'] == 'm'
+    assert result.attrs['res'] == (1.0, 1.0)
+    # routing attrs added
+    for key in ('waypoint_order', 'segment_costs', 'total_cost'):
+        assert key in result.attrs
+
+
+def test_a_star_search_accepts_dataset():
+    """a_star_search on a Dataset routes each variable, like its sibling."""
+    import xarray as xr
+    data = np.ones((8, 8))
+    agg = _make_raster(data)
+    ds = xr.Dataset({'elev': agg, 'other': agg + 1.0})
+    start, goal = (7.0, 0.0), (0.0, 7.0)
+
+    result = a_star_search(ds, start, goal)
+
+    assert isinstance(result, xr.Dataset)
+    assert set(result.data_vars) == {'elev', 'other'}
+    expected = a_star_search(agg, start, goal)
+    np.testing.assert_allclose(
+        result['elev'].values, expected.values, equal_nan=True)
+
+
+def test_barriers_default_none_matches_empty_list():
+    """barriers=None (new default) behaves like the old barriers=[].
+
+    Numpy only: the None -> [] substitution happens before backend
+    dispatch, so it is backend-independent.
+    """
+    data = np.ones((6, 6))
+    agg = _make_raster(data)
+    start, goal = (5.0, 0.0), (0.0, 5.0)
+
+    r_default = a_star_search(agg, start, goal)
+    r_none = a_star_search(agg, start, goal, barriers=None)
+    r_empty = a_star_search(agg, start, goal, barriers=[])
+
+    np.testing.assert_allclose(
+        r_none.values, r_default.values, equal_nan=True)
+    np.testing.assert_allclose(
+        r_empty.values, r_default.values, equal_nan=True)
+
+    m_none = multi_stop_search(agg, [start, goal], barriers=None)
+    np.testing.assert_allclose(
+        m_none.values, r_default.values, equal_nan=True)
