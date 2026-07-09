@@ -791,16 +791,17 @@ def _path_to_dask_array(path_pixels, shape, chunks, is_cupy):
     return da.block(blocks)
 
 
+@supports_dataset
 def a_star_search(surface: xr.DataArray,
-                  start: Union[tuple, list, np.array],
-                  goal: Union[tuple, list, np.array],
-                  barriers: list = [],
-                  x: Optional[str] = 'x',
-                  y: Optional[str] = 'y',
+                  start: Union[tuple, list, np.ndarray],
+                  goal: Union[tuple, list, np.ndarray],
+                  barriers: Optional[list] = None,
+                  x: str = 'x',
+                  y: str = 'y',
                   connectivity: int = 8,
                   snap_start: bool = False,
                   snap_goal: bool = False,
-                  friction: xr.DataArray = None,
+                  friction: Optional[xr.DataArray] = None,
                   search_radius: Optional[int] = None) -> xr.DataArray:
     """
     Calculate the least-cost path from a starting point to a goal through
@@ -847,8 +848,10 @@ def a_star_search(surface: xr.DataArray,
 
     Parameters
     ----------
-    surface : xr.DataArray
-        2D array of values to bin.
+    surface : xr.DataArray or xr.Dataset
+        2D array of the surface to find a path across.  A Dataset routes
+        each data variable independently and returns a Dataset of the
+        per-variable results.
     start : array-like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the starting point.
         The point is mapped to the pixel whose cell center is nearest.
@@ -857,18 +860,19 @@ def a_star_search(surface: xr.DataArray,
         (y, x) or (lat, lon) coordinates of the goal location.
         Mapped to the nearest cell center; a point outside the raster
         bounds raises a ``ValueError``.
-    barriers : array like object, default=[]
+    barriers : array like object, optional
         List of values inside the surface which are barriers
-        (cannot cross).
+        (cannot cross).  Default is no barriers.
     x : str, default='x'
         Name of the x coordinate in input surface raster.
-    y: str, default='y'
+    y : str, default='y'
         Name of the y coordinate in input surface raster.
     connectivity : int, default=8
-    snap_start: bool, default=False
+        Use 4 or 8 pixel connectivity to define neighboring cells.
+    snap_start : bool, default=False
         Snap the start location to the nearest valid value before
         beginning pathfinding.
-    snap_goal: bool, default=False
+    snap_goal : bool, default=False
         Snap the goal location to the nearest valid value before
         beginning pathfinding.
     friction : xr.DataArray, optional
@@ -891,6 +895,7 @@ def a_star_search(surface: xr.DataArray,
     path_agg: xr.DataArray of the same type as `surface`.
         2D array of pathfinding values.
         All other input attributes are preserved.
+        A Dataset input returns a Dataset of per-variable results.
 
     References
     ----------
@@ -964,6 +969,8 @@ def a_star_search(surface: xr.DataArray,
     if not _is_inside(goal_py, goal_px, h, w):
         raise ValueError("goal location outside the surface graph.")
 
+    if barriers is None:
+        barriers = []
     barriers = np.asarray(barriers)
 
     # --- Snap / crossability checks ---
@@ -1182,6 +1189,11 @@ def a_star_search(surface: xr.DataArray,
                             coords=surface.coords,
                             dims=surface.dims,
                             attrs=surface.attrs)
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'concatenate-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg
 
@@ -1345,24 +1357,35 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
     INF = float('inf')
     dist = [[INF] * n for _ in range(n)]
 
+    def _pair_cost(a, b):
+        seg = a_star_search(
+            surface, waypoints[a], waypoints[b],
+            barriers=barriers, x=x, y=y,
+            connectivity=connectivity,
+            snap_start=snap, snap_goal=snap,
+            friction=friction, search_radius=search_radius,
+        )
+        goal_py, goal_px = _get_pixel_id(waypoints[b], surface, x, y)
+        # Single-pixel read: on dask backends this computes only the
+        # block containing the goal instead of the whole segment.
+        goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+        return goal_cost if np.isfinite(goal_cost) else INF
+
     for i in range(n):
-        for j in range(n):
-            if i == j:
-                dist[i][j] = 0.0
-                continue
-            seg = a_star_search(
-                surface, waypoints[i], waypoints[j],
-                barriers=barriers, x=x, y=y,
-                connectivity=connectivity,
-                snap_start=snap, snap_goal=snap,
-                friction=friction, search_radius=search_radius,
-            )
-            goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
-            # Single-pixel read: on dask backends this computes only the
-            # block containing the goal instead of the whole segment.
-            goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
-            if np.isfinite(goal_cost):
-                dist[i][j] = goal_cost
+        dist[i][i] = 0.0
+        for j in range(i + 1, n):
+            dist[i][j] = _pair_cost(i, j)
+            if snap:
+                # Snapping can move the requested start and goal pixels,
+                # so the reverse direction may read its cost at a
+                # different pixel; compute it explicitly.
+                dist[j][i] = _pair_cost(j, i)
+            else:
+                # The pixel graph is undirected and edge costs use the
+                # mean friction of both endpoints, so the cost matrix is
+                # symmetric: reuse cost(i -> j) as cost(j -> i) instead
+                # of running the reverse A* search.
+                dist[j][i] = dist[i][j]
 
     # Fixed endpoints: first=0, last=n-1
     if n <= 12:
@@ -1376,12 +1399,12 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
 @supports_dataset
 def multi_stop_search(surface: xr.DataArray,
                       waypoints: list,
-                      barriers: list = [],
-                      x: Optional[str] = 'x',
-                      y: Optional[str] = 'y',
+                      barriers: Optional[list] = None,
+                      x: str = 'x',
+                      y: str = 'y',
                       connectivity: int = 8,
                       snap: bool = False,
-                      friction: xr.DataArray = None,
+                      friction: Optional[xr.DataArray] = None,
                       search_radius: Optional[int] = None,
                       optimize_order: bool = False) -> xr.DataArray:
     """Find the least-cost path visiting a sequence of waypoints in order.
@@ -1405,8 +1428,8 @@ def multi_stop_search(surface: xr.DataArray,
     waypoints : list of array-like
         Sequence of ``(y, x)`` coordinate pairs to visit.  Must contain
         at least two points.
-    barriers : list, default=[]
-        Surface values that are impassable.
+    barriers : list, optional
+        Surface values that are impassable.  Default is no barriers.
     x, y : str, default ``'x'`` / ``'y'``
         Coordinate dimension names.
     connectivity : int, default=8
@@ -1426,9 +1449,10 @@ def multi_stop_search(surface: xr.DataArray,
     -------
     xr.DataArray or xr.Dataset
         Cumulative path cost surface, backed by the same array type as
-        *surface* (numpy, cupy, dask, or dask+cupy).  Attributes include
-        ``waypoint_order``, ``segment_costs``, and ``total_cost``.
-        A Dataset input returns a Dataset of per-variable results.
+        *surface* (numpy, cupy, dask, or dask+cupy).  Input attributes
+        are preserved, with ``waypoint_order``, ``segment_costs``, and
+        ``total_cost`` added.  A Dataset input returns a Dataset of
+        per-variable results.
 
     Raises
     ------
@@ -1440,6 +1464,9 @@ def multi_stop_search(surface: xr.DataArray,
     # --- Input validation ---
     _validate_raster(surface, func_name='multi_stop_search',
                      name='surface', ndim=2)
+
+    if barriers is None:
+        barriers = []
 
     if friction is not None:
         _validate_raster(friction, func_name='multi_stop_search',
@@ -1579,10 +1606,16 @@ def multi_stop_search(surface: xr.DataArray,
         coords=surface.coords,
         dims=surface.dims,
         attrs={
+            **surface.attrs,
             'waypoint_order': [tuple(wp) for wp in waypoints],
             'segment_costs': segment_costs,
             'total_cost': cumulative_cost,
         },
     )
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'array-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg
