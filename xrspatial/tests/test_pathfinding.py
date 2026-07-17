@@ -1081,6 +1081,62 @@ def test_optimize_order_finds_better_route():
     assert optimized.attrs['total_cost'] <= naive.attrs['total_cost'] + 1e-10
 
 
+def test_optimize_order_unreachable_waypoint_raises():
+    """Unreachable interior waypoint raises instead of being dropped (#3646).
+
+    Without optimize_order the segment loop raises "no path between
+    waypoints"; with optimize_order the infeasible tour used to make
+    _held_karp return only [start, end], silently dropping the interior
+    waypoint and returning a finite route.
+    """
+    data = np.ones((8, 8))
+    data[4, :] = np.nan   # wall: bottom rows unreachable from top rows
+
+    agg = _make_raster(data)
+
+    wp0 = (7.0, 0.0)      # pixel (0, 0), above the wall
+    wp_mid = (0.0, 0.0)   # pixel (7, 0), below the wall (unreachable)
+    wp_end = (7.0, 7.0)   # pixel (0, 7), above the wall
+
+    with pytest.raises(ValueError, match="unreachable"):
+        multi_stop_search(agg, [wp0, wp_mid, wp_end], optimize_order=True)
+
+
+@pytest.mark.filterwarnings("ignore:End at a non crossable location:Warning")
+@pytest.mark.filterwarnings("ignore:Start at a non crossable location:Warning")
+def test_optimize_order_with_snap_keeps_waypoints():
+    """optimize_order must not drop waypoints that need snapping (#3646).
+
+    The pairwise distance matrix used to read the segment cost at the
+    unsnapped goal pixel (NaN when the waypoint sits on an invalid cell),
+    so every snapped waypoint got an infinite distance and was dropped
+    through the infeasible-tour hole.
+    """
+    data = np.ones((8, 8))
+    data[3, 3] = np.nan   # single invalid cell; snap moves off it
+
+    agg = _make_raster(data)
+
+    wp0 = (7.0, 0.0)      # pixel (0, 0)
+    wp_mid = (4.0, 3.0)   # pixel (3, 3) -> NaN cell, needs snapping
+    wp_end = (0.0, 7.0)   # pixel (7, 7)
+
+    result = multi_stop_search(
+        agg, [wp0, wp_mid, wp_end], snap=True, optimize_order=True)
+
+    order = result.attrs['waypoint_order']
+    assert len(order) == 3
+    assert len(result.attrs['segment_costs']) == 2
+    assert tuple(order[0]) == wp0
+    assert tuple(order[-1]) == wp_end
+
+    # Same route as the unoptimized call (the input order is already
+    # optimal here), so costs must match too.
+    plain = multi_stop_search(agg, [wp0, wp_mid, wp_end], snap=True)
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], plain.attrs['total_cost'], atol=1e-10)
+
+
 def test_optimize_order_preserves_endpoints():
     """First and last waypoints should remain fixed after optimization."""
     data = np.ones((10, 10))
@@ -1992,6 +2048,86 @@ def test_hpa_star_with_friction():
     coarse = _coarsen_friction(fr, 2)
     assert coarse.shape == (1, 1)
     np.testing.assert_allclose(coarse[0, 0], 2.0)
+
+
+@pytest.mark.parametrize("func_name", ["a_star_search", "multi_stop_search"])
+def test_docstring_params_match_signature(func_name):
+    # Every parameter documented in the numpy-style "Parameters" section
+    # must exist in the signature (and vice versa). Same guard as
+    # test_multispectral.py::test_docstring_params_match_signature, plus
+    # support for grouped entries like "x, y : str".
+    import inspect
+    import re
+
+    import xrspatial.pathfinding as pf
+
+    func = getattr(pf, func_name)
+    sig_params = set(inspect.signature(func).parameters)
+
+    doc = inspect.getdoc(func) or ""
+    lines = doc.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "Parameters")
+    documented = set()
+    for ln in lines[start + 2:]:
+        if ln.strip() in ("Returns", "Raises", "References", "Notes",
+                          "Examples"):
+            break
+        m = re.match(r"^(\w+(?:\s*,\s*\w+)*)\s*:", ln)
+        if m:
+            documented.update(re.split(r"\s*,\s*", m.group(1)))
+
+    assert documented == sig_params, (
+        f"{func_name}: documented params {sorted(documented)} != "
+        f"signature params {sorted(sig_params)}"
+    )
+
+
+@pytest.mark.parametrize("func_name", ["a_star_search", "multi_stop_search"])
+def test_docstring_structure(func_name):
+    # Both public functions carry the required numpydoc sections (issue
+    # #3651: multi_stop_search shipped without an Examples section), use
+    # the two-dot sourcecode directive (three dots render as literal
+    # text), and document that NaN cells are impassable.
+    import inspect
+
+    import xrspatial.pathfinding as pf
+
+    doc = inspect.getdoc(getattr(pf, func_name))
+    for section in ("Parameters", "Returns", "Examples"):
+        assert f"\n{section}\n" in doc, f"{func_name}: missing {section}"
+    assert "... sourcecode::" not in doc
+    assert ".. sourcecode:: python" in doc
+    assert "always impassable" in doc
+
+
+def test_multi_stop_search_docstring_example():
+    # Run the multi_stop_search docstring example and pin its documented
+    # attrs output.
+    import xarray as xr
+
+    from xrspatial import multi_stop_search
+
+    agg = xr.DataArray(np.array([
+        [0, 1, 0, 0],
+        [1, 1, 0, 0],
+        [0, 1, 2, 2],
+        [1, 0, 2, 0],
+        [0, 2, 2, 2]
+    ], dtype=np.float64), dims=['lat', 'lon'])
+    height, width = agg.shape
+    agg['lon'] = np.linspace(0, width - 1, width)
+    agg['lat'] = np.linspace(height - 1, 0, height)
+
+    waypoints = [(3, 0), (1, 2), (0, 1)]
+    path_agg = multi_stop_search(
+        agg, waypoints, barriers=[0], x='lon', y='lat')
+
+    assert path_agg.attrs['waypoint_order'] == [(3, 0), (1, 2), (0, 1)]
+    np.testing.assert_allclose(
+        path_agg.attrs['segment_costs'],
+        [2.8284271247461903, 1.4142135623730951])
+    np.testing.assert_allclose(
+        path_agg.attrs['total_cost'], 4.242640687119286)
 
 
 class TestPathfindingErrorHandling:
