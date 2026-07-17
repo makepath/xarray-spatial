@@ -2065,6 +2065,10 @@ class XrsSpatialDatasetAccessor:
 
     # ---- Pathfinding ----
 
+    def a_star_search(self, start, goal, **kwargs):
+        from .pathfinding import a_star_search
+        return a_star_search(self._obj, start, goal, **kwargs)
+
     def multi_stop_search(self, waypoints, **kwargs):
         from .pathfinding import multi_stop_search
         return multi_stop_search(self._obj, waypoints, **kwargs)

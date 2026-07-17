@@ -118,7 +118,7 @@ def test_dataset_accessor_has_expected_methods():
         'morph_erode', 'morph_dilate', 'morph_opening', 'morph_closing',
         'morph_gradient', 'morph_white_tophat', 'morph_black_tophat',
         'proximity', 'allocation', 'direction', 'cost_distance',
-        'multi_stop_search',
+        'a_star_search', 'multi_stop_search',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
         'validate',
@@ -299,6 +299,16 @@ def test_da_multi_stop_search_kwargs(elevation):
     expected = multi_stop_search(elevation, waypoints, optimize_order=True)
     result = elevation.xrs.multi_stop_search(waypoints, optimize_order=True)
     xr.testing.assert_identical(result, expected)
+
+
+def test_ds_a_star_search(elevation):
+    from xrspatial.pathfinding import a_star_search
+    ds = xr.Dataset({'a': elevation, 'b': elevation + 100})
+    start, goal = (0, 0), (9, 9)
+    expected = a_star_search(ds, start, goal)
+    result = ds.xrs.a_star_search(start, goal)
+    xr.testing.assert_identical(result, expected)
+    assert set(result.data_vars) == {'a', 'b'}
 
 
 def test_ds_multi_stop_search(elevation):

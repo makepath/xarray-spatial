@@ -117,6 +117,39 @@ class TestSupportsDataset:
         with pytest.raises(Exception):
             slope(ds)
 
+    def test_first_param_by_keyword(self, elevation_dataset):
+        """The raster binds by its real keyword name, not just positionally.
+
+        Regression test: the wrapper used to require the first argument
+        positionally, so slope(agg=...) worked by accident while
+        cost_distance(raster=...) and a_star_search(surface=...) raised
+        TypeError.
+        """
+        da = elevation_dataset['dem1']
+        xr.testing.assert_allclose(slope(agg=da), slope(da))
+
+        from xrspatial import proximity
+        target = da.copy()
+        target.data = np.zeros_like(target.data)
+        target.data[10, 10] = 1.0
+        xr.testing.assert_allclose(
+            proximity(raster=target), proximity(target))
+
+        from xrspatial import a_star_search
+        surf = da.copy()
+        surf['y'] = np.linspace(19, 0, 20)
+        surf['x'] = np.linspace(0, 19, 20)
+        surf.attrs['res'] = (1.0, 1.0)  # match the replaced coords
+        start, goal = (19.0, 0.0), (0.0, 19.0)
+        xr.testing.assert_allclose(
+            a_star_search(surface=surf, start=start, goal=goal),
+            a_star_search(surf, start, goal),
+        )
+
+    def test_first_param_missing_raises_typeerror(self):
+        with pytest.raises(TypeError):
+            slope()
+
     def test_aspect_dataset(self, elevation_dataset):
         result = aspect(elevation_dataset)
         assert isinstance(result, xr.Dataset)
