@@ -17,18 +17,29 @@ def supports_dataset(func):
     """
     sig = inspect.signature(func)
     has_name_param = 'name' in sig.parameters
+    first_param = next(iter(sig.parameters))
 
     @functools.wraps(func)
-    def wrapper(agg, *args, **kwargs):
+    def wrapper(*args, **kwargs):
+        # Bind the raster whether it was passed positionally or by its
+        # real keyword name (e.g. cost_distance(raster=...)); a wrapper
+        # that only accepts it positionally breaks keyword callers.
+        if args:
+            agg, rest = args[0], args[1:]
+        elif first_param in kwargs:
+            agg, rest = kwargs.pop(first_param), ()
+        else:
+            # Missing entirely: let func raise its own TypeError
+            return func(*args, **kwargs)
         if isinstance(agg, xr.Dataset):
             results = {}
             for var_name in agg.data_vars:
                 kw = dict(kwargs)
                 if has_name_param:
                     kw['name'] = var_name
-                results[var_name] = func(agg[var_name], *args, **kw)
+                results[var_name] = func(agg[var_name], *rest, **kw)
             return xr.Dataset(results, attrs=agg.attrs)
-        return func(agg, *args, **kwargs)
+        return func(agg, *rest, **kwargs)
 
     return wrapper
 

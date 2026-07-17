@@ -199,6 +199,120 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Non-finite inputs (#3628)
+# ---------------------------------------------------------------------------
+
+class TestNonFiniteInputs:
+    """NaN/Inf points and weights are dropped, identically on all backends."""
+
+    def test_nan_point_dropped_matches_clean_input(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        with_nan = kde([0.0, 1.0, np.nan], [0.0, 1.0, 0.5], bandwidth=1.0,
+                       template=simple_grid)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+
+    def test_inf_point_dropped(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        with_inf = kde([0.0, 1.0, np.inf], [0.0, 1.0, 0.5], bandwidth=1.0,
+                       template=simple_grid)
+        np.testing.assert_allclose(with_inf.values, clean.values, rtol=1e-12)
+
+    def test_nan_weight_dropped(self, simple_grid):
+        clean = kde([0.0, 1.0], [0.0, 1.0], weights=[1.0, 2.0],
+                    bandwidth=1.0, template=simple_grid)
+        with_nan = kde([0.0, 1.0, 0.5], [0.0, 1.0, 0.5],
+                       weights=[1.0, 2.0, np.nan],
+                       bandwidth=1.0, template=simple_grid)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+        assert not np.isnan(with_nan.values).any()
+
+    def test_nan_point_auto_extent_not_poisoned(self):
+        """Without a template, the extent must come from finite points only."""
+        result = kde([0.0, 1.0, np.nan], [0.0, 1.0, 0.5], bandwidth=1.0,
+                     width=8, height=8)
+        assert np.isfinite(result.x.values).all()
+        assert np.isfinite(result.y.values).all()
+        # The filter runs before the extent is derived, so the result must
+        # be identical to calling kde on the finite points only.
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0, width=8, height=8)
+        np.testing.assert_array_equal(result.values, clean.values)
+        np.testing.assert_array_equal(result.x.values, clean.x.values)
+        np.testing.assert_array_equal(result.y.values, clean.y.values)
+
+    def test_nan_point_silverman_bandwidth_not_poisoned(self):
+        """Silverman's rule must see only the finite points (#3628)."""
+        result = kde([0.0, 1.0, 2.0, np.nan], [0.0, 1.0, 2.0, 0.5],
+                     bandwidth='silverman', width=8, height=8)
+        clean = kde([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                    bandwidth='silverman', width=8, height=8)
+        np.testing.assert_array_equal(result.values, clean.values)
+        assert float(result.sum()) > 0.0
+
+    def test_geodataframe_nan_point_dropped(self, simple_grid):
+        gpd = pytest.importorskip("geopandas")
+        shapely_geometry = pytest.importorskip("shapely.geometry")
+        Point = shapely_geometry.Point
+        gdf = gpd.GeoDataFrame(
+            geometry=[Point(0.0, 0.0), Point(1.0, 1.0), Point(np.nan, 0.5)])
+        clean = kde([0.0, 1.0], [0.0, 1.0], bandwidth=1.0,
+                    template=simple_grid)
+        result = kde(gdf, bandwidth=1.0, template=simple_grid)
+        np.testing.assert_allclose(result.values, clean.values, rtol=1e-12)
+
+    def test_all_nan_points_raises(self, simple_grid):
+        with pytest.raises(ValueError, match='finite'):
+            kde([np.nan, np.nan], [0.0, 1.0], bandwidth=1.0,
+                template=simple_grid)
+
+    @cuda_and_cupy_available
+    def test_cupy_gaussian_nan_point_matches_numpy(self, simple_grid):
+        """Eager cupy gaussian previously returned an all-NaN grid (#3628)."""
+        import cupy
+        x = [0.0, 1.0, np.nan]
+        y = [0.0, 1.0, 0.5]
+        np_result = kde(x, y, bandwidth=1.0, kernel='gaussian',
+                        template=simple_grid)
+        cupy_template = simple_grid.copy(data=cupy.asarray(simple_grid.values))
+        cupy_result = kde(x, y, bandwidth=1.0, kernel='gaussian',
+                          template=cupy_template)
+        result_np = cupy_result.data.get()
+        assert not np.isnan(result_np).any()
+        # rtol matches TestCuPyParity; atol covers fringe pixels past the
+        # CPU kernel's 4*bw cutoff, which the GPU kernel does not have.
+        np.testing.assert_allclose(result_np, np_result.values,
+                                   rtol=1e-2, atol=1e-6)
+
+    def test_line_density_nan_endpoint_dropped(self):
+        clean = line_density([0.0], [0.0], [1.0], [1.0], bandwidth=0.5,
+                             x_range=(-1, 2), y_range=(-1, 2),
+                             width=16, height=16)
+        with_nan = line_density([0.0, np.nan], [0.0, 0.0], [1.0, 1.0],
+                                [1.0, 1.0], bandwidth=0.5,
+                                x_range=(-1, 2), y_range=(-1, 2),
+                                width=16, height=16)
+        np.testing.assert_allclose(with_nan.values, clean.values, rtol=1e-12)
+
+    def test_line_density_nan_endpoint_auto_extent(self):
+        result = line_density([0.0, np.nan], [0.0, 0.0], [1.0, 1.0],
+                              [1.0, 1.0], bandwidth=0.5, width=16, height=16)
+        assert np.isfinite(result.x.values).all()
+        assert np.isfinite(result.y.values).all()
+        # Identical to the finite-only call, extent included.
+        clean = line_density([0.0], [0.0], [1.0], [1.0],
+                             bandwidth=0.5, width=16, height=16)
+        np.testing.assert_array_equal(result.values, clean.values)
+        np.testing.assert_array_equal(result.x.values, clean.x.values)
+        np.testing.assert_array_equal(result.y.values, clean.y.values)
+
+    def test_line_density_all_nan_raises(self):
+        with pytest.raises(ValueError, match='finite'):
+            line_density([np.nan], [0.0], [1.0], [1.0], bandwidth=0.5,
+                         width=8, height=8)
+
+
+# ---------------------------------------------------------------------------
 # Memory guard (#1287)
 # ---------------------------------------------------------------------------
 
@@ -476,6 +590,36 @@ class TestDaskParity:
             dask_result.values, np_result.values, rtol=1e-12,
         )
 
+    @pytest.mark.parametrize('desc_y,desc_x', [
+        (True, False), (False, True), (True, True),
+    ])
+    @pytest.mark.parametrize('kernel', ['gaussian', 'epanechnikov', 'quartic'])
+    def test_dask_matches_numpy_descending_coords(self, point_cluster,
+                                                  desc_y, desc_x, kernel):
+        """Descending templates: dask tile filter must not drop points (#3627)."""
+        x, y = point_cluster
+        ys = np.linspace(4, -4, 16) if desc_y else np.linspace(-4, 4, 16)
+        xs = np.linspace(4, -4, 16) if desc_x else np.linspace(-4, 4, 16)
+        template = xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'], coords={'y': ys, 'x': xs},
+        )
+        np_result = kde(x, y, bandwidth=1.0, kernel=kernel, template=template)
+        dask_template = self._make_dask_template(template)
+        dask_result = kde(x, y, bandwidth=1.0, kernel=kernel,
+                          template=dask_template)
+        assert float(dask_result.sum()) > 0.0
+        if kernel == 'gaussian':
+            # Fringe pixels at the 4*bw box cutoff may land on either
+            # side of the tile filter; those values are ~exp(-8).
+            np.testing.assert_allclose(
+                dask_result.values, np_result.values, atol=1e-5,
+            )
+        else:
+            np.testing.assert_allclose(
+                dask_result.values, np_result.values, rtol=1e-12,
+            )
+
 
 @cuda_and_cupy_available
 class TestCuPyParity:
@@ -497,6 +641,34 @@ class TestCuPyParity:
         # Compact kernels match exactly.
         tol = 1e-2 if kernel == 'gaussian' else 1e-6
         np.testing.assert_allclose(result_np, np_result.values, rtol=tol)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestDaskCupyDescending:
+    """dask+cupy must not drop points on descending templates (#3627)."""
+
+    @pytest.mark.parametrize('desc_y,desc_x', [(True, False), (False, True)])
+    def test_dask_cupy_matches_numpy_descending(self, point_cluster,
+                                                desc_y, desc_x):
+        import cupy
+        x, y = point_cluster
+        ys = np.linspace(4, -4, 16) if desc_y else np.linspace(-4, 4, 16)
+        xs = np.linspace(4, -4, 16) if desc_x else np.linspace(-4, 4, 16)
+        template = xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': ys, 'x': xs},
+        )
+        np_result = kde(x, y, bandwidth=1.0, kernel='quartic',
+                        template=template)
+        dask_cupy_template = template.copy(
+            data=da.from_array(cupy.asarray(template.values), chunks=(8, 8)))
+        result = kde(x, y, bandwidth=1.0, kernel='quartic',
+                     template=dask_cupy_template)
+        result_np = result.data.compute().get()
+        assert float(result_np.sum()) > 0.0
+        np.testing.assert_allclose(result_np, np_result.values, rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------

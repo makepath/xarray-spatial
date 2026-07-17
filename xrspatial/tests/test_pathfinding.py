@@ -158,6 +158,83 @@ def test_a_star_search_connectivity(
 
 
 # -----------------------------------------------------------------------
+# Point -> pixel mapping (issue #3629)
+# -----------------------------------------------------------------------
+
+def _make_unit_raster(h=5, w=5):
+    import xarray as xr
+    r = xr.DataArray(np.ones((h, w)), dims=['y', 'x'],
+                     attrs={'res': (1.0, 1.0)})
+    r['y'] = np.linspace(h - 1, 0, h)   # descending
+    r['x'] = np.linspace(0, w - 1, w)
+    return r
+
+
+def test_get_pixel_id_nearest_center():
+    from xrspatial.pathfinding import _get_pixel_id
+
+    agg = _make_unit_raster()
+    # exact centers map to themselves
+    assert _get_pixel_id((4.0, 0.0), agg, 'x', 'y') == (0, 0)
+    assert _get_pixel_id((0.0, 4.0), agg, 'x', 'y') == (4, 4)
+    # a point in the upper half of a cell maps to the nearest center,
+    # not the truncated lower-index cell
+    assert _get_pixel_id((4.0, 2.6), agg, 'x', 'y') == (0, 3)
+    assert _get_pixel_id((1.6, 0.0), agg, 'x', 'y') == (2, 0)
+
+    # float noise at an exact center: on a 0.1-res grid the pixel-3
+    # center is 0.30000000000000004; a user-typed 0.3 must still map
+    # to pixel 3
+    import xarray as xr
+    agg2 = xr.DataArray(np.ones((2, 10)), dims=['y', 'x'])
+    agg2['y'] = [0.1, 0.0]
+    agg2['x'] = np.arange(10) * 0.1
+    assert _get_pixel_id((0.0, 0.3), agg2, 'x', 'y') == (1, 3)
+
+
+def test_get_pixel_id_ascending_coords():
+    from xrspatial.pathfinding import _get_pixel_id
+    import xarray as xr
+
+    agg = xr.DataArray(np.ones((5, 5)), dims=['y', 'x'],
+                       attrs={'res': (1.0, 1.0)})
+    agg['y'] = np.linspace(0, 4, 5)   # ascending
+    agg['x'] = np.linspace(0, 4, 5)
+    assert _get_pixel_id((0.0, 0.0), agg, 'x', 'y') == (0, 0)
+    assert _get_pixel_id((4.0, 2.6), agg, 'x', 'y') == (4, 3)
+    # outside on the low side -> negative index (rejected by _is_inside)
+    py, px = _get_pixel_id((-1.0, 0.0), agg, 'x', 'y')
+    assert py < 0
+
+
+def test_a_star_search_out_of_bounds_raises():
+    """Points outside the raster must raise on every side, not fold inside."""
+    agg = _make_unit_raster()   # y in [0, 4] descending, x in [0, 4]
+
+    inside = (2.0, 2.0)
+    outside_points = [
+        (5.0, 2.0),    # above the top edge (y_coords[0] side)
+        (-1.0, 2.0),   # below the bottom edge
+        (2.0, -1.0),   # left of the first column (x_coords[0] side)
+        (2.0, 5.0),    # right of the last column
+    ]
+    for pt in outside_points:
+        with pytest.raises(ValueError, match="start location outside"):
+            a_star_search(agg, pt, inside)
+        with pytest.raises(ValueError, match="goal location outside"):
+            a_star_search(agg, inside, pt)
+
+
+def test_multi_stop_out_of_bounds_waypoint_raises():
+    from xrspatial import multi_stop_search
+
+    agg = _make_unit_raster()
+    # waypoint above the top edge previously folded to an interior row
+    with pytest.raises(ValueError, match="outside the surface bounds"):
+        multi_stop_search(agg, [(5.0, 0.0), (0.0, 4.0)])
+
+
+# -----------------------------------------------------------------------
 # Helper for multi-backend test rasters
 # -----------------------------------------------------------------------
 
@@ -187,6 +264,30 @@ def _make_raster(data, dims=None, res=None, backend='numpy', chunks=(3, 3)):
             raster.data = cupy.asarray(raster.data)
 
     return raster
+
+
+def _tracking_np_full(threshold_cells, large_allocs):
+    """Build an np.full replacement that records allocations of
+    ``threshold_cells`` cells or more into *large_allocs*.
+
+    Used to assert that dask code paths never materialise full-size
+    arrays.  Patch with ``patch('numpy.full', side_effect=...)``.
+    """
+    original_full = np.full
+
+    def tracking_full(shape, *args, **kwargs):
+        result = original_full(shape, *args, **kwargs)
+        if hasattr(shape, '__len__'):
+            total = 1
+            for s in shape:
+                total *= s
+        else:
+            total = shape
+        if total >= threshold_cells:
+            large_allocs.append(('full', shape))
+        return result
+
+    return tracking_full
 
 
 # -----------------------------------------------------------------------
@@ -416,23 +517,11 @@ def test_dask_no_large_numpy_arrays():
     goal = (0.0, float(width - 1))
 
     # Track large numpy allocations
-    original_full = np.full
     large_allocs = []
 
-    def tracking_full(shape, *args, **kwargs):
-        result = original_full(shape, *args, **kwargs)
-        if hasattr(shape, '__len__'):
-            total = 1
-            for s in shape:
-                total *= s
-        else:
-            total = shape
-        if total >= height * width:
-            large_allocs.append(('full', shape))
-        return result
-
     from unittest.mock import patch
-    with patch('numpy.full', side_effect=tracking_full):
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
         result = a_star_search(agg, start, goal, friction=friction_agg)
 
     # Result should be dask-backed
@@ -699,6 +788,54 @@ def test_hpa_star_correctness():
         assert (r, c) != (np.nan, np.nan)
 
 
+def test_hpa_star_unreachable_goal_all_nan():
+    """HPA* returns all-NaN when no path exists, not a partial trail.
+
+    The coarse grid sees blocks containing a thin NaN wall as passable
+    (each block still has valid cells), so the coarse route crosses the
+    wall and refinement fails. The output must follow the no-path
+    contract (all NaN) instead of keeping the already-refined segments.
+    """
+    H = W = 200
+    data = np.ones((H, W))
+    data[:, 100] = np.nan  # complete wall: goal unreachable
+
+    dy, dx, dd = _neighborhood_structure(1.0, 1.0, 8)
+    barriers = np.array([], dtype=np.float64)
+
+    path_img = _hpa_star_search(
+        data, None, 0, 0, 199, 199,
+        barriers, dy, dx, dd,
+        1.0, False, 1.0, 1.0, H, W)
+
+    assert not np.isfinite(path_img).any()
+
+
+def test_hpa_star_barrier_valued_block_means():
+    """Coarse routing must not re-apply value barriers to block means (#3647).
+
+    Alternating -1/+1 columns make every coarse block mean exactly 0.0.
+    With barriers=[0] no fine cell is a barrier, but the coarse grid used
+    to be entirely blocked, returning all-NaN on a fully passable grid.
+    """
+    H = W = 200
+    data = np.full((H, W), 1.0)
+    data[:, ::2] = -1.0
+    barriers = np.array([0.0])
+    assert not np.any(data == 0.0)  # every fine cell is passable
+
+    dy, dx, dd = _neighborhood_structure(1.0, 1.0, 8)
+
+    path_img = _hpa_star_search(
+        data, None, 0, 0, H - 1, W - 1,
+        barriers, dy, dx, dd,
+        1.0, False, 1.0, 1.0, H, W)
+
+    assert np.isfinite(path_img[0, 0])
+    assert np.isfinite(path_img[H - 1, W - 1])
+    assert path_img[H - 1, W - 1] > 0.0
+
+
 def test_auto_radius_selection():
     """When mocked low memory, auto-radius kicks in and finds path."""
     data = np.ones((20, 20))
@@ -962,6 +1099,83 @@ def test_optimize_order_preserves_endpoints():
     assert tuple(order[-1]) == wp3
 
 
+def test_optimize_order_symmetric_matrix_call_count():
+    """Cost matrix reuses symmetric costs: N(N-1)/2 A* runs, not N(N-1).
+
+    Issue #3661: the pixel graph is undirected and edge costs use the
+    mean friction of both endpoints, so cost(i->j) == cost(j->i) and
+    the reverse searches are redundant when snap is off.
+    """
+    import xrspatial.pathfinding as pf
+
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    wps = [(9.0, 0.0), (5.0, 5.0), (5.0, 0.0), (9.0, 9.0), (0.0, 9.0)]
+    n = len(wps)
+
+    calls = []
+    orig = pf.a_star_search
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    from unittest.mock import patch
+    with patch.object(pf, 'a_star_search', side_effect=counting):
+        order = pf._optimize_waypoint_order(
+            agg, wps, [], 'x', 'y', 8, False, None, None)
+
+    assert len(calls) == n * (n - 1) // 2
+    # endpoints stay fixed and all waypoints are kept
+    assert order[0] == wps[0]
+    assert order[-1] == wps[-1]
+    assert sorted(order) == sorted(wps)
+
+
+@pytest.mark.filterwarnings("ignore:Start at a non crossable location:Warning")
+@pytest.mark.filterwarnings("ignore:End at a non crossable location:Warning")
+def test_optimize_order_snap_keeps_both_directions():
+    """With snap=True the reverse searches still run (snapping can move
+    the requested pixels, so symmetry is not guaranteed).
+
+    The middle waypoint sits on a NaN cell so snapping really relocates
+    it: the direction ending at that waypoint reads its cost at the
+    requested (NaN) pixel while the reverse starts from the snapped
+    pixel, which is the asymmetry the double computation protects.
+    """
+    import xrspatial.pathfinding as pf
+
+    data = np.ones((10, 10))
+    data[5, 5] = np.nan  # snap target: waypoint below lands here
+    agg = _make_raster(data)
+
+    # coords: y=[9..0], x=[0..9]; (4.0, 5.0) maps to pixel (5, 5)
+    wps = [(9.0, 0.0), (4.0, 5.0), (0.0, 9.0)]
+    n = len(wps)
+
+    calls = []
+    orig = pf.a_star_search
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    from unittest.mock import patch
+    with patch.object(pf, 'a_star_search', side_effect=counting):
+        order = pf._optimize_waypoint_order(
+            agg, wps, [], 'x', 'y', 8, True, None, None)
+
+    assert len(calls) == n * (n - 1)
+    assert order[0] == wps[0]
+    assert order[-1] == wps[-1]
+    # Note: the NaN waypoint may be missing from the returned order.
+    # That is pre-existing behavior tracked in issue #3646 (waypoints
+    # silently dropped when the matrix has no finite tour), not part
+    # of the call-count contract under test here.
+    assert set(order) <= set(wps)
+
+
 # --- Cross-backend tests ---
 
 @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
@@ -978,10 +1192,98 @@ def test_multi_stop_dask_matches_numpy():
     path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
     path_dask = multi_stop_search(agg_dask, [wp0, wp1, wp2])
 
+    # output should stay dask-backed, matching a_star_search
+    assert isinstance(path_dask.data, da.Array)
+
     np.testing.assert_allclose(
         np.asarray(path_dask.values),
         path_np.values,
         equal_nan=True, atol=1e-10,
+    )
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_dask_no_large_numpy_arrays():
+    """Dask multi-stop should not materialise full-size numpy arrays.
+
+    Same guard as test_dask_no_large_numpy_arrays, but for
+    multi_stop_search (issue #3660): segments must be stitched lazily
+    and per-segment goal costs read from a single block.
+    """
+    height, width = 50, 60
+    data = np.ones((height, width))
+
+    agg = _make_raster(data, backend='dask+numpy', chunks=(25, 30))
+
+    wp0 = (float(height - 1), 0.0)
+    wp1 = (float(height // 2), float(width // 2))
+    wp2 = (0.0, float(width - 1))
+
+    large_allocs = []
+
+    from unittest.mock import patch
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
+        result = multi_stop_search(agg, [wp0, wp1, wp2])
+
+    # Result should be dask-backed
+    assert isinstance(result.data, da.Array)
+
+    # No full-size arrays should have been allocated while routing
+    assert len(large_allocs) == 0, (
+        f"Unexpected large allocations: {large_allocs}")
+
+    # And it should still match the numpy backend
+    agg_np = _make_raster(data, backend='numpy')
+    expected = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    np.testing.assert_allclose(
+        np.asarray(result.values),
+        expected.values,
+        equal_nan=True, atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], expected.attrs['total_cost'],
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        result.attrs['segment_costs'], expected.attrs['segment_costs'],
+        atol=1e-10,
+    )
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_optimize_order_dask_no_large_numpy_arrays():
+    """optimize_order on dask must not materialise full-size arrays either."""
+    height, width = 50, 60
+    data = np.ones((height, width))
+
+    agg = _make_raster(data, backend='dask+numpy', chunks=(25, 30))
+
+    wp0 = (float(height - 1), 0.0)
+    wp1 = (0.0, float(width - 1))
+    wp2 = (float(height - 1), float(width // 2))
+    wp3 = (0.0, float(width // 2))
+
+    large_allocs = []
+
+    from unittest.mock import patch
+    with patch('numpy.full',
+               side_effect=_tracking_np_full(height * width, large_allocs)):
+        result = multi_stop_search(
+            agg, [wp0, wp1, wp2, wp3], optimize_order=True)
+
+    assert isinstance(result.data, da.Array)
+    assert len(large_allocs) == 0, (
+        f"Unexpected large allocations: {large_allocs}")
+
+    # Optimization behavior itself must match the numpy backend
+    agg_np = _make_raster(data, backend='numpy')
+    expected = multi_stop_search(
+        agg_np, [wp0, wp1, wp2, wp3], optimize_order=True)
+    assert result.attrs['waypoint_order'] == expected.attrs['waypoint_order']
+    np.testing.assert_allclose(
+        result.attrs['total_cost'], expected.attrs['total_cost'],
+        atol=1e-10,
     )
 
 
@@ -999,11 +1301,233 @@ def test_multi_stop_cupy_matches_numpy():
     path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
     path_cupy = multi_stop_search(agg_cupy, [wp0, wp1, wp2])
 
+    # output should stay cupy-backed, matching a_star_search
+    import cupy
+    assert isinstance(path_cupy.data, cupy.ndarray)
+
     np.testing.assert_allclose(
-        path_cupy.data if not hasattr(path_cupy.data, 'get') else path_cupy.data,
+        path_cupy.data.get(),
         path_np.values,
         equal_nan=True, atol=1e-10,
     )
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_dask_cupy_matches_numpy():
+    """Dask+CuPy multi-stop should not crash and should match numpy."""
+    data = np.ones((8, 8))
+    wp0 = (7.0, 0.0)
+    wp1 = (4.0, 3.0)
+    wp2 = (0.0, 7.0)
+
+    agg_np = _make_raster(data, backend='numpy')
+    agg_dc = _make_raster(data, backend='dask+cupy', chunks=(4, 4))
+
+    path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    path_dc = multi_stop_search(agg_dc, [wp0, wp1, wp2])
+
+    # output should stay dask-backed with cupy blocks
+    assert isinstance(path_dc.data, da.Array)
+    computed = path_dc.data.compute()
+    assert hasattr(computed, 'get')  # cupy blocks
+    np.testing.assert_allclose(
+        computed.get(),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+    # optimize_order goes through the same extraction path
+    path_dc_opt = multi_stop_search(
+        agg_dc, [wp0, wp1, wp2], optimize_order=True)
+    computed_opt = path_dc_opt.data.compute()
+    assert np.isfinite(computed_opt.get()).any()
+
+
+# --- Output name consistency (dask graph-token leak) ---
+
+def _name_check_backends():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _name_check_backends())
+def test_output_name_consistent_across_backends(backend):
+    """Outputs must not adopt the dask graph token as .name.
+
+    Without the post-construction reset, dask-backed results were named
+    'concatenate-<hash>' / 'array-<hash>' while numpy/cupy returned None.
+    Same bug class as zonal #2611 and focal #2733.
+    """
+    data = np.ones((5, 5))
+    agg = _make_raster(data, backend=backend)
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path = a_star_search(agg, start, goal)
+    assert path.name is None
+
+    multi = multi_stop_search(agg, [start, goal])
+    assert multi.name is None
+
+
+# =====================================================================
+# Issue #3655: golden-value reference regression tests
+# =====================================================================
+#
+# Expected costs below were generated on 2026-07-08 and verified to
+# machine precision (rel diff <= 2e-15) against two independent
+# reference implementations with the same edge model:
+#   - scipy 1.16.1  scipy.sparse.csgraph.dijkstra on an explicit grid
+#     graph (edge weight = geometric distance, or
+#     distance * mean endpoint friction)
+#   - scikit-image 0.26.0  skimage.graph.MCP_Geometric with
+#     sampling=(cellsize_y, cellsize_x)
+# plus the closed-form value where one exists (open uniform grids).
+# The tests hardcode the verified goal costs so this parity cannot
+# silently regress; neither reference library is needed at test time.
+
+def _golden_maze_8x8():
+    # np.random.RandomState(42).rand(8, 8) < 0.3 -> 0.0 (barrier value),
+    # with (0,0), (7,0), (7,7) forced passable. Written out literally so
+    # the test does not depend on RandomState reproducibility.
+    return np.array([
+        [1, 1, 1, 1, 0, 0, 0, 1],
+        [1, 1, 0, 1, 1, 0, 0, 0],
+        [1, 1, 1, 0, 1, 0, 0, 1],
+        [1, 1, 0, 1, 1, 0, 1, 0],
+        [0, 1, 1, 1, 1, 0, 1, 1],
+        [0, 1, 0, 1, 0, 1, 1, 1],
+        [1, 0, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 1, 1, 0, 1, 1],
+    ], dtype=np.float64)
+
+
+def _golden_friction_6x6():
+    # np.round(0.5 + 4.5 * np.random.RandomState(7).rand(6, 6), 2),
+    # written out literally.
+    return np.array([
+        [0.84, 4.01, 2.47, 3.76, 4.90, 2.92],
+        [2.76, 0.82, 1.71, 2.75, 3.56, 4.12],
+        [2.21, 0.80, 1.80, 4.59, 1.46, 2.53],
+        [4.69, 0.61, 3.20, 4.78, 1.54, 2.97],
+        [4.59, 1.10, 2.86, 3.88, 3.51, 2.60],
+        [1.42, 2.71, 2.18, 2.65, 2.15, 4.27],
+    ])
+
+
+def _golden_raster(data, cx=30.0, cy=30.0):
+    # Deliberately NOT _make_raster: that helper stores attrs['res'] with
+    # the y spacing first, while get_dataarray_resolution reads attrs['res']
+    # as (cellsize_x, cellsize_y) -- with anisotropic cells that would flip
+    # cx and cy. No 'res' attr here, so resolution comes from the coords.
+    import xarray as xr
+    h, w = data.shape
+    r = xr.DataArray(data.astype(np.float64), dims=['y', 'x'])
+    r['y'] = np.linspace((h - 1) * cy, 0, h)   # descending, like GeoTIFFs
+    r['x'] = np.linspace(0, (w - 1) * cx, w)
+    return r
+
+
+def _pixel_coords(raster, py, px):
+    return (float(raster['y'].values[py]), float(raster['x'].values[px]))
+
+
+# (connectivity, start px, goal px, expected goal cost)
+_GOLDEN_OPEN_GRID = [
+    # 6x6 open grid, 30 m square cells; closed form:
+    # 5 diagonals of sqrt(2)*30, or 10 cardinals of 30
+    pytest.param(8, (0, 0), (5, 5), 212.13203435596427, id='open-8conn'),
+    pytest.param(4, (0, 0), (5, 5), 300.0, id='open-4conn'),
+]
+
+_GOLDEN_MAZE = [
+    pytest.param((0, 0), (7, 7), 296.98484809834997, id='maze-corner'),
+    pytest.param((7, 0), (4, 4), 174.8528137423857, id='maze-mid'),
+    pytest.param((7, 0), (0, 7), np.nan, id='maze-no-path'),
+]
+
+_GOLDEN_FRICTION = [
+    pytest.param((0, 0), (5, 5), 416.6432249718464, id='friction-diag'),
+    pytest.param((5, 0), (0, 5), 452.5139715437149,
+                 id='friction-anti-diag'),
+]
+
+_GOLDEN_ANISO = [
+    # cx=30, cy=10: diagonal = sqrt(30^2 + 10^2)
+    pytest.param(8, (0, 0), (5, 5), 158.11388300841895, id='aniso-8conn'),
+    pytest.param(4, (0, 3), (5, 0), 140.0, id='aniso-4conn'),
+]
+
+
+@pytest.mark.parametrize("backend", _backends)
+@pytest.mark.parametrize("connectivity,start_px,goal_px,expected",
+                         _GOLDEN_OPEN_GRID)
+def test_golden_open_grid(backend, connectivity, start_px, goal_px,
+                          expected):
+    agg = _golden_raster(np.ones((6, 6)))
+    if backend == 'dask+numpy':
+        agg.data = da.from_array(agg.data, chunks=(3, 3))
+    start = _pixel_coords(agg, *start_px)
+    goal = _pixel_coords(agg, *goal_px)
+    path = a_star_search(agg, start, goal, connectivity=connectivity)
+    goal_cost = float(np.asarray(path.values)[goal_px[0], goal_px[1]])
+    np.testing.assert_allclose(goal_cost, expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("backend", _backends)
+@pytest.mark.parametrize("start_px,goal_px,expected", _GOLDEN_MAZE)
+def test_golden_barrier_maze(backend, start_px, goal_px, expected):
+    agg = _golden_raster(_golden_maze_8x8())
+    if backend == 'dask+numpy':
+        agg.data = da.from_array(agg.data, chunks=(4, 4))
+    start = _pixel_coords(agg, *start_px)
+    goal = _pixel_coords(agg, *goal_px)
+    path = a_star_search(agg, start, goal, barriers=[0])
+    vals = np.asarray(path.values)
+    goal_cost = float(vals[goal_px[0], goal_px[1]])
+    if np.isnan(expected):
+        # no path: the whole output is NaN
+        assert not np.isfinite(vals).any()
+    else:
+        np.testing.assert_allclose(goal_cost, expected, rtol=1e-12)
+        assert float(vals[start_px[0], start_px[1]]) == 0.0
+
+
+@pytest.mark.parametrize("backend", _backends)
+@pytest.mark.parametrize("start_px,goal_px,expected", _GOLDEN_FRICTION)
+def test_golden_friction(backend, start_px, goal_px, expected):
+    agg = _golden_raster(np.ones((6, 6)))
+    friction = _golden_raster(_golden_friction_6x6())
+    if backend == 'dask+numpy':
+        agg.data = da.from_array(agg.data, chunks=(3, 3))
+        friction.data = da.from_array(friction.data, chunks=(3, 3))
+    start = _pixel_coords(agg, *start_px)
+    goal = _pixel_coords(agg, *goal_px)
+    path = a_star_search(agg, start, goal, friction=friction)
+    goal_cost = float(np.asarray(path.values)[goal_px[0], goal_px[1]])
+    np.testing.assert_allclose(goal_cost, expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("backend", _backends)
+@pytest.mark.parametrize("connectivity,start_px,goal_px,expected",
+                         _GOLDEN_ANISO)
+def test_golden_anisotropic_cellsize(backend, connectivity, start_px,
+                                     goal_px, expected):
+    agg = _golden_raster(np.ones((6, 6)), cx=30.0, cy=10.0)
+    if backend == 'dask+numpy':
+        agg.data = da.from_array(agg.data, chunks=(3, 3))
+    start = _pixel_coords(agg, *start_px)
+    goal = _pixel_coords(agg, *goal_px)
+    path = a_star_search(agg, start, goal, connectivity=connectivity)
+    goal_cost = float(np.asarray(path.values)[goal_px[0], goal_px[1]])
+    np.testing.assert_allclose(goal_cost, expected, rtol=1e-12)
 
 
 # =====================================================================
@@ -1056,3 +1580,187 @@ class TestPathfindingInputValidation:
         too_many = [(i % 10, (i * 7) % 10) for i in range(_MAX_WAYPOINTS + 1)]
         with pytest.raises(ValueError, match=f"at most {_MAX_WAYPOINTS}"):
             multi_stop_search(s, too_many)
+
+
+class TestPathfindingErrorHandling:
+    """Error-handling sweep findings: barriers, search_radius, points, dims (#3649)."""
+
+    @staticmethod
+    def _wall_surface():
+        import xarray as xr
+        data = np.ones((5, 9))
+        data[:, 4] = 0.0  # wall of zeros across the middle column
+        r = xr.DataArray(data, dims=('y', 'x'), attrs={'res': (1.0, 1.0)})
+        r['y'] = np.linspace(4, 0, 5)
+        r['x'] = np.linspace(0, 8, 9)
+        return r
+
+    # --- barriers ---
+
+    def test_string_barriers_raise_instead_of_silently_ignored(self):
+        # barriers=['0'] used to route straight through a wall that
+        # barriers=[0] blocks, with no error or warning
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=['0'])
+
+    def test_scalar_barriers_raise_with_hint(self):
+        # barriers=0 used to die with a numba TypingError deep in the kernel
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match=r"1-D.*barriers=\[0\]"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=0)
+
+    def test_numeric_barriers_still_block(self):
+        r = self._wall_surface()
+        path = a_star_search(r, (2.0, 0.0), (2.0, 8.0),
+                             barriers=np.array([0]))
+        assert not np.isfinite(path.values).any()
+
+    def test_string_barriers_raise_in_multi_stop(self):
+        # validated at the multi_stop boundary, not inside the first
+        # a_star_search segment call
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 2.0)], barriers=['0'])
+
+    @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+    def test_string_barriers_raise_on_dask(self):
+        r = self._wall_surface()
+        r.data = da.from_array(r.data, chunks=(3, 3))
+        with pytest.raises(TypeError, match="barriers must contain numeric"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), barriers=['0'])
+
+    # --- search_radius ---
+
+    def test_negative_search_radius_raises(self):
+        # used to silently return all-NaN ("no path") though a path exists
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="search_radius must be non-negative"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), search_radius=-1)
+
+    def test_float_search_radius_raises(self):
+        # used to crash with "slice indices must be integers" for some
+        # start/goal geometries and work for others
+        r = self._wall_surface()
+        with pytest.raises(TypeError, match="search_radius must be a non-negative integer"):
+            a_star_search(r, (2.0, 0.0), (2.0, 8.0), search_radius=2.5)
+
+    def test_zero_search_radius_accepted(self):
+        r = self._wall_surface()
+        path = a_star_search(r, (2.0, 0.0), (2.0, 2.0), search_radius=0)
+        assert np.isfinite(path.values[2, 2])
+
+    def test_negative_search_radius_raises_in_multi_stop(self):
+        # used to surface as a misleading "no path between waypoints 0 and 1"
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="search_radius must be non-negative"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 2.0)], search_radius=-1)
+
+    # --- start / goal ---
+
+    def test_scalar_start_raises(self):
+        # used to raise "'float' object is not subscriptable" in _get_pixel_id
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`start` must have exactly 2 elements"):
+            a_star_search(r, 3.0, (2.0, 2.0))
+
+    def test_three_element_goal_raises(self):
+        # used to silently drop the extra element
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`goal` must have exactly 2 elements"):
+            a_star_search(r, (2.0, 0.0), (2.0, 2.0, 7.0))
+
+    def test_scalar_waypoint_raises(self):
+        # used to raise "object of type 'float' has no len()"
+        r = self._wall_surface()
+        with pytest.raises(ValueError, match="`waypoint 1` must have exactly 2 elements"):
+            multi_stop_search(r, [(2.0, 0.0), 3.0])
+
+    # --- dims consistency ---
+
+    @staticmethod
+    def _latlon_surface():
+        import xarray as xr
+        r = xr.DataArray(np.ones((5, 5)), dims=('lat', 'lon'),
+                         attrs={'res': (1.0, 1.0)})
+        r['lat'] = np.linspace(4, 0, 5)
+        r['lon'] = np.linspace(0, 4, 5)
+        return r
+
+    def test_a_star_dims_mismatch_names_actual_dims(self):
+        r = self._latlon_surface()
+        with pytest.raises(ValueError, match=r"got \('lat', 'lon'\)"):
+            a_star_search(r, (2.0, 0.0), (2.0, 4.0))
+
+    def test_multi_stop_dims_mismatch_raises_value_error(self):
+        # used to raise a bare KeyError: 'y' from inside xarray
+        r = self._latlon_surface()
+        with pytest.raises(ValueError, match="expected `surface` to have dims"):
+            multi_stop_search(r, [(2.0, 0.0), (2.0, 4.0)])
+
+    def test_multi_stop_custom_dims_still_work(self):
+        r = self._latlon_surface()
+        result = multi_stop_search(r, [(2.0, 0.0), (2.0, 4.0)],
+                                   x='lon', y='lat')
+        assert np.isfinite(result.values).any()
+
+
+# --- API consistency tests (#3644) ---
+
+def test_multi_stop_search_preserves_input_attrs():
+    """Input attrs survive alongside the routing attrs."""
+    data = np.ones((8, 8))
+    agg = _make_raster(data)
+    agg.attrs['crs'] = 4326
+    agg.attrs['units'] = 'm'
+
+    result = multi_stop_search(agg, [(7.0, 0.0), (0.0, 7.0)])
+
+    # input attrs preserved
+    assert result.attrs['crs'] == 4326
+    assert result.attrs['units'] == 'm'
+    assert result.attrs['res'] == (1.0, 1.0)
+    # routing attrs added
+    for key in ('waypoint_order', 'segment_costs', 'total_cost'):
+        assert key in result.attrs
+
+
+def test_a_star_search_accepts_dataset():
+    """a_star_search on a Dataset routes each variable, like its sibling."""
+    import xarray as xr
+    data = np.ones((8, 8))
+    agg = _make_raster(data)
+    ds = xr.Dataset({'elev': agg, 'other': agg + 1.0})
+    start, goal = (7.0, 0.0), (0.0, 7.0)
+
+    result = a_star_search(ds, start, goal)
+
+    assert isinstance(result, xr.Dataset)
+    assert set(result.data_vars) == {'elev', 'other'}
+    expected = a_star_search(agg, start, goal)
+    np.testing.assert_allclose(
+        result['elev'].values, expected.values, equal_nan=True)
+
+
+def test_barriers_default_none_matches_empty_list():
+    """barriers=None (new default) behaves like the old barriers=[].
+
+    Numpy only: the None -> [] substitution happens before backend
+    dispatch, so it is backend-independent.
+    """
+    data = np.ones((6, 6))
+    agg = _make_raster(data)
+    start, goal = (5.0, 0.0), (0.0, 5.0)
+
+    r_default = a_star_search(agg, start, goal)
+    r_none = a_star_search(agg, start, goal, barriers=None)
+    r_empty = a_star_search(agg, start, goal, barriers=[])
+
+    np.testing.assert_allclose(
+        r_none.values, r_default.values, equal_nan=True)
+    np.testing.assert_allclose(
+        r_empty.values, r_default.values, equal_nan=True)
+
+    m_none = multi_stop_search(agg, [start, goal], barriers=None)
+    np.testing.assert_allclose(
+        m_none.values, r_default.values, equal_nan=True)

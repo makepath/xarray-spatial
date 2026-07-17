@@ -8,19 +8,16 @@ import numpy as np
 import xarray as xr
 
 try:
-    import dask.array as da
     import dask
+    import dask.array as da
 except ImportError:
     da = None
     dask = None
 
-from xrspatial.cost_distance import _heap_push, _heap_pop
+from xrspatial.cost_distance import _heap_pop, _heap_push
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (
-    _validate_raster,
-    get_dataarray_resolution, ngjit,
-    has_cuda_and_cupy, is_cupy_array, is_dask_cupy, has_dask_array,
-)
+from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 NONE = -1
 
@@ -28,6 +25,73 @@ NONE = -1
 # N x N distance matrix and runs N(N-1)/2 A* calls (O(N^3) when stitched
 # with 2-opt), so unbounded N is a CPU DoS.
 _MAX_WAYPOINTS = 1000
+
+
+def _validate_surface_dims(surface, x, y, func_name):
+    """Raise ValueError if *surface* dims do not match the (y, x) names."""
+    if surface.dims != (y, x):
+        raise ValueError(
+            f"{func_name}(): expected `surface` to have dims ({y!r}, {x!r}), "
+            f"got {surface.dims}. Pass the actual dimension names via the "
+            f"`x=` and `y=` parameters."
+        )
+
+
+def _validate_barriers(barriers):
+    """Coerce *barriers* to a 1-D float64 array or raise a clear error.
+
+    Numba compares the (float) cell value against each barrier element,
+    so a non-numeric dtype would either fail deep inside the kernel with
+    a TypingError (0-d input) or, worse, compare unequal everywhere and
+    silently disable all barriers (string input).
+    """
+    arr = np.asarray(barriers)
+    if arr.ndim != 1:
+        hint = (f" Did you mean barriers=[{barriers!r}]?"
+                if arr.ndim == 0 else "")
+        raise ValueError(
+            f"barriers must be a 1-D list or array of cell values, "
+            f"got {arr.ndim}-D input.{hint}"
+        )
+    # bool arrays are rejected on purpose: barrier entries are cell
+    # values, and [True] is far more likely a mistake than "cells == 1"
+    if arr.size > 0 and not (
+        np.issubdtype(arr.dtype, np.integer)
+        or np.issubdtype(arr.dtype, np.floating)
+    ):
+        raise TypeError(
+            f"barriers must contain numeric cell values, "
+            f"got dtype {arr.dtype} from {barriers!r}"
+        )
+    return arr.astype(np.float64)
+
+
+def _validate_search_radius(search_radius):
+    """Raise if *search_radius* is not None or a non-negative integer."""
+    if search_radius is None:
+        return
+    if not isinstance(search_radius, (int, np.integer)):
+        raise TypeError(
+            f"search_radius must be a non-negative integer or None, "
+            f"got {type(search_radius).__name__} {search_radius!r}"
+        )
+    if search_radius < 0:
+        raise ValueError(
+            f"search_radius must be non-negative, got {search_radius}"
+        )
+
+
+def _validate_point(point, name, func_name):
+    """Raise ValueError if *point* is not a 2-element (y, x) pair."""
+    try:
+        n = len(point)
+    except TypeError:
+        n = None
+    if n != 2:
+        raise ValueError(
+            f"{func_name}(): `{name}` must have exactly 2 elements (y, x), "
+            f"got {point!r}"
+        )
 
 
 def _get_pixel_id(point, raster, xdim=None, ydim=None):
@@ -44,8 +108,22 @@ def _get_pixel_id(point, raster, xdim=None, ydim=None):
     x_coords = raster.coords[xdim].data
 
     cellsize_x, cellsize_y = get_dataarray_resolution(raster, xdim, ydim)
-    py = int(abs(point[0] - y_coords[0]) / cellsize_y)
-    px = int(abs(point[1] - x_coords[0]) / cellsize_x)
+    cellsize_x = abs(float(cellsize_x))
+    cellsize_y = abs(float(cellsize_y))
+
+    # coords may be ascending or descending; use a signed step so points
+    # outside the raster get out-of-range indices (rejected by _is_inside)
+    # instead of folding back inside through abs().
+    sign_y = -1.0 if len(y_coords) > 1 and y_coords[1] < y_coords[0] else 1.0
+    sign_x = -1.0 if len(x_coords) > 1 and x_coords[1] < x_coords[0] else 1.0
+
+    # round to the nearest cell center (not truncate) so a point in the
+    # upper half of a cell, or float noise at an exact center, does not
+    # shift the pixel by one.
+    py = int(round(
+        (float(point[0]) - float(y_coords[0])) / (sign_y * cellsize_y)))
+    px = int(round(
+        (float(point[1]) - float(x_coords[0])) / (sign_x * cellsize_x)))
 
     # return index of row and column where the `point` located.
     return py, px
@@ -458,10 +536,16 @@ def _hpa_star_search(surface_data, friction_data, start_py, start_px,
     c_dy, c_dx, c_dd = _neighborhood_structure(coarse_cx, coarse_cy, 8)
 
     # --- Route on coarse grid ---
+    # Coarse cell values are block means of the non-barrier fine cells,
+    # so testing them against the exact barrier values is meaningless: a
+    # passable block whose values average to a barrier value would be
+    # falsely blocked.  _coarsen_surface already encodes fully-barrier
+    # blocks as NaN, so route the coarse grid with no value barriers.
+    no_barriers = np.empty(0, dtype=barriers.dtype)
     coarse_path = np.full((ch, cw), np.nan, dtype=np.float64)
     _a_star_search(coarse_surface, coarse_path,
                    cs_py, cs_px, cg_py, cg_px,
-                   barriers, c_dy, c_dx, c_dd,
+                   no_barriers, c_dy, c_dx, c_dd,
                    coarse_friction, f_min, use_friction,
                    coarse_cx, coarse_cy)
 
@@ -520,7 +604,11 @@ def _hpa_star_search(surface_data, friction_data, start_py, start_px,
         local_gy = g_py - min_row
         local_gx = g_px - min_col
         if sub_path is None or not np.isfinite(sub_path[local_gy, local_gx]):
-            return path_img  # partial result
+            # Refinement could not connect this segment even at the
+            # largest radius.  Return all-NaN ("no path found") rather
+            # than a partial cost trail that dead-ends mid-grid, matching
+            # the no-path contract of the other search paths.
+            return np.full((h, w), np.nan, dtype=np.float64)
 
         seg_goal_cost = sub_path[local_gy, local_gx]
         sh, sw = sub_path.shape
@@ -773,16 +861,17 @@ def _path_to_dask_array(path_pixels, shape, chunks, is_cupy):
     return da.block(blocks)
 
 
+@supports_dataset
 def a_star_search(surface: xr.DataArray,
-                  start: Union[tuple, list, np.array],
-                  goal: Union[tuple, list, np.array],
-                  barriers: list = [],
-                  x: Optional[str] = 'x',
-                  y: Optional[str] = 'y',
+                  start: Union[tuple, list, np.ndarray],
+                  goal: Union[tuple, list, np.ndarray],
+                  barriers: Optional[list] = None,
+                  x: str = 'x',
+                  y: str = 'y',
                   connectivity: int = 8,
                   snap_start: bool = False,
                   snap_goal: bool = False,
-                  friction: xr.DataArray = None,
+                  friction: Optional[xr.DataArray] = None,
                   search_radius: Optional[int] = None) -> xr.DataArray:
     """
     Calculate the least-cost path from a starting point to a goal through
@@ -829,24 +918,32 @@ def a_star_search(surface: xr.DataArray,
 
     Parameters
     ----------
-    surface : xr.DataArray
-        2D array of values to bin.
+    surface : xr.DataArray or xr.Dataset
+        2D array of the surface to find a path across.  A Dataset routes
+        each data variable independently and returns a Dataset of the
+        per-variable results.
     start : array-like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the starting point.
+        The point is mapped to the pixel whose cell center is nearest.
+        A point outside the raster bounds raises a ``ValueError``.
     goal : array like object of 2 numeric elements
         (y, x) or (lat, lon) coordinates of the goal location.
-    barriers : array like object, default=[]
+        Mapped to the nearest cell center; a point outside the raster
+        bounds raises a ``ValueError``.
+    barriers : array like object, optional
         List of values inside the surface which are barriers
-        (cannot cross).
+        (cannot cross).  Default is no barriers.  Must be a 1-D sequence
+        of numeric values; anything else raises before the search runs.
     x : str, default='x'
         Name of the x coordinate in input surface raster.
-    y: str, default='y'
+    y : str, default='y'
         Name of the y coordinate in input surface raster.
     connectivity : int, default=8
-    snap_start: bool, default=False
+        Use 4 or 8 pixel connectivity to define neighboring cells.
+    snap_start : bool, default=False
         Snap the start location to the nearest valid value before
         beginning pathfinding.
-    snap_goal: bool, default=False
+    snap_goal : bool, default=False
         Snap the goal location to the nearest valid value before
         beginning pathfinding.
     friction : xr.DataArray, optional
@@ -858,6 +955,7 @@ def a_star_search(surface: xr.DataArray,
     search_radius : int, optional
         Limit the A* search to a bounding box of
         ``±search_radius`` pixels around the start and goal.
+        Must be a non-negative integer (or ``None``).
         Dramatically reduces memory for large grids when start and
         goal are relatively close.  If ``None`` (default) and the
         full grid would exceed 50 % of available RAM, an automatic
@@ -869,6 +967,7 @@ def a_star_search(surface: xr.DataArray,
     path_agg: xr.DataArray of the same type as `surface`.
         2D array of pathfinding values.
         All other input attributes are preserved.
+        A Dataset input returns a Dataset of per-variable results.
 
     References
     ----------
@@ -908,12 +1007,14 @@ def a_star_search(surface: xr.DataArray,
         _validate_raster(friction, func_name='a_star_search',
                          name='friction', ndim=2)
 
-    if surface.dims != (y, x):
-        raise ValueError("`surface.coords` should be named as coordinates:"
-                         "({}, {})".format(y, x))
+    _validate_surface_dims(surface, x, y, 'a_star_search')
 
     if connectivity != 4 and connectivity != 8:
         raise ValueError("Use either 4 or 8-connectivity.")
+
+    _validate_search_radius(search_radius)
+    _validate_point(start, 'start', 'a_star_search')
+    _validate_point(goal, 'goal', 'a_star_search')
 
     # Detect backend
     surface_data = surface.data
@@ -942,7 +1043,9 @@ def a_star_search(surface: xr.DataArray,
     if not _is_inside(goal_py, goal_px, h, w):
         raise ValueError("goal location outside the surface graph.")
 
-    barriers = np.asarray(barriers)
+    if barriers is None:
+        barriers = []
+    barriers = _validate_barriers(barriers)
 
     # --- Snap / crossability checks ---
     if _is_dask:
@@ -1038,6 +1141,7 @@ def a_star_search(surface: xr.DataArray,
 
     elif _is_cupy_backend:
         import cupy
+
         # Transfer to CPU, run numpy kernel, transfer back
         if 'surface_np' not in dir():
             surface_np = surface_data.get()
@@ -1160,6 +1264,11 @@ def a_star_search(surface: xr.DataArray,
                             coords=surface.coords,
                             dims=surface.dims,
                             attrs=surface.attrs)
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'concatenate-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg
 
@@ -1284,6 +1393,35 @@ def _nearest_neighbor_2opt(dist, start, end):
     return tour, _tour_cost(tour)
 
 
+def _segment_to_numpy(seg_data):
+    """Materialize an a_star_search segment result as a numpy array.
+
+    Handles all four backends: numpy passes through, cupy uses
+    ``.get()``, dask computes first (yielding cupy blocks for
+    dask+cupy, which then also need ``.get()``).
+    """
+    if da is not None and isinstance(seg_data, da.Array):
+        seg_data = seg_data.compute()
+    if hasattr(seg_data, 'get'):  # cupy -> numpy
+        seg_data = seg_data.get()
+    return np.asarray(seg_data)
+
+
+def _cost_at_pixel(seg_data, py, px):
+    """Read the cost of one pixel of an a_star_search result as a float.
+
+    On dask backends this computes only the block containing the pixel
+    (a cheap delayed block from ``_path_to_dask_array``), so the full
+    segment is never materialized.
+    """
+    value = seg_data[py, px]
+    if da is not None and isinstance(value, da.Array):
+        value = value.compute()
+    if hasattr(value, 'get'):  # cupy scalar -> numpy
+        value = value.get()
+    return float(value)
+
+
 def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
                              connectivity, snap, friction, search_radius):
     """Build pairwise cost matrix and solve TSP with fixed endpoints.
@@ -1294,27 +1432,35 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
     INF = float('inf')
     dist = [[INF] * n for _ in range(n)]
 
+    def _pair_cost(a, b):
+        seg = a_star_search(
+            surface, waypoints[a], waypoints[b],
+            barriers=barriers, x=x, y=y,
+            connectivity=connectivity,
+            snap_start=snap, snap_goal=snap,
+            friction=friction, search_radius=search_radius,
+        )
+        goal_py, goal_px = _get_pixel_id(waypoints[b], surface, x, y)
+        # Single-pixel read: on dask backends this computes only the
+        # block containing the goal instead of the whole segment.
+        goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+        return goal_cost if np.isfinite(goal_cost) else INF
+
     for i in range(n):
-        for j in range(n):
-            if i == j:
-                dist[i][j] = 0.0
-                continue
-            seg = a_star_search(
-                surface, waypoints[i], waypoints[j],
-                barriers=barriers, x=x, y=y,
-                connectivity=connectivity,
-                snap_start=snap, snap_goal=snap,
-                friction=friction, search_radius=search_radius,
-            )
-            seg_data = seg.data
-            if hasattr(seg_data, 'get'):
-                seg_vals = seg_data.get()
+        dist[i][i] = 0.0
+        for j in range(i + 1, n):
+            dist[i][j] = _pair_cost(i, j)
+            if snap:
+                # Snapping can move the requested start and goal pixels,
+                # so the reverse direction may read its cost at a
+                # different pixel; compute it explicitly.
+                dist[j][i] = _pair_cost(j, i)
             else:
-                seg_vals = np.asarray(seg.values)
-            goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
-            goal_cost = seg_vals[goal_py, goal_px]
-            if np.isfinite(goal_cost):
-                dist[i][j] = goal_cost
+                # The pixel graph is undirected and edge costs use the
+                # mean friction of both endpoints, so the cost matrix is
+                # symmetric: reuse cost(i -> j) as cost(j -> i) instead
+                # of running the reverse A* search.
+                dist[j][i] = dist[i][j]
 
     # Fixed endpoints: first=0, last=n-1
     if n <= 12:
@@ -1328,12 +1474,12 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
 @supports_dataset
 def multi_stop_search(surface: xr.DataArray,
                       waypoints: list,
-                      barriers: list = [],
-                      x: Optional[str] = 'x',
-                      y: Optional[str] = 'y',
+                      barriers: Optional[list] = None,
+                      x: str = 'x',
+                      y: str = 'y',
                       connectivity: int = 8,
                       snap: bool = False,
-                      friction: xr.DataArray = None,
+                      friction: Optional[xr.DataArray] = None,
                       search_radius: Optional[int] = None,
                       optimize_order: bool = False) -> xr.DataArray:
     """Find the least-cost path visiting a sequence of waypoints in order.
@@ -1344,6 +1490,10 @@ def multi_stop_search(surface: xr.DataArray,
     minimize total travel cost (TSP), keeping the first and last
     waypoints fixed.
 
+    Dask-backed surfaces are routed sparsely and the segments are
+    stitched lazily, so the full grid is never materialized in memory;
+    peak memory scales with the chunk size and the explored corridor.
+
     Parameters
     ----------
     surface : xr.DataArray or xr.Dataset
@@ -1353,8 +1503,8 @@ def multi_stop_search(surface: xr.DataArray,
     waypoints : list of array-like
         Sequence of ``(y, x)`` coordinate pairs to visit.  Must contain
         at least two points.
-    barriers : list, default=[]
-        Surface values that are impassable.
+    barriers : list, optional
+        Surface values that are impassable.  Default is no barriers.
     x, y : str, default ``'x'`` / ``'y'``
         Coordinate dimension names.
     connectivity : int, default=8
@@ -1373,9 +1523,11 @@ def multi_stop_search(surface: xr.DataArray,
     Returns
     -------
     xr.DataArray or xr.Dataset
-        Cumulative path cost surface.  Attributes include
-        ``waypoint_order``, ``segment_costs``, and ``total_cost``.
-        A Dataset input returns a Dataset of per-variable results.
+        Cumulative path cost surface, backed by the same array type as
+        *surface* (numpy, cupy, dask, or dask+cupy).  Input attributes
+        are preserved, with ``waypoint_order``, ``segment_costs``, and
+        ``total_cost`` added.  A Dataset input returns a Dataset of
+        per-variable results.
 
     Raises
     ------
@@ -1383,14 +1535,26 @@ def multi_stop_search(surface: xr.DataArray,
         If the surface is not 2-D, fewer than two waypoints are given,
         waypoints fall outside the surface bounds, or a segment is
         unreachable.
+    TypeError
+        If *barriers* contains non-numeric values or *search_radius*
+        is not an integer.
     """
     # --- Input validation ---
     _validate_raster(surface, func_name='multi_stop_search',
                      name='surface', ndim=2)
 
+    if barriers is None:
+        barriers = []
+
     if friction is not None:
         _validate_raster(friction, func_name='multi_stop_search',
                          name='friction', ndim=2)
+
+    _validate_surface_dims(surface, x, y, 'multi_stop_search')
+
+    # fail at the API boundary rather than inside the first segment's
+    # a_star_search call (re-validation there is idempotent)
+    barriers = _validate_barriers(barriers)
 
     if len(waypoints) < 2:
         raise ValueError("at least 2 waypoints are required")
@@ -1403,9 +1567,7 @@ def multi_stop_search(surface: xr.DataArray,
         )
 
     for idx, wp in enumerate(waypoints):
-        if len(wp) != 2:
-            raise ValueError(
-                f"waypoint {idx} must have exactly 2 elements (y, x)")
+        _validate_point(wp, f'waypoint {idx}', 'multi_stop_search')
 
     h, w = surface.shape
     for idx, wp in enumerate(waypoints):
@@ -1437,7 +1599,11 @@ def multi_stop_search(surface: xr.DataArray,
             )
 
     # --- Segment-by-segment routing ---
-    path_data = np.full(surface.shape, np.nan, dtype=np.float64)
+    if _is_dask:
+        # Built lazily below; never allocate the full grid in memory.
+        path_data = None
+    else:
+        path_data = np.full(surface.shape, np.nan, dtype=np.float64)
     cumulative_cost = 0.0
     segment_costs = []
 
@@ -1452,49 +1618,86 @@ def multi_stop_search(surface: xr.DataArray,
             snap_start=snap, snap_goal=snap,
             friction=friction, search_radius=search_radius,
         )
-        seg_data = seg.data
-        if hasattr(seg_data, 'get'):
-            seg_vals = seg_data.get()  # cupy -> numpy
-        else:
-            seg_vals = np.asarray(seg.values)
 
         goal_py, goal_px = waypoint_pixels[i + 1]
 
-        # If snap is on, the actual goal pixel may differ from the
-        # requested one.  Find the pixel with maximum finite cost
-        # (the true goal of this segment).
-        if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
-            finite = np.isfinite(seg_vals)
-            if finite.any():
-                max_idx = np.nanargmax(seg_vals)
-                goal_py, goal_px = np.unravel_index(max_idx, seg_vals.shape)
-                waypoint_pixels[i + 1] = (goal_py, goal_px)
+        if _is_dask:
+            # Lazy stitching: reading the goal cost computes only the
+            # block containing it, and the cumulative-cost overlay stays
+            # chunked.  snap is rejected for dask inputs above, so the
+            # goal pixel is always the requested one.  Junction pixels
+            # need no masking: the overwriting value (segment-start cost
+            # 0 plus the cumulative offset) equals what the previous
+            # segment wrote there.
+            seg_goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+            if not np.isfinite(seg_goal_cost):
+                raise ValueError(
+                    f"no path between waypoints {i} and {i + 1}")
 
-        seg_goal_cost = seg_vals[goal_py, goal_px]
+            # Each segment adds one da.where layer over every chunk, so
+            # the task graph grows as n_waypoints * n_chunks elementwise
+            # tasks.  _MAX_WAYPOINTS bounds this; the eager alternative
+            # materializes the full grid.
+            shifted = seg.data + cumulative_cost  # NaN stays NaN
+            if path_data is None:
+                path_data = shifted
+            else:
+                path_data = da.where(
+                    da.isfinite(shifted), shifted, path_data)
+        else:
+            seg_vals = _segment_to_numpy(seg.data)
 
-        if not np.isfinite(seg_goal_cost):
-            raise ValueError(
-                f"no path between waypoints {i} and {i + 1}")
+            # If snap is on, the actual goal pixel may differ from the
+            # requested one.  Find the pixel with maximum finite cost
+            # (the true goal of this segment).
+            if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
+                finite = np.isfinite(seg_vals)
+                if finite.any():
+                    max_idx = np.nanargmax(seg_vals)
+                    goal_py, goal_px = np.unravel_index(
+                        max_idx, seg_vals.shape)
+                    waypoint_pixels[i + 1] = (goal_py, goal_px)
 
-        mask = np.isfinite(seg_vals)
-        if i > 0:
-            # Don't overwrite the junction pixel (set by previous segment)
-            sp_y, sp_x = waypoint_pixels[i]
-            mask[sp_y, sp_x] = False
+            seg_goal_cost = seg_vals[goal_py, goal_px]
 
-        path_data[mask] = seg_vals[mask] + cumulative_cost
+            if not np.isfinite(seg_goal_cost):
+                raise ValueError(
+                    f"no path between waypoints {i} and {i + 1}")
+
+            mask = np.isfinite(seg_vals)
+            if i > 0:
+                # Don't overwrite the junction pixel
+                # (set by previous segment)
+                sp_y, sp_x = waypoint_pixels[i]
+                mask[sp_y, sp_x] = False
+
+            path_data[mask] = seg_vals[mask] + cumulative_cost
+
         segment_costs.append(float(seg_goal_cost))
         cumulative_cost += seg_goal_cost
+
+    # Match the input's array type, like a_star_search does.  On dask
+    # backends path_data is already a lazy array with the surface's
+    # chunking (and cupy blocks for dask+cupy).
+    if not _is_dask and has_cuda_and_cupy() and is_cupy_array(surface_data):
+        import cupy
+        path_data = cupy.asarray(path_data)
 
     path_agg = xr.DataArray(
         path_data,
         coords=surface.coords,
         dims=surface.dims,
         attrs={
+            **surface.attrs,
             'waypoint_order': [tuple(wp) for wp in waypoints],
             'segment_costs': segment_costs,
             'total_cost': cumulative_cost,
         },
     )
+    # On dask backends, xr.DataArray adopts the dask array's internal graph
+    # token (e.g. 'array-<hash>') as .name when name=None, so reset it
+    # post-construction to match the numpy/cupy backends. (Same fix as
+    # zonal #2611, focal #2733.)
+    path_agg.name = None
 
     return path_agg

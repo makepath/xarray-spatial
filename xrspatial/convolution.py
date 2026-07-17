@@ -1,4 +1,5 @@
 import re
+import threading
 from functools import partial
 
 import numpy as np
@@ -126,7 +127,7 @@ def calc_cellsize(raster):
         >>> raster_3['y'] = np.linspace(1, h, h)
         >>> raster_3['x'] = np.linspace(1, w, w)
         >>> calc_cellsize(raster_3)
-        >>> (1000.0, 1000.0)
+        (1000.0, 1000.0)
     """
 
     if 'unit' in raster.attrs:
@@ -280,20 +281,20 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         >>> # Create Kernel
         >>> kernel = annulus_kernel(1, 1, 3, 1)
         >>> print(kernel)
-        [[0., 0., 0., 1., 0., 0., 0.],
-         [0., 1., 1., 1., 1., 1., 0.],
-         [0., 1., 1., 0., 1., 1., 0.],
-         [1., 1., 0., 0., 0., 1., 1.],
-         [0., 1., 1., 0., 1., 1., 0.],
-         [0., 1., 1., 1., 1., 1., 0.],
-         [0., 0., 0., 1., 0., 0., 0.]]
+        [[0. 0. 0. 1. 0. 0. 0.]
+         [0. 1. 1. 1. 1. 1. 0.]
+         [0. 1. 1. 0. 1. 1. 0.]
+         [1. 1. 0. 0. 0. 1. 1.]
+         [0. 1. 1. 0. 1. 1. 0.]
+         [0. 1. 1. 1. 1. 1. 0.]
+         [0. 0. 0. 1. 0. 0. 0.]]
         >>> kernel = annulus_kernel(1, 2, 5, 2)
         >>> print(kernel)
-        [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-         [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-         [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        [[0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0.]
+         [0. 1. 1. 1. 1. 0. 1. 1. 1. 1. 0.]
+         [1. 1. 1. 0. 0. 0. 0. 0. 1. 1. 1.]
+         [0. 1. 1. 1. 1. 0. 1. 1. 1. 1. 0.]
+         [0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0.]]
     """
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)
@@ -316,7 +317,35 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
 
 def custom_kernel(kernel):
     """
-    Validates a custom kernel. If the kernel is valid, returns itself.
+    Validates a custom convolution kernel. If the kernel is valid, returns
+    it unchanged; otherwise raises ValueError. A valid kernel is a 2D NumPy
+    array with an odd number of rows and columns.
+
+    Parameters
+    ----------
+    kernel : numpy.ndarray
+        2D array with an odd number of rows and columns.
+
+    Returns
+    -------
+    kernel : numpy.ndarray
+        The input kernel, unchanged.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> from xrspatial.convolution import custom_kernel
+        >>> kernel = custom_kernel(np.array([
+        ...     [0, 1, 0],
+        ...     [1, 1, 1],
+        ...     [0, 1, 0],
+        ... ]))
+        >>> kernel
+        array([[0, 1, 0],
+               [1, 1, 1],
+               [0, 1, 0]])
     """
 
     if not isinstance(kernel, np.ndarray):
@@ -343,7 +372,44 @@ def custom_kernel(kernel):
     return kernel
 
 
-@jit(nopython=True, nogil=True)
+def _validate_kernel(kernel, func_name='convolve_2d'):
+    """Validate a convolution kernel: a 2D array with odd side lengths.
+
+    Duck-typed on ``ndim``/``shape`` so numpy and cupy kernels both pass.
+    Rejects up front so a malformed kernel raises a clear ValueError
+    instead of an inscrutable numba ``TypingError`` (or silent off-center
+    output for even side lengths). Mirrors ``custom_kernel``'s odd-shape
+    contract.
+    """
+    if not hasattr(kernel, 'ndim') or not hasattr(kernel, 'shape'):
+        raise ValueError(
+            f"{func_name}(): `kernel` must be a 2D array with odd side "
+            f"lengths, got {type(kernel).__module__}."
+            f"{type(kernel).__qualname__}"
+        )
+    if kernel.ndim != 2:
+        raise ValueError(
+            f"{func_name}(): `kernel` must be a 2D array, got {kernel.ndim}D "
+            f"with shape {tuple(kernel.shape)}"
+        )
+    rows, cols = kernel.shape
+    if rows % 2 == 0 or cols % 2 == 0:
+        raise ValueError(
+            f"{func_name}(): `kernel` must have odd side lengths so it has a "
+            f"well-defined center, got shape {(rows, cols)}"
+        )
+
+
+# Numba parallel=True kernels must not be launched concurrently from multiple
+# Python threads: the default 'workqueue' threading layer is not threadsafe and
+# aborts the process (SIGABRT on macOS) when two host threads enter a parallel
+# region at once.  _convolve_2d_dask_numpy calls the kernel per chunk under
+# dask's threaded scheduler, so the kernel launch is serialized behind this
+# lock.  Same hazard and fix as the terrain and reproject kernels (#3141).
+_PARALLEL_KERNEL_LOCK = threading.Lock()
+
+
+@jit(nopython=True, nogil=True, parallel=True)
 def _convolve_2d_numpy(data, kernel):
     # apply kernel to data image.
     # Caller must ensure data is a float type (float32 or float64).
@@ -373,14 +439,23 @@ def _convolve_2d_numpy(data, kernel):
     return out
 
 
+def _convolve_2d_numpy_locked(data, kernel):
+    # Serialize the parallel=True kernel launch across host threads; see the
+    # comment on _PARALLEL_KERNEL_LOCK. A single numpy call takes the lock
+    # uncontended and still runs across all cores; concurrent dask chunk calls
+    # run one at a time, each internally parallel.
+    with _PARALLEL_KERNEL_LOCK:
+        return _convolve_2d_numpy(data, kernel)
+
+
 def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
     data = data.astype(_promote_float(data.dtype))
     if boundary == 'nan':
-        return _convolve_2d_numpy(data, kernel)
+        return _convolve_2d_numpy_locked(data, kernel)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     padded = _pad_array(data, (pad_h, pad_w), boundary)
-    result = _convolve_2d_numpy(padded, kernel)
+    result = _convolve_2d_numpy_locked(padded, kernel)
     r0 = pad_h if pad_h else None
     r1 = -pad_h if pad_h else None
     c0 = pad_w if pad_w else None
@@ -389,14 +464,15 @@ def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
-    data = data.astype(_promote_float(data.dtype))
+    fdtype = _promote_float(data.dtype)
+    data = data.astype(fdtype)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
-    _func = partial(_convolve_2d_numpy, kernel=kernel)
+    _func = partial(_convolve_2d_numpy_locked, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()),
+                           meta=np.array((), dtype=fdtype),
                            **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
@@ -464,24 +540,53 @@ def _convolve_2d_cupy(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
-    data = data.astype(_promote_float(data.dtype))
+    fdtype = _promote_float(data.dtype)
+    data = data.astype(fdtype)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_cupy, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()),
+                           meta=cupy.array((), dtype=fdtype),
                            **_dask_task_name_kwargs('xrspatial.convolve_2d'))
     return out
 
 
 def convolve_2d(data, kernel, boundary='nan'):
+    """
+    Applies a 2D convolution kernel to a raw array. This is the array-level
+    engine behind :func:`convolution_2d`; it takes and returns a raw array
+    rather than an ``xarray.DataArray``. Edges where the kernel would extend
+    beyond the array are handled per the ``boundary`` mode.
+
+    Parameters
+    ----------
+    data : numpy.ndarray, cupy.ndarray, or dask.array.Array
+        2D array of values to convolve. Integer inputs are promoted to at
+        least float32.
+    kernel : numpy.ndarray
+        Impulse kernel with an odd number of rows and columns.
+    boundary : str, default='nan'
+        How to handle edges where the kernel extends beyond the array.
+        ``'nan'``     -- fill missing neighbours with NaN (default).
+        ``'nearest'`` -- repeat edge values.
+        ``'reflect'`` -- mirror at boundary.
+        ``'wrap'``    -- periodic / toroidal.
+
+    Returns
+    -------
+    out : same array type as ``data``
+        2D array of convolved values with the same shape as ``data``. Under
+        ``boundary='nan'`` the outer ring of width ``kernel_size // 2`` is
+        filled with NaN.
+    """
     # Wrap raw arrays so _validate_raster can check dtype/ndim consistently
     # across numpy, cupy, and dask backends before the kernel runs.
     agg = xr.DataArray(data)
     _validate_raster(agg, func_name='convolve_2d', ndim=2)
     _validate_boundary(boundary)
+    _validate_kernel(kernel, func_name='convolve_2d')
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_convolve_2d_numpy_boundary,
         cupy_func=_convolve_2d_cupy,
@@ -500,11 +605,20 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     images by eliminating spurious data or enhancing features in the
     data. Note that edges of output data array are filled with NaNs.
 
+    The kernel is applied by cross-correlation: it is overlaid on each
+    neighbourhood as given, without being flipped, which matches
+    ``scipy.ndimage.correlate``. This equals a true convolution only when
+    the kernel is symmetric, as the built-in ``circle_kernel`` and
+    ``annulus_kernel`` are. For an asymmetric kernel where you need
+    ``scipy.ndimage.convolve`` semantics, pass the kernel pre-flipped
+    (``kernel[::-1, ::-1]``).
+
     Parameters
     ----------
     agg : xarray.DataArray
-        2D array of values to processed. Can be NumPy backed, CuPybacked,
-        or Dask with NumPy backed DataArray.
+        2D array of values to be processed. Can be a NumPy-backed,
+        CuPy-backed, Dask-with-NumPy-backed, or Dask-with-CuPy-backed
+        DataArray.
     kernel : array-like object
         Impulse kernel, determines area to apply impulse function for
         each cell.
@@ -580,7 +694,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
         array([[nan, nan, nan, nan, nan, nan],
                [nan,  4.,  4.,  4.,  4., nan],
                [nan,  4.,  4.,  4.,  4., nan],
-               [nan, nan, nan, nan, nan, nan]], dtype=float32)
+               [nan, nan, nan, nan, nan, nan]])
 
     convolution_2d() works with CuPy backed DataArray.
     .. sourcecode:: python
@@ -603,7 +717,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
         >>> convolved_agg = convolution_2d(raster_cupy, kernel)
         >>> type(convolved_agg.data)
-        <class 'cupy.core.core.ndarray'>
+        <class 'cupy.ndarray'>
         >>> convolved_agg
         <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
         array([[ nan,  nan,  nan,  nan,  nan,  nan],
@@ -614,6 +728,7 @@ def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     """
 
     # wrapper of convolve_2d
+    _validate_raster(agg, func_name='convolution_2d', ndim=2)
     out = convolve_2d(agg.data, kernel, boundary)
     return xr.DataArray(out,
                         name=name,

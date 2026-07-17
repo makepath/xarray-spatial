@@ -1276,3 +1276,38 @@ def test_iterative_heap_no_overflow_variable_friction(connectivity):
                 raster, friction, connectivity=connectivity))
         expected = _reference_dijkstra(source, friction_data, connectivity)
         np.testing.assert_allclose(out, expected, equal_nan=True, atol=1e-3)
+
+
+def test_docstring_states_all_backends():
+    doc = cost_distance.__doc__
+    assert "CuPy" in doc
+    assert "Dask with CuPy" in doc
+    assert "support NumPy backed, and Dask with NumPy backed" not in doc
+
+
+def test_docstring_example_matches_output():
+    source = np.array([
+        [0., 0., 0.],
+        [0., 1., 0.],
+        [0., 0., 0.],
+    ])
+    friction = np.ones((3, 3))
+    n, m = source.shape
+    raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+    friction_da = xr.DataArray(
+        friction, dims=['y', 'x'], name='friction')
+    friction_da['y'] = np.arange(n)[::-1]
+    friction_da['x'] = np.arange(m)
+
+    result = cost_distance(raster, friction_da)
+    out = _compute(result)
+
+    expected = np.array([
+        [np.sqrt(2), 1., np.sqrt(2)],
+        [1., 0., 1.],
+        [np.sqrt(2), 1., np.sqrt(2)],
+    ], dtype=np.float32)
+    np.testing.assert_allclose(out, expected, atol=1e-5)
+    assert result.dtype == np.float32

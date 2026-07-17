@@ -15,8 +15,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_scalar, has_cuda_and_cupy,
-                             is_cupy_array, ngjit)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, _validate_scalar,
+                             has_cuda_and_cupy, is_cupy_array, ngjit)
 
 # Upper bound on bump count to prevent accidental OOM from the default
 # w*h//10 heuristic.  16 bytes per bump (int32 loc pair + float64 height),
@@ -189,11 +189,14 @@ def bump(width: int = None,
         Total height, in pixels, of the image.
         Not required when ``agg`` is provided.
     count : int, optional
-        Number of bumps to generate. Defaults to ``width * height // 10``
-        (capped at 10,000,000) when not provided.
-    height_func : function which takes x, y and returns a height value
-        Function used to apply varying bump heights to different
-        elevations.
+        Number of bumps to generate. When omitted, defaults to
+        ``min(w * h // 10, 10_000_000)``, where ``w`` and ``h`` are the
+        output raster width and height (taken from ``agg`` when given).
+    height_func : callable, optional
+        Called once as ``height_func(locations)``, where ``locations``
+        is an ``(count, 2)`` array of integer ``(x, y)`` bump
+        coordinates. It must return a 1D array of ``count`` bump
+        heights. When omitted, every bump is given a height of 1.
     spread : int, default=1
         Number of pixels to spread on all sides.
     agg : xarray.DataArray, optional
@@ -344,7 +347,15 @@ def bump(width: int = None,
             Description:  Example Bump Map
             units:        km
     """
+    _validate_scalar(spread, func_name='bump', name='spread',
+                     dtype=int, min_val=0)
+    if count is not None:
+        _validate_scalar(count, func_name='bump', name='count',
+                         dtype=int, min_val=0)
+
     if agg is not None:
+        _validate_raster(agg, func_name='bump', name='agg', ndim=2,
+                         numeric=False)
         h, w = agg.shape
     else:
         _validate_scalar(width, func_name='bump', name='width',
