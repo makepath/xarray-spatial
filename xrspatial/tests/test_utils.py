@@ -301,3 +301,25 @@ def test_slope_irregular_coords_warns():
     )
     with pytest.warns(UserWarning, match="'x' coordinate is not evenly spaced"):
         slope(raster)
+
+
+def test_canvas_like_removed_3451_3640():
+    """canvas_like() was the only library-source datashader import.
+
+    It was removed in #3451 / #3640 (decouple datashader). Guard against
+    accidental re-introduction: the attribute must be absent and
+    `xrspatial.utils` must not import datashader at module load time.
+    """
+    import xrspatial.utils as u
+
+    assert not hasattr(u, "canvas_like"), (
+        "canvas_like was removed in #3451; do not re-add it (it pulled "
+        "datashader into the library source)."
+    )
+
+    # No datashader import should be referenced from the utils module.
+    import sys
+
+    assert "datashader" not in sys.modules, (
+        "importing xrspatial.utils should not load datashader."
+    )
