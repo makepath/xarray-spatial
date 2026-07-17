@@ -2,6 +2,63 @@
 -----------
 
 
+### Version 0.10.16 - 2026-07-09
+
+#### New features
+- bump: add a name parameter to name the output DataArray (#3610)
+- pathfinding: accept Datasets in a_star_search and add type hints and defaults (#3653)
+
+#### Bug fixes and improvements
+- pathfinding: validate barriers, search_radius, start/goal points, and dims (#3664)
+- pathfinding: stitch multi_stop_search segments lazily on dask backends (#3666)
+- pathfinding: route the HPA* coarse grid without value barriers (#3659)
+- pathfinding: reset the dask graph-token name on outputs (#3656)
+- pathfinding: reuse symmetric costs in optimize_order instead of running reverse A* searches (#3667)
+- pathfinding: fix multi_stop_search on the cupy and dask+cupy backends (#3637)
+- pathfinding: return all-NaN from HPA* when a segment cannot be refined (#3638)
+- pathfinding: map points to the nearest cell center and reject out-of-bounds points in _get_pixel_id (#3635)
+- pathfinding: add golden-value reference tests for a_star_search (#3663)
+- pathfinding: drop the unused has_dask_array import and fix isort ordering (#3658)
+- kde: fix dask backends dropping points on descending-coordinate templates (#3633)
+- kde/line_density: drop non-finite points and segments (#3636)
+- convolution: validate kernel and agg inputs (#3624)
+- convolution: align the dask output dtype with numpy and cupy (#3622)
+- convolution: parallelize the convolve_2d numpy kernel (#3616)
+- convolution: document the cross-correlation convention and pin it with a test (#3619)
+- convolution: fill docstring gaps and fix stale examples (#3620)
+- convolution: drop an unused import and fix isort ordering (#3613)
+- bump: validate agg, count, and spread inputs (#3614)
+- bump: correct the height_func contract and count default in the docstring (#3607)
+- bump: vectorise _partition_bumps to fix the O(n_chunks x count) dask graph build (#3617)
+- bump: fix isort import-ordering drift (#3611)
+- geotiff: pad category_names to pixel indices in _parse_rat for sparse RATs (#3643)
+- geotiff: reject 0D/1D DataArray in to_geotiff with a clear "Expected 2D or 3D" error (#3604)
+- geotiff: remove the previous file's PAM sidecar when to_geotiff overwrites a path (#3599)
+- geotiff: stop a non-finite RAT value in a PAM sidecar from crashing open_geotiff (#3594)
+- geotiff: accumulate color_ramp stats during the streaming dask write (#3600)
+- geotiff: document PAM categorical sidecar behavior and category attrs (#3598)
+- geotiff: fix the to_geotiff docstring tier for extra_tags pass-through (#3596)
+- geotiff: add asv benchmark coverage for read/write paths (#3603)
+- geotiff: add tests for PAM sidecar reader edges and symbology dask stats (#3605)
+- geotiff: fix isort drift in the writer and symbology test (#3589)
+- sky_view_factor: aim rays in ground azimuth space (#3634)
+- bilateral: honor the boundary parameter on the cupy backend (#3632)
+- mahalanobis: add Examples and document NaN propagation (#3581)
+- mahalanobis: test Inf input, all-NaN, and degenerate shapes (#3584)
+- mahalanobis: drop an unused import and fix isort drift (#3582)
+- pycnophylactic: fix a crash on all-NaN zones or unmatched zone ids (#3586)
+- cost_distance: add a backend statement and Examples to the docstring (#3642)
+- templates: cap eager coordinate allocation on the from_template dask path (#3585)
+- templates: test tuple chunks and the explicit-shape chunk-cap message (#3580)
+- templates: sort imports to match the isort config (#3578)
+- analytics: remove the unused xrspatial.analytics module (#3602)
+- ci: pin libjxl to 0.11.* in the geotiff-corpus and cog-validator envs (#3639)
+- docs: point the README AI-review link to the xarray-spatial-skills repo (#3669)
+
+#### Thanks
+Thanks to @Melissari1997 for code and test contributions to this release.
+
+
 ### Version 0.10.15 - 2026-06-29
 
 #### Bug fixes and improvements
