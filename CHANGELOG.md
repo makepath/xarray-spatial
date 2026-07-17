@@ -2,6 +2,20 @@
 -----------
 
 
+### Version 0.10.17 - 2026-07-17
+
+#### Bug fixes and improvements
+- dependencies: decouple datashader; the examples extra now uses matplotlib, geopandas, and shapely, and the example notebooks use xrspatial's own rasterize (#3641)
+- pathfinding: raise on infeasible tours and honor snap in multi_stop_search optimize_order (#3654)
+- pathfinding: add multi_stop_search Examples, fix the sourcecode directive, and document NaN impassability (#3662)
+- pathfinding: extend asv benchmarks to dask, cupy, and multi_stop_search (#3648)
+- pathfinding: add tests for dask edge handling, degenerate shapes, and parameter branches (#3665)
+- convolution: close backend, boundary, and metadata test coverage gaps (#3621)
+
+#### Thanks
+Thanks to @Melissari1997 for decoupling datashader from xarray-spatial (#3641).
+
+
 ### Version 0.10.16 - 2026-07-09
 
 #### New features
