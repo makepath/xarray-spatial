@@ -1441,9 +1441,24 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
             friction=friction, search_radius=search_radius,
         )
         goal_py, goal_px = _get_pixel_id(waypoints[b], surface, x, y)
-        # Single-pixel read: on dask backends this computes only the
-        # block containing the goal instead of the whole segment.
-        goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
+        if snap:
+            # Snapping can move the goal off the requested pixel, so read
+            # the cost at the true (snapped) goal, which is the
+            # max-finite-cost pixel, like the segment loop.  snap is
+            # rejected for dask inputs, so materializing the whole
+            # segment here does not defeat lazy stitching.
+            seg_vals = _segment_to_numpy(seg.data)
+            if not np.isfinite(seg_vals[goal_py, goal_px]):
+                finite = np.isfinite(seg_vals)
+                if finite.any():
+                    max_idx = np.nanargmax(seg_vals)
+                    goal_py, goal_px = np.unravel_index(
+                        max_idx, seg_vals.shape)
+            goal_cost = seg_vals[goal_py, goal_px]
+        else:
+            # Single-pixel read: on dask backends this computes only the
+            # block containing the goal instead of the whole segment.
+            goal_cost = _cost_at_pixel(seg.data, goal_py, goal_px)
         return goal_cost if np.isfinite(goal_cost) else INF
 
     for i in range(n):
@@ -1464,7 +1479,15 @@ def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
 
     # Fixed endpoints: first=0, last=n-1
     if n <= 12:
-        order, _ = _held_karp(dist, 0, n - 1)
+        order, total = _held_karp(dist, 0, n - 1)
+        # An infinite total means no ordering visits every waypoint
+        # (some waypoint is unreachable).  Held-Karp's reconstruction
+        # would return only [start, end], silently dropping the
+        # interior waypoints, so raise instead.
+        if not np.isfinite(total):
+            raise ValueError(
+                "optimize_order: no feasible route visits all waypoints "
+                "(some waypoints are unreachable from the others)")
     else:
         order, _ = _nearest_neighbor_2opt(dist, 0, n - 1)
 
