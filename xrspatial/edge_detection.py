@@ -10,8 +10,8 @@ SOBEL_X = np.array([[-1, 0, 1],
                     [-1, 0, 1]], dtype=np.float64)
 
 SOBEL_Y = np.array([[-1, -2, -1],
-                    [ 0,  0,  0],
-                    [ 1,  2,  1]], dtype=np.float64)
+                    [0,  0,  0],
+                    [1,  2,  1]], dtype=np.float64)
 
 # -- Prewitt kernels ---------------------------------------------------------
 PREWITT_X = np.array([[-1, 0, 1],
@@ -19,8 +19,8 @@ PREWITT_X = np.array([[-1, 0, 1],
                       [-1, 0, 1]], dtype=np.float64)
 
 PREWITT_Y = np.array([[-1, -1, -1],
-                      [ 0,  0,  0],
-                      [ 1,  1,  1]], dtype=np.float64)
+                      [0,  0,  0],
+                      [1,  1,  1]], dtype=np.float64)
 
 # -- Laplacian kernel --------------------------------------------------------
 LAPLACIAN_KERNEL = np.array([[0,  1, 0],

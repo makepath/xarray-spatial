@@ -2,22 +2,17 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.edge_detection import (
-    LAPLACIAN_KERNEL, PREWITT_X, PREWITT_Y, SOBEL_X, SOBEL_Y,
-    laplacian, prewitt_x, prewitt_y, sobel_x, sobel_y,
-)
-from xrspatial.tests.general_checks import (
-    assert_boundary_mode_correctness,
-    assert_numpy_equals_dask_numpy,
-    create_test_raster,
-    cuda_and_cupy_available,
-    dask_array_available,
-    general_output_checks,
-)
+from xrspatial.edge_detection import (LAPLACIAN_KERNEL, PREWITT_X, PREWITT_Y, SOBEL_X, SOBEL_Y,
+                                      laplacian, prewitt_x, prewitt_y, sobel_x, sobel_y)
+from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
+                                            assert_numpy_equals_dask_numpy, create_test_raster,
+                                            cuda_and_cupy_available, dask_array_available,
+                                            general_output_checks)
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def ramp_data():
