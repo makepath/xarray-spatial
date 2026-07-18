@@ -37,9 +37,8 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
          [-2, 0, 2],
          [-1, 0, 1]]
 
-    The kernel is applied by cross-correlation, as in
-    ``scipy.ndimage.correlate``, so the response is positive where values
-    increase toward higher column index.
+    This matches ``scipy.ndimage.correlate``: the response is positive
+    where values increase toward higher column index.
 
     Parameters
     ----------
@@ -89,9 +88,8 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
          [ 0,  0,  0],
          [ 1,  2,  1]]
 
-    The kernel is applied by cross-correlation, as in
-    ``scipy.ndimage.correlate``, so the response is positive where values
-    increase toward higher row index.
+    This matches ``scipy.ndimage.correlate``: the response is positive
+    where values increase toward higher row index.
 
     Parameters
     ----------
@@ -141,6 +139,8 @@ def laplacian(agg, name='laplacian', boundary='nan'):
          [ 1, -4, 1],
          [ 0,  1, 0]]
 
+    The kernel is symmetric, so cross-correlation and convolution agree.
+
     Parameters
     ----------
     agg : xarray.DataArray
@@ -186,9 +186,8 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
          [-1, 0, 1],
          [-1, 0, 1]]
 
-    The kernel is applied by cross-correlation, as in
-    ``scipy.ndimage.correlate``, so the response is positive where values
-    increase toward higher column index.
+    This matches ``scipy.ndimage.correlate``: the response is positive
+    where values increase toward higher column index.
 
     Parameters
     ----------
@@ -238,9 +237,8 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
          [ 0,  0,  0],
          [ 1,  1,  1]]
 
-    The kernel is applied by cross-correlation, as in
-    ``scipy.ndimage.correlate``, so the response is positive where values
-    increase toward higher row index.
+    This matches ``scipy.ndimage.correlate``: the response is positive
+    where values increase toward higher row index.
 
     Parameters
     ----------
