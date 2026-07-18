@@ -271,3 +271,187 @@ class TestCuPy:
         np_agg = create_test_raster(ramp_data, backend='numpy')
         dcu_agg = create_test_raster(ramp_data, backend='dask+cupy', chunks=(5, 6))
         assert_numpy_equals_dask_cupy(np_agg, dcu_agg, func)
+
+
+# ---------------------------------------------------------------------------
+# Multi-chunk dask (#3682) -- the tests above use a single chunk equal to
+# the full array, which never exercises chunk-boundary stitching in the
+# map_overlap path.
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestDaskMultiChunk:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_numpy_equals_dask_multichunk(self, func):
+        data = np.random.RandomState(3682).rand(9, 11).astype(np.float64)
+        np_agg = create_test_raster(data, backend='numpy')
+        da_agg = create_test_raster(data, backend='dask+numpy', chunks=(4, 5))
+        assert_numpy_equals_dask_numpy(np_agg, da_agg, func)
+
+    @cuda_and_cupy_available
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_numpy_equals_dask_cupy_multichunk(self, func):
+        from xrspatial.tests.general_checks import assert_numpy_equals_dask_cupy
+        data = np.random.RandomState(3682).rand(9, 11).astype(np.float64)
+        np_agg = create_test_raster(data, backend='numpy')
+        dcu_agg = create_test_raster(data, backend='dask+cupy', chunks=(4, 5))
+        assert_numpy_equals_dask_cupy(np_agg, dcu_agg, func)
+
+
+# ---------------------------------------------------------------------------
+# NaN at the raster edge, on every backend and boundary mode (#3682) --
+# earlier NaN tests only place a NaN at an interior cell on the numpy
+# backend. NaN-input backend divergence has shipped before (kde, #3628).
+# ---------------------------------------------------------------------------
+
+def _nan_edge_data():
+    data = np.random.RandomState(42).rand(8, 10).astype(np.float64)
+    data[0, 0] = np.nan   # corner: interacts with boundary padding
+    data[3, 4] = np.nan   # interior
+    return data
+
+
+class TestNanAtBoundary:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    @pytest.mark.parametrize('boundary', ['nan', 'nearest', 'reflect', 'wrap'])
+    def test_corner_nan_propagates(self, func, boundary):
+        result = func(create_test_raster(_nan_edge_data()), boundary=boundary)
+        # the corner NaN reaches its kernel neighborhood
+        assert np.isnan(result.data[1, 1])
+        # cells outside both NaN neighborhoods stay finite
+        assert np.isfinite(result.data[6, 7])
+
+    @dask_array_available
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    @pytest.mark.parametrize('boundary', ['nan', 'nearest', 'reflect', 'wrap'])
+    def test_numpy_equals_dask_multichunk(self, func, boundary):
+        data = _nan_edge_data()
+        expected = func(create_test_raster(data), boundary=boundary)
+        da_agg = create_test_raster(data, backend='dask+numpy', chunks=(3, 4))
+        result = func(da_agg, boundary=boundary)
+        np.testing.assert_allclose(
+            expected.data, result.data.compute(), equal_nan=True)
+
+    @cuda_and_cupy_available
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    @pytest.mark.parametrize('boundary', ['nan', 'nearest', 'reflect', 'wrap'])
+    def test_numpy_equals_cupy(self, func, boundary):
+        data = _nan_edge_data()
+        expected = func(create_test_raster(data), boundary=boundary)
+        cu_agg = create_test_raster(data, backend='cupy')
+        result = func(cu_agg, boundary=boundary)
+        np.testing.assert_allclose(
+            expected.data, result.data.get(), equal_nan=True)
+
+    @cuda_and_cupy_available
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    @pytest.mark.parametrize('boundary', ['nan', 'nearest', 'reflect', 'wrap'])
+    def test_numpy_equals_dask_cupy(self, func, boundary):
+        data = _nan_edge_data()
+        expected = func(create_test_raster(data), boundary=boundary)
+        dcu_agg = create_test_raster(data, backend='dask+cupy', chunks=(3, 4))
+        result = func(dcu_agg, boundary=boundary)
+        np.testing.assert_allclose(
+            expected.data, result.data.compute().get(), equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Inf handling (#3682) -- an inf cell propagates +/-inf where the kernel
+# weight has a single sign and NaN where inf meets -inf (or a zero weight).
+# ---------------------------------------------------------------------------
+
+inf = np.inf
+nan = np.nan
+
+
+class TestInfHandling:
+    @pytest.mark.parametrize('func,expected_block', [
+        (sobel_x, [[inf, nan, -inf], [inf, nan, -inf], [inf, nan, -inf]]),
+        (sobel_y, [[inf, inf, inf], [nan, nan, nan], [-inf, -inf, -inf]]),
+        (prewitt_x, [[inf, nan, -inf], [inf, nan, -inf], [inf, nan, -inf]]),
+        (prewitt_y, [[inf, inf, inf], [nan, nan, nan], [-inf, -inf, -inf]]),
+        (laplacian, [[nan, inf, nan], [inf, -inf, inf], [nan, inf, nan]]),
+    ])
+    def test_inf_neighborhood(self, func, expected_block):
+        data = np.ones((5, 6), dtype=np.float64)
+        data[2, 3] = np.inf
+        result = func(create_test_raster(data), boundary='reflect')
+        # 3x3 neighborhood centred on the inf cell
+        np.testing.assert_array_equal(result.data[1:4, 2:5], expected_block)
+        # cells outside the neighborhood are unaffected: constant field -> 0
+        assert result.data[0, 0] == 0
+        assert result.data[4, 0] == 0
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_negative_inf(self, func):
+        data = np.ones((5, 6), dtype=np.float64)
+        data[2, 3] = -np.inf
+        result = func(create_test_raster(data), boundary='reflect')
+        block = result.data[1:4, 2:5]
+        assert np.all(np.isinf(block) | np.isnan(block))
+        assert result.data[0, 0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Degenerate shapes (#3682) -- 1x1, strips, and empty rasters.
+# ---------------------------------------------------------------------------
+
+class TestDegenerateShapes:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_1x1_nan_boundary(self, func):
+        agg = create_test_raster(np.array([[5.0]]))
+        result = func(agg)
+        assert result.shape == (1, 1)
+        assert np.isnan(result.data[0, 0])
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_1x1_reflect(self, func):
+        agg = create_test_raster(np.array([[5.0]]))
+        result = func(agg, boundary='reflect')
+        # reflected padding makes the neighborhood constant -> zero response
+        np.testing.assert_array_equal(result.data, [[0.0]])
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_row_strip(self, func):
+        data = np.arange(6, dtype=np.float64).reshape(1, 6)
+        result_nan = func(create_test_raster(data))
+        assert result_nan.shape == (1, 6)
+        assert np.all(np.isnan(result_nan.data))
+        result_reflect = func(create_test_raster(data), boundary='reflect')
+        assert not np.any(np.isnan(result_reflect.data))
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_column_strip(self, func):
+        data = np.arange(6, dtype=np.float64).reshape(6, 1)
+        result = func(create_test_raster(data), boundary='reflect')
+        assert result.shape == (6, 1)
+        assert not np.any(np.isnan(result.data))
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_empty_raster(self, func):
+        agg = xr.DataArray(np.zeros((0, 5), dtype=np.float64), dims=['y', 'x'])
+        result = func(agg)
+        assert result.shape == (0, 5)
+
+
+# ---------------------------------------------------------------------------
+# Invalid boundary and dim-name propagation (#3682)
+# ---------------------------------------------------------------------------
+
+class TestBoundaryValidation:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_invalid_boundary_raises(self, func):
+        agg = create_test_raster(np.ones((5, 6), dtype=np.float64))
+        with pytest.raises(ValueError, match='boundary must be one of'):
+            func(agg, boundary='invalid')
+
+
+class TestDimNamePropagation:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_custom_dims_preserved(self, func):
+        agg = create_test_raster(np.ones((5, 6), dtype=np.float64),
+                                 dims=['lat', 'lon'])
+        result = func(agg)
+        assert result.dims == ('lat', 'lon')
+        np.testing.assert_allclose(result['lat'].data, agg['lat'].data)
+        np.testing.assert_allclose(result['lon'].data, agg['lon'].data)
