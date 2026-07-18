@@ -162,8 +162,11 @@ class TestNanHandling:
         data[2, 3] = np.nan
         agg = create_test_raster(data, backend='numpy')
         result = func(agg, boundary='reflect')
-        # NaN should propagate to neighbors
-        assert np.isnan(result.data[2, 3])
+        # per the docstring: every output cell whose 3x3 neighborhood
+        # contains the NaN becomes NaN, and no other cell does
+        expected_nan = np.zeros((5, 6), dtype=bool)
+        expected_nan[1:4, 2:5] = True
+        np.testing.assert_array_equal(np.isnan(result.data), expected_nan)
 
     @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
     def test_all_nan_input(self, func):
