@@ -31,11 +31,15 @@ LAPLACIAN_KERNEL = np.array([[0,  1, 0],
 def sobel_x(agg, name='sobel_x', boundary='nan'):
     """Compute the horizontal gradient of a raster using the Sobel operator.
 
-    Detects vertical edges by convolving with the Sobel-X kernel::
+    Detects vertical edges by cross-correlating with the Sobel-X kernel::
 
         [[-1, 0, 1],
          [-2, 0, 2],
          [-1, 0, 1]]
+
+    The kernel is applied by cross-correlation, as in
+    ``scipy.ndimage.correlate``, so the response is positive where values
+    increase toward higher column index.
 
     Parameters
     ----------
@@ -50,6 +54,25 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
     -------
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import sobel_x
+        >>> data = np.array([
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.]])
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> sobel_x(raster).data
+        array([[nan, nan, nan, nan],
+               [nan,  8.,  8., nan],
+               [nan,  8.,  8., nan],
+               [nan, nan, nan, nan]])
     """
     _validate_raster(agg, func_name='sobel_x', name='agg')
     out = convolve_2d(agg.data, SOBEL_X, boundary)
@@ -60,11 +83,15 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
 def sobel_y(agg, name='sobel_y', boundary='nan'):
     """Compute the vertical gradient of a raster using the Sobel operator.
 
-    Detects horizontal edges by convolving with the Sobel-Y kernel::
+    Detects horizontal edges by cross-correlating with the Sobel-Y kernel::
 
         [[-1, -2, -1],
          [ 0,  0,  0],
          [ 1,  2,  1]]
+
+    The kernel is applied by cross-correlation, as in
+    ``scipy.ndimage.correlate``, so the response is positive where values
+    increase toward higher row index.
 
     Parameters
     ----------
@@ -79,6 +106,25 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
     -------
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import sobel_y
+        >>> data = np.array([
+        ...     [0., 0., 0., 0.],
+        ...     [1., 1., 1., 1.],
+        ...     [2., 2., 2., 2.],
+        ...     [3., 3., 3., 3.]])
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> sobel_y(raster).data
+        array([[nan, nan, nan, nan],
+               [nan,  8.,  8., nan],
+               [nan,  8.,  8., nan],
+               [nan, nan, nan, nan]])
     """
     _validate_raster(agg, func_name='sobel_y', name='agg')
     out = convolve_2d(agg.data, SOBEL_Y, boundary)
@@ -108,6 +154,22 @@ def laplacian(agg, name='laplacian', boundary='nan'):
     -------
     xarray.DataArray
         Laplacian response with the same shape and backend as the input.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import laplacian
+        >>> data = np.zeros((4, 4))
+        >>> data[1, 1] = 1.
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> laplacian(raster).data
+        array([[nan, nan, nan, nan],
+               [nan, -4.,  1., nan],
+               [nan,  1.,  0., nan],
+               [nan, nan, nan, nan]])
     """
     _validate_raster(agg, func_name='laplacian', name='agg')
     out = convolve_2d(agg.data, LAPLACIAN_KERNEL, boundary)
@@ -118,11 +180,15 @@ def laplacian(agg, name='laplacian', boundary='nan'):
 def prewitt_x(agg, name='prewitt_x', boundary='nan'):
     """Compute the horizontal gradient of a raster using the Prewitt operator.
 
-    Detects vertical edges by convolving with the Prewitt-X kernel::
+    Detects vertical edges by cross-correlating with the Prewitt-X kernel::
 
         [[-1, 0, 1],
          [-1, 0, 1],
          [-1, 0, 1]]
+
+    The kernel is applied by cross-correlation, as in
+    ``scipy.ndimage.correlate``, so the response is positive where values
+    increase toward higher column index.
 
     Parameters
     ----------
@@ -137,6 +203,25 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
     -------
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import prewitt_x
+        >>> data = np.array([
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.],
+        ...     [0., 1., 2., 3.]])
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> prewitt_x(raster).data
+        array([[nan, nan, nan, nan],
+               [nan,  6.,  6., nan],
+               [nan,  6.,  6., nan],
+               [nan, nan, nan, nan]])
     """
     _validate_raster(agg, func_name='prewitt_x', name='agg')
     out = convolve_2d(agg.data, PREWITT_X, boundary)
@@ -147,11 +232,15 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
 def prewitt_y(agg, name='prewitt_y', boundary='nan'):
     """Compute the vertical gradient of a raster using the Prewitt operator.
 
-    Detects horizontal edges by convolving with the Prewitt-Y kernel::
+    Detects horizontal edges by cross-correlating with the Prewitt-Y kernel::
 
         [[-1, -1, -1],
          [ 0,  0,  0],
          [ 1,  1,  1]]
+
+    The kernel is applied by cross-correlation, as in
+    ``scipy.ndimage.correlate``, so the response is positive where values
+    increase toward higher row index.
 
     Parameters
     ----------
@@ -166,6 +255,25 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
     -------
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import prewitt_y
+        >>> data = np.array([
+        ...     [0., 0., 0., 0.],
+        ...     [1., 1., 1., 1.],
+        ...     [2., 2., 2., 2.],
+        ...     [3., 3., 3., 3.]])
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> prewitt_y(raster).data
+        array([[nan, nan, nan, nan],
+               [nan,  6.,  6., nan],
+               [nan,  6.,  6., nan],
+               [nan, nan, nan, nan]])
     """
     _validate_raster(agg, func_name='prewitt_y', name='agg')
     out = convolve_2d(agg.data, PREWITT_Y, boundary)

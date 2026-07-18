@@ -1,3 +1,6 @@
+import inspect
+import re
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -239,6 +242,49 @@ class TestBoundaryModes:
         np_agg = create_test_raster(data, backend='numpy')
         da_agg = create_test_raster(data, backend='dask+numpy', chunks=(8, 10))
         assert_boundary_mode_correctness(np_agg, da_agg, func)
+
+
+# ---------------------------------------------------------------------------
+# Docstring contract
+# ---------------------------------------------------------------------------
+
+class TestDocstrings:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_docstring_params_match_signature(self, func):
+        # Every parameter documented in the "Parameters" section must exist
+        # in the signature (and vice versa, in the same order).
+        sig_params = list(inspect.signature(func).parameters)
+        doc = inspect.getdoc(func)
+        lines = doc.splitlines()
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == 'Parameters')
+        documented = []
+        for ln in lines[start + 2:]:
+            if ln.strip() in ('Returns', 'References', 'Notes', 'Examples'):
+                break
+            m = re.match(r'^(\w+)\s*:', ln)
+            if m:
+                documented.append(m.group(1))
+        assert documented == sig_params, (
+            f'{func.__name__}: documented params {documented} != '
+            f'signature params {sig_params}'
+        )
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_docstring_has_examples_section(self, func):
+        doc = inspect.getdoc(func)
+        assert any(ln.strip() == 'Examples' for ln in doc.splitlines()), (
+            f'{func.__name__} docstring has no Examples section'
+        )
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, prewitt_x, prewitt_y])
+    def test_docstring_states_cross_correlation(self, func):
+        # convolve_2d applies kernels by cross-correlation, which for the
+        # antisymmetric Sobel/Prewitt kernels differs from convolution by
+        # sign. The docstrings used to say "convolving", which predicts the
+        # negated result. Pin the wording so it does not come back.
+        doc = inspect.getdoc(func)
+        assert 'cross-correlat' in doc
+        assert 'by convolving' not in doc
 
 
 # ---------------------------------------------------------------------------
