@@ -69,7 +69,8 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
         Horizontal gradient with the same shape and backend as the input.
         Integer inputs are computed in floating point: 8/16-bit
         integers as float32, 32/64-bit integers as float64 so that
-        large values keep unit precision.
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
     """
     _validate_raster(agg, func_name='sobel_x', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), SOBEL_X, boundary)
@@ -101,7 +102,8 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
         Vertical gradient with the same shape and backend as the input.
         Integer inputs are computed in floating point: 8/16-bit
         integers as float32, 32/64-bit integers as float64 so that
-        large values keep unit precision.
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
     """
     _validate_raster(agg, func_name='sobel_y', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), SOBEL_Y, boundary)
@@ -133,7 +135,8 @@ def laplacian(agg, name='laplacian', boundary='nan'):
         Laplacian response with the same shape and backend as the input.
         Integer inputs are computed in floating point: 8/16-bit
         integers as float32, 32/64-bit integers as float64 so that
-        large values keep unit precision.
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
     """
     _validate_raster(agg, func_name='laplacian', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), LAPLACIAN_KERNEL, boundary)
@@ -165,7 +168,8 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
         Horizontal gradient with the same shape and backend as the input.
         Integer inputs are computed in floating point: 8/16-bit
         integers as float32, 32/64-bit integers as float64 so that
-        large values keep unit precision.
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
     """
     _validate_raster(agg, func_name='prewitt_x', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), PREWITT_X, boundary)
@@ -197,7 +201,8 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
         Vertical gradient with the same shape and backend as the input.
         Integer inputs are computed in floating point: 8/16-bit
         integers as float32, 32/64-bit integers as float64 so that
-        large values keep unit precision.
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
     """
     _validate_raster(agg, func_name='prewitt_y', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), PREWITT_Y, boundary)

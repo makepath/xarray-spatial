@@ -327,11 +327,13 @@ class TestWideIntegerPrecision:
 
     @pytest.mark.parametrize('dtype,expected', [
         (np.int8, np.float32),
+        (np.uint8, np.float32),
         (np.int16, np.float32),
         (np.uint16, np.float32),
         (np.int32, np.float64),
         (np.uint32, np.float64),
         (np.int64, np.float64),
+        (np.uint64, np.float64),
         (np.float32, np.float32),
         (np.float64, np.float64),
     ])
