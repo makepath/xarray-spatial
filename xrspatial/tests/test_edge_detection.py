@@ -360,18 +360,22 @@ class TestNanAtBoundary:
 # weight has a single sign and NaN where inf meets -inf (or a zero weight).
 # ---------------------------------------------------------------------------
 
-inf = np.inf
-nan = np.nan
+# per-operator expected 3x3 neighborhood around a +inf cell in a field of
+# ones: +/-inf where the kernel weight over the inf cell has a single sign,
+# NaN where the weight is zero (0 * inf) or opposing infs meet.
+INF_NEIGHBORHOODS = [
+    (sobel_x, [[np.inf, np.nan, -np.inf]] * 3),
+    (sobel_y, [[np.inf] * 3, [np.nan] * 3, [-np.inf] * 3]),
+    (prewitt_x, [[np.inf, np.nan, -np.inf]] * 3),
+    (prewitt_y, [[np.inf] * 3, [np.nan] * 3, [-np.inf] * 3]),
+    (laplacian, [[np.nan, np.inf, np.nan],
+                 [np.inf, -np.inf, np.inf],
+                 [np.nan, np.inf, np.nan]]),
+]
 
 
 class TestInfHandling:
-    @pytest.mark.parametrize('func,expected_block', [
-        (sobel_x, [[inf, nan, -inf], [inf, nan, -inf], [inf, nan, -inf]]),
-        (sobel_y, [[inf, inf, inf], [nan, nan, nan], [-inf, -inf, -inf]]),
-        (prewitt_x, [[inf, nan, -inf], [inf, nan, -inf], [inf, nan, -inf]]),
-        (prewitt_y, [[inf, inf, inf], [nan, nan, nan], [-inf, -inf, -inf]]),
-        (laplacian, [[nan, inf, nan], [inf, -inf, inf], [nan, inf, nan]]),
-    ])
+    @pytest.mark.parametrize('func,expected_block', INF_NEIGHBORHOODS)
     def test_inf_neighborhood(self, func, expected_block):
         data = np.ones((5, 6), dtype=np.float64)
         data[2, 3] = np.inf
@@ -382,13 +386,14 @@ class TestInfHandling:
         assert result.data[0, 0] == 0
         assert result.data[4, 0] == 0
 
-    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
-    def test_negative_inf(self, func):
+    @pytest.mark.parametrize('func,expected_block', INF_NEIGHBORHOODS)
+    def test_negative_inf(self, func, expected_block):
         data = np.ones((5, 6), dtype=np.float64)
         data[2, 3] = -np.inf
         result = func(create_test_raster(data), boundary='reflect')
-        block = result.data[1:4, 2:5]
-        assert np.all(np.isinf(block) | np.isnan(block))
+        # a -inf cell produces the +inf expected block negated (NaN unchanged)
+        np.testing.assert_array_equal(
+            result.data[1:4, 2:5], np.negative(expected_block))
         assert result.data[0, 0] == 0
 
 
@@ -444,6 +449,17 @@ class TestBoundaryValidation:
         agg = create_test_raster(np.ones((5, 6), dtype=np.float64))
         with pytest.raises(ValueError, match='boundary must be one of'):
             func(agg, boundary='invalid')
+
+
+class TestIntegerDtype:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_int32_promotes_to_float32(self, func):
+        data = np.arange(30, dtype=np.int32).reshape(5, 6)
+        result = func(create_test_raster(data))
+        assert result.dtype == np.float32
+        # values match the float64-input result for these small integers
+        expected = func(create_test_raster(data.astype(np.float64)))
+        np.testing.assert_allclose(result.data, expected.data, equal_nan=True)
 
 
 class TestDimNamePropagation:
