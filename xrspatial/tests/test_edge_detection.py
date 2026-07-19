@@ -451,17 +451,6 @@ class TestBoundaryValidation:
             func(agg, boundary='invalid')
 
 
-class TestIntegerDtype:
-    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
-    def test_int32_promotes_to_float32(self, func):
-        data = np.arange(30, dtype=np.int32).reshape(5, 6)
-        result = func(create_test_raster(data))
-        assert result.dtype == np.float32
-        # values match the float64-input result for these small integers
-        expected = func(create_test_raster(data.astype(np.float64)))
-        np.testing.assert_allclose(result.data, expected.data, equal_nan=True)
-
-
 class TestDimNamePropagation:
     @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
     def test_custom_dims_preserved(self, func):
@@ -471,3 +460,73 @@ class TestDimNamePropagation:
         assert result.dims == ('lat', 'lon')
         np.testing.assert_allclose(result['lat'].data, agg['lat'].data)
         np.testing.assert_allclose(result['lon'].data, agg['lon'].data)
+
+
+# ---------------------------------------------------------------------------
+# Wide-integer precision (issue-3680)
+# ---------------------------------------------------------------------------
+# convolve_2d promotes integer inputs to float32, whose 24-bit mantissa
+# cannot separate integers above 2**24, so unit-step gradients on large
+# int32/int64 values silently collapsed to zero. edge_detection now
+# pre-promotes 32/64-bit integers to float64.
+
+
+def _to_numpy(data):
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return data
+
+
+class TestWideIntegerPrecision:
+    @pytest.fixture
+    def wide_int32_data(self):
+        # unit-step ramp on an offset beyond float32's 24-bit mantissa
+        return (np.arange(30).reshape(5, 6) % 6 + 100_000_000).astype(np.int32)
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    @pytest.mark.parametrize('backend', ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+    def test_large_int32_matches_float64_reference(self, wide_int32_data, func, backend):
+        from xrspatial.tests.general_checks import has_cuda_and_cupy, has_dask_array
+        if 'cupy' in backend and not has_cuda_and_cupy():
+            pytest.skip("Requires CUDA and CuPy")
+        if 'dask' in backend and not has_dask_array():
+            pytest.skip("Requires Dask")
+        ref = func(create_test_raster(
+            wide_int32_data.astype(np.float64), backend='numpy'))
+        agg = create_test_raster(wide_int32_data, backend=backend, chunks=(5, 6))
+        result = _to_numpy(func(agg).data)
+        np.testing.assert_allclose(result, ref.data, equal_nan=True)
+
+    def test_large_int32_gradient_nonzero(self, wide_int32_data):
+        # regression guard for the exact silent failure from issue-3680:
+        # the old float32 path returned 0.0 at every interior cell
+        result = sobel_x(create_test_raster(wide_int32_data, backend='numpy'))
+        interior = result.data[1:-1, 1:-1]
+        assert np.all(interior != 0)
+
+    def test_large_int64_matches_float64_reference(self):
+        data = (np.arange(30).reshape(5, 6) % 6
+                + 10_000_000_000).astype(np.int64)
+        ref = sobel_x(create_test_raster(data.astype(np.float64),
+                                         backend='numpy'))
+        result = sobel_x(create_test_raster(data, backend='numpy'))
+        np.testing.assert_allclose(result.data, ref.data, equal_nan=True)
+
+    @pytest.mark.parametrize('dtype,expected', [
+        (np.int8, np.float32),
+        (np.uint8, np.float32),
+        (np.int16, np.float32),
+        (np.uint16, np.float32),
+        (np.int32, np.float64),
+        (np.uint32, np.float64),
+        (np.int64, np.float64),
+        (np.uint64, np.float64),
+        (np.float32, np.float32),
+        (np.float64, np.float64),
+    ])
+    def test_output_dtype_by_input_dtype(self, dtype, expected):
+        data = np.ones((5, 6), dtype=dtype)
+        result = laplacian(create_test_raster(data, backend='numpy'))
+        assert result.dtype == expected
