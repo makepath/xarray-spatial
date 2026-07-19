@@ -111,6 +111,83 @@ class TestCorrectnessNumpy:
 
 
 # ---------------------------------------------------------------------------
+# Golden values pinned against scipy.ndimage
+# ---------------------------------------------------------------------------
+
+class TestGoldenScipyParity:
+    """Pin parity with scipy.ndimage using hardcoded reference outputs.
+
+    Expected arrays were generated with scipy.ndimage 1.16.1:
+    ``ndi.sobel(data, axis=1)``, ``ndi.sobel(data, axis=0)``,
+    ``ndi.prewitt(data, axis=1)``, ``ndi.prewitt(data, axis=0)`` and
+    ``ndi.laplace(data)``, all with scipy's default ``mode='reflect'``,
+    which matches xrspatial's ``boundary='reflect'``. The values are
+    integer-exact for this input, so comparisons use equality.
+    """
+
+    DATA = np.array([[3, 1, 4, 1, 5, 9],
+                     [2, 6, 5, 3, 5, 8],
+                     [9, 7, 9, 3, 2, 3],
+                     [8, 4, 6, 2, 6, 4],
+                     [3, 3, 8, 3, 2, 7]], dtype=np.float64)
+
+    EXPECTED = {
+        'sobel_x': np.array([[-2, 6, -3, 3, 29, 15],
+                             [4, 7, -10, -6, 18, 11],
+                             [-4, 1, -13, -14, 7, 3],
+                             [-10, 1, -8, -13, 8, 2],
+                             [-4, 13, -2, -18, 14, 13]], dtype=np.float64),
+        'sobel_y': np.array([[2, 10, 9, 5, 1, -3],
+                             [24, 23, 18, 6, -10, -21],
+                             [16, 3, -1, 0, -3, -11],
+                             [-22, -15, -6, -1, 4, 12],
+                             [-16, -5, 4, 0, -4, 5]], dtype=np.float64),
+        'prewitt_x': np.array([[0, 5, -3, 2, 21, 11],
+                               [0, 4, -7, -6, 13, 8],
+                               [-2, 1, -9, -7, 7, 2],
+                               [-6, 3, -6, -13, 6, 4],
+                               [-4, 8, -2, -12, 10, 8]], dtype=np.float64),
+        'prewitt_y': np.array([[3, 5, 8, 3, 1, -2],
+                               [18, 17, 13, 4, -7, -15],
+                               [10, 5, -2, 1, -4, -7],
+                               [-16, -11, -5, -1, 4, 8],
+                               [-11, -4, 2, -1, 0, 2]], dtype=np.float64),
+        'laplacian': np.array([[-3, 10, -5, 9, 0, -5],
+                               [12, -9, 2, 2, -2, -7],
+                               [-10, 0, -15, 4, 9, 5],
+                               [-8, 8, -1, 10, -14, 4],
+                               [5, 6, -12, 3, 10, -8]], dtype=np.float64),
+    }
+
+    @pytest.mark.parametrize('func,key', [
+        (sobel_x, 'sobel_x'),
+        (sobel_y, 'sobel_y'),
+        (prewitt_x, 'prewitt_x'),
+        (prewitt_y, 'prewitt_y'),
+        (laplacian, 'laplacian'),
+    ])
+    def test_golden_reflect_full_array(self, func, key):
+        agg = create_test_raster(self.DATA, backend='numpy')
+        result = func(agg, boundary='reflect')
+        np.testing.assert_array_equal(result.data, self.EXPECTED[key])
+
+    @pytest.mark.parametrize('func,key', [
+        (sobel_x, 'sobel_x'),
+        (sobel_y, 'sobel_y'),
+        (prewitt_x, 'prewitt_x'),
+        (prewitt_y, 'prewitt_y'),
+        (laplacian, 'laplacian'),
+    ])
+    def test_golden_nan_interior(self, func, key):
+        # default boundary='nan': interior pixels are unaffected by the
+        # boundary mode, so they must equal the reference interior
+        agg = create_test_raster(self.DATA, backend='numpy')
+        result = func(agg)
+        np.testing.assert_array_equal(
+            result.data[1:-1, 1:-1], self.EXPECTED[key][1:-1, 1:-1])
+
+
+# ---------------------------------------------------------------------------
 # Output metadata / backend checks
 # ---------------------------------------------------------------------------
 
