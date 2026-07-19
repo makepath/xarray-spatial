@@ -28,6 +28,23 @@ LAPLACIAN_KERNEL = np.array([[0,  1, 0],
                              [0,  1, 0]], dtype=np.float64)
 
 
+def _promote_wide_int(data):
+    """Cast 32/64-bit integer arrays to float64 before convolution.
+
+    ``convolve_2d`` promotes integer inputs to float32, whose 24-bit
+    mantissa cannot represent integers above 2**24: unit steps between
+    large values vanish in the cast and gradients silently collapse to
+    zero (#3680). float64 is exact for every int32/uint32 value and for
+    int64/uint64 up to 2**53. 8- and 16-bit integers are exactly
+    representable in float32, so they keep ``convolve_2d``'s promotion.
+    Works on numpy, cupy, and dask arrays alike (``astype`` is lazy on
+    dask).
+    """
+    if data.dtype.kind in 'iu' and data.dtype.itemsize > 2:
+        return data.astype(np.float64)
+    return data
+
+
 def sobel_x(agg, name='sobel_x', boundary='nan'):
     """Compute the horizontal gradient of a raster using the Sobel operator.
 
@@ -50,6 +67,10 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
     -------
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
+        Integer inputs are computed in floating point: 8/16-bit
+        integers as float32, 32/64-bit integers as float64 so that
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
 
     Notes
     -----
@@ -59,7 +80,7 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
     one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='sobel_x', name='agg')
-    out = convolve_2d(agg.data, SOBEL_X, boundary)
+    out = convolve_2d(_promote_wide_int(agg.data), SOBEL_X, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
 
@@ -86,6 +107,10 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
     -------
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
+        Integer inputs are computed in floating point: 8/16-bit
+        integers as float32, 32/64-bit integers as float64 so that
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
 
     Notes
     -----
@@ -95,7 +120,7 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
     one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='sobel_y', name='agg')
-    out = convolve_2d(agg.data, SOBEL_Y, boundary)
+    out = convolve_2d(_promote_wide_int(agg.data), SOBEL_Y, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
 
@@ -122,6 +147,10 @@ def laplacian(agg, name='laplacian', boundary='nan'):
     -------
     xarray.DataArray
         Laplacian response with the same shape and backend as the input.
+        Integer inputs are computed in floating point: 8/16-bit
+        integers as float32, 32/64-bit integers as float64 so that
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
 
     Notes
     -----
@@ -131,7 +160,7 @@ def laplacian(agg, name='laplacian', boundary='nan'):
     one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='laplacian', name='agg')
-    out = convolve_2d(agg.data, LAPLACIAN_KERNEL, boundary)
+    out = convolve_2d(_promote_wide_int(agg.data), LAPLACIAN_KERNEL, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
 
@@ -158,6 +187,10 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
     -------
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
+        Integer inputs are computed in floating point: 8/16-bit
+        integers as float32, 32/64-bit integers as float64 so that
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
 
     Notes
     -----
@@ -167,7 +200,7 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
     one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='prewitt_x', name='agg')
-    out = convolve_2d(agg.data, PREWITT_X, boundary)
+    out = convolve_2d(_promote_wide_int(agg.data), PREWITT_X, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
 
@@ -194,6 +227,10 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
     -------
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
+        Integer inputs are computed in floating point: 8/16-bit
+        integers as float32, 32/64-bit integers as float64 so that
+        large values keep unit precision (exact up to 2**53 for
+        64-bit integers).
 
     Notes
     -----
@@ -203,6 +240,6 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
     one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='prewitt_y', name='agg')
-    out = convolve_2d(agg.data, PREWITT_Y, boundary)
+    out = convolve_2d(_promote_wide_int(agg.data), PREWITT_Y, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
