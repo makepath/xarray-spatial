@@ -71,6 +71,13 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='sobel_x', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), SOBEL_X, boundary)
@@ -104,6 +111,13 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='sobel_y', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), SOBEL_Y, boundary)
@@ -137,6 +151,13 @@ def laplacian(agg, name='laplacian', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='laplacian', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), LAPLACIAN_KERNEL, boundary)
@@ -170,6 +191,13 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='prewitt_x', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), PREWITT_X, boundary)
@@ -203,6 +231,13 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
     """
     _validate_raster(agg, func_name='prewitt_y', name='agg')
     out = convolve_2d(_promote_wide_int(agg.data), PREWITT_Y, boundary)
