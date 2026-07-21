@@ -10,8 +10,8 @@ SOBEL_X = np.array([[-1, 0, 1],
                     [-1, 0, 1]], dtype=np.float64)
 
 SOBEL_Y = np.array([[-1, -2, -1],
-                    [ 0,  0,  0],
-                    [ 1,  2,  1]], dtype=np.float64)
+                    [0,  0,  0],
+                    [1,  2,  1]], dtype=np.float64)
 
 # -- Prewitt kernels ---------------------------------------------------------
 PREWITT_X = np.array([[-1, 0, 1],
@@ -19,8 +19,8 @@ PREWITT_X = np.array([[-1, 0, 1],
                       [-1, 0, 1]], dtype=np.float64)
 
 PREWITT_Y = np.array([[-1, -1, -1],
-                      [ 0,  0,  0],
-                      [ 1,  1,  1]], dtype=np.float64)
+                      [0,  0,  0],
+                      [1,  1,  1]], dtype=np.float64)
 
 # -- Laplacian kernel --------------------------------------------------------
 LAPLACIAN_KERNEL = np.array([[0,  1, 0],
@@ -74,6 +74,13 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
 
     Examples
     --------
@@ -130,6 +137,13 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
 
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
+
     Examples
     --------
     .. sourcecode:: python
@@ -184,6 +198,13 @@ def laplacian(agg, name='laplacian', boundary='nan'):
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
 
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
+
     Examples
     --------
     .. sourcecode:: python
@@ -235,6 +256,13 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
 
     Examples
     --------
@@ -290,6 +318,13 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
         integers as float32, 32/64-bit integers as float64 so that
         large values keep unit precision (exact up to 2**53 for
         64-bit integers).
+
+    Notes
+    -----
+    NaN cells in the input propagate: every output cell whose 3x3
+    neighborhood (as extended by the boundary mode) contains a NaN
+    becomes NaN. With the default ``boundary='nan'``, the outer
+    one-cell ring of the output is also NaN.
 
     Examples
     --------
