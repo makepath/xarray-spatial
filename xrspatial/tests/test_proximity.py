@@ -702,10 +702,15 @@ def test_tie_break_float32_precision_nonlattice_grid(
     # float32 while its float64 distances favour target B (the higher flat
     # index). Those are the pixels where a float64 comparison diverges from
     # the documented float32 tie-break.
+    # Use the implementation's exact formula (sqrt of the sum of squares, see
+    # euclidean_distance), not np.hypot: the two can differ by one float64
+    # ulp, which is enough to flip a float32 tie in this regime.
     xs = numpy_raster['x'].data
     ys = numpy_raster['y'].data
-    d_a = np.hypot(xs[None, :] - xs[35], ys[:, None] - ys[27])
-    d_b = np.hypot(xs[None, :] - xs[25], ys[:, None] - ys[37])
+    dx_a, dy_a = xs[None, :] - xs[35], ys[:, None] - ys[27]
+    dx_b, dy_b = xs[None, :] - xs[25], ys[:, None] - ys[37]
+    d_a = np.sqrt(dx_a * dx_a + dy_a * dy_a)
+    d_b = np.sqrt(dx_b * dx_b + dy_b * dy_b)
     tied_f32 = np.float32(d_a) == np.float32(d_b)
     assert (tied_f32 & (d_b < d_a) & (d_a <= max_distance)).any()
 

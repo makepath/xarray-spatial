@@ -866,7 +866,10 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     practice. A pixel tied with three or more targets relies on the two
     float64-smallest of them (the pair cKDTree returns) including the
     lowest-index one, which holds for exact ties under the row-major target
-    order used here but is not strictly promised.
+    order used here but is not strictly promised. Concretely: a 3-way float32
+    tie whose lowest-flat-index member is the float64-largest of the three
+    resolves to a different target here than on the brute-force/CUDA kernels.
+    That takes three targets within one float32 ulp of the same distance.
     """
     # Match the inclusive dist <= max_distance check of the brute-force/CUDA
     # backends; cKDTree's bound is exclusive (see _inclusive_upper_bound).
