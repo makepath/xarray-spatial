@@ -24,6 +24,31 @@ def _cell_resolution(raster):
     return ew_res, ns_res
 
 
+def _data_hash(data):
+    """Hash a device raster without copying the full array to the host.
+
+    The hash identifies the raster to the OptiX geometry cache
+    (``optix.build`` / ``optix.getHash``).  The previous implementation
+    hashed ``str(data.get())``, which transferred the entire raster over
+    the PCIe bus only to format numpy's truncated repr, so the hash also
+    covered nothing but corner and edge values (issue #3691).
+
+    Instead, hash the shape plus the exact bytes of a small sample: the
+    four border rows/columns and a strided interior subset.  The border
+    keeps the hash sensitive to the corner perturbation the asv
+    benchmarks use to defeat mesh caching, and the interior stride makes
+    it strictly more discriminating than the old repr-based hash.  Only
+    the sample (a few thousand elements) crosses to the host.
+    """
+    H, W = data.shape
+    sample = cupy.concatenate([
+        data[0, :], data[-1, :], data[:, 0], data[:, -1],
+        data[::max(1, H // 32), ::max(1, W // 32)].ravel(),
+    ])
+    return np.uint64(
+        hash((data.shape, sample.get().tobytes())) % (1 << 64))
+
+
 def create_triangulation(raster, optix):
     """Build a triangulated mesh on the GPU from a 2D elevation raster.
 
@@ -87,7 +112,7 @@ def create_triangulation(raster, optix):
         )
     scale = maxDim / maxH
 
-    datahash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
+    datahash = _data_hash(raster.data)
     optixhash = np.uint64(optix.getHash())
 
     if optixhash != datahash:
@@ -119,8 +144,8 @@ def create_triangulation(raster, optix):
 
 @nb.cuda.jit
 def _triangulate_terrain_kernel(verts, triangles, data, H, W, scale,
-                                ew_res, ns_res, stride):
-    global_id = stride + nb.cuda.grid(1)
+                                ew_res, ns_res):
+    global_id = nb.cuda.grid(1)
     if global_id < W*H:
         h = global_id // W
         w = global_id % W
@@ -173,18 +198,16 @@ def _triangulate_terrain(verts, triangles, terrain, scale=1,
         _triangulate_cpu(verts, triangles, terrain.data, H, W, scale,
                          ew_res, ns_res)
     if isinstance(terrain.data, cupy.ndarray):
+        # One launch covering the whole grid.  This used to be batched
+        # into 100-block launches, which serialized a 4000x4000 raster
+        # into 157 under-occupied launches (26x slower, issue #3691).
+        # CUDA's 1D grid limit is 2**31 - 1 blocks, so a single launch
+        # covers any raster the memory guard admits.
         job_size = H*W
         blockdim = 1024
-        griddim = (job_size + blockdim - 1) // 1024
-        d = 100
-        offset = 0
-        while job_size > 0:
-            batch = min(d, griddim)
-            _triangulate_terrain_kernel[batch, blockdim](
-                verts, triangles, terrain.data, H, W, scale,
-                ew_res, ns_res, offset)
-            offset += batch*blockdim
-            job_size -= batch*blockdim
+        griddim = (job_size + blockdim - 1) // blockdim
+        _triangulate_terrain_kernel[griddim, blockdim](
+            verts, triangles, terrain.data, H, W, scale, ew_res, ns_res)
     return 0
 
 
