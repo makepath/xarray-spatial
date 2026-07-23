@@ -65,7 +65,9 @@ def twi_d8(flow_accum: xr.DataArray,
     sl_data = slope_agg.data
 
     if has_cuda_and_cupy() and is_dask_cupy(flow_accum):
-        out = _twi_dask_cupy(fa_data, sl_data, cellsize)
+        # TWI is purely elementwise, so cupy-backed dask arrays run the
+        # same expression natively; no host round-trip needed.
+        out = _twi_dask(fa_data, sl_data, cellsize)
 
     elif has_cuda_and_cupy() and is_cupy_array(fa_data):
         out = _twi_cupy(fa_data, sl_data, cellsize)
@@ -106,25 +108,9 @@ def _twi_cupy(fa, sl, cellsize):
 
 
 def _twi_dask(fa, sl, cellsize):
+    """Elementwise TWI on dask arrays (numpy- or cupy-backed chunks)."""
     import dask.array as _da
     sca = fa * cellsize
     tan_slope = _da.tan(_da.radians(sl))
     tan_slope = _da.where(tan_slope < _TAN_MIN, _TAN_MIN, tan_slope)
     return _da.log(sca / tan_slope)
-
-
-def _twi_dask_cupy(fa, sl, cellsize):
-    import cupy as cp
-    fa_np = fa.map_blocks(
-        lambda b: b.get(), dtype=fa.dtype,
-        meta=np.array((), dtype=fa.dtype),
-    )
-    sl_np = sl.map_blocks(
-        lambda b: b.get(), dtype=sl.dtype,
-        meta=np.array((), dtype=sl.dtype),
-    )
-    result = _twi_dask(fa_np, sl_np, cellsize)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )

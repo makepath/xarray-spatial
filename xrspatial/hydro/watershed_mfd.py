@@ -227,17 +227,11 @@ def _watershed_mfd_cupy(fractions_data, pour_points_data):
     fr_np = _to_numpy_f64(fractions_data)
     pp_np = _to_numpy_f64(pour_points_data)
     _, h, w = fr_np.shape
-    labels = np.full((h, w), np.nan, dtype=np.float64)
-    state = np.zeros((h, w), dtype=np.int8)
-    for r in range(h):
-        for c in range(w):
-            if fr_np[0, r, c] != fr_np[0, r, c]:
-                pass
-            elif pp_np[r, c] == pp_np[r, c]:
-                labels[r, c] = pp_np[r, c]
-                state[r, c] = 3
-            else:
-                state[r, c] = 1
+    fr_valid = ~np.isnan(fr_np[0])
+    pp_valid = ~np.isnan(pp_np)
+    labels = np.where(fr_valid & pp_valid, pp_np, np.nan)
+    state = np.where(fr_valid,
+                     np.where(pp_valid, 3, 1), 0).astype(np.int8)
     out = _watershed_mfd_cpu(fr_np, labels, state, h, w)
     return cp.asarray(out)
 
@@ -701,17 +695,11 @@ def watershed_mfd(flow_dir_mfd: xr.DataArray,
         _check_memory(H, W)
         fr = data.astype(np.float64)
         pp = np.asarray(pp_data, dtype=np.float64)
-        labels = np.full((H, W), np.nan, dtype=np.float64)
-        state = np.zeros((H, W), dtype=np.int8)
-        for r in range(H):
-            for c in range(W):
-                if fr[0, r, c] != fr[0, r, c]:
-                    pass
-                elif pp[r, c] == pp[r, c]:
-                    labels[r, c] = pp[r, c]
-                    state[r, c] = 3
-                else:
-                    state[r, c] = 1
+        fr_valid = ~np.isnan(fr[0])
+        pp_valid = ~np.isnan(pp)
+        labels = np.where(fr_valid & pp_valid, pp, np.nan)
+        state = np.where(fr_valid,
+                         np.where(pp_valid, 3, 1), 0).astype(np.int8)
         out = _watershed_mfd_cpu(fr, labels, state, H, W)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):

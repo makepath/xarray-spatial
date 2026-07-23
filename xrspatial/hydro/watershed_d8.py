@@ -1043,17 +1043,11 @@ def watershed_d8(flow_dir: xr.DataArray,
         h, w = fd.shape
         # Init labels and state: pour points → resolved (state 3),
         # NaN flow_dir → nodata (state 0), others → unresolved (state 1)
-        labels = np.full((h, w), np.nan, dtype=np.float64)
-        state = np.zeros((h, w), dtype=np.int8)
-        for r in range(h):
-            for c in range(w):
-                if fd[r, c] != fd[r, c]:  # NaN
-                    pass  # state 0, label NaN
-                elif pp[r, c] == pp[r, c]:  # not NaN → pour point
-                    labels[r, c] = pp[r, c]
-                    state[r, c] = 3
-                else:
-                    state[r, c] = 1  # unresolved
+        fd_valid = ~np.isnan(fd)
+        pp_valid = ~np.isnan(pp)
+        labels = np.where(fd_valid & pp_valid, pp, np.nan)
+        state = np.where(fd_valid,
+                         np.where(pp_valid, 3, 1), 0).astype(np.int8)
         out = _watershed_cpu(fd, labels, state, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):

@@ -180,3 +180,39 @@ class TestTWIDaskCuPy:
         np.testing.assert_allclose(
             result_np.data, result_dc.data.compute().get(),
             equal_nan=True, rtol=1e-10)
+
+    def test_dask_cupy_stays_on_device(self):
+        """The dask+cupy path must not round-trip chunks through the host.
+
+        Regression test for the removed ``_twi_dask_cupy`` wrapper, which
+        pulled every chunk to numpy and pushed it back with cp.asarray.
+        The lazy result must keep a cupy meta, and twi must add the same
+        graph layers on dask+cupy input as on plain dask input (the
+        round-trip added a host-transfer map_blocks layer per input plus
+        a device-transfer layer on the output).
+        """
+        import cupy
+
+        np.random.seed(42)
+        fa_data = np.random.uniform(1, 1000, (6, 6)).astype(np.float64)
+        sl_data = np.random.uniform(0.1, 60, (6, 6)).astype(np.float64)
+
+        fa_da, sl_da = _make_twi_rasters(fa_data, sl_data, backend='dask',
+                                         chunks=(3, 3))
+        fa_dc, sl_dc = _make_twi_rasters(fa_data, sl_data,
+                                         backend='dask+cupy', chunks=(3, 3))
+
+        result_da = twi(fa_da, sl_da)
+        result_dc = twi(fa_dc, sl_dc)
+
+        assert isinstance(result_dc.data._meta, cupy.ndarray)
+
+        def added_layers(result, *inputs):
+            input_layers = set()
+            for arr in inputs:
+                input_layers |= set(arr.data.__dask_graph__().layers)
+            return len(set(result.data.__dask_graph__().layers)
+                       - input_layers)
+
+        assert (added_layers(result_dc, fa_dc, sl_dc)
+                == added_layers(result_da, fa_da, sl_da))
