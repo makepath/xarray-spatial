@@ -18,7 +18,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
-                             is_cupy_array, is_dask_cupy)
+                             is_cupy_array)
 
 # Minimum tan(slope) clamp: tan(0.001°)
 _TAN_MIN = np.tan(np.radians(0.001))
@@ -64,15 +64,13 @@ def twi_d8(flow_accum: xr.DataArray,
     fa_data = flow_accum.data
     sl_data = slope_agg.data
 
-    if has_cuda_and_cupy() and is_dask_cupy(flow_accum):
-        # TWI is purely elementwise, so cupy-backed dask arrays run the
-        # same expression natively; no host round-trip needed.
-        out = _twi_dask(fa_data, sl_data, cellsize)
-
-    elif has_cuda_and_cupy() and is_cupy_array(fa_data):
+    if has_cuda_and_cupy() and is_cupy_array(fa_data):
         out = _twi_cupy(fa_data, sl_data, cellsize)
 
     elif da is not None and isinstance(fa_data, da.Array):
+        # Covers numpy- and cupy-backed dask arrays alike: TWI is purely
+        # elementwise, so cupy chunks run the same expression natively
+        # with no host round-trip.
         out = _twi_dask(fa_data, sl_data, cellsize)
 
     elif isinstance(fa_data, np.ndarray):

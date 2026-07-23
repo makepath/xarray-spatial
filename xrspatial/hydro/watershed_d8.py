@@ -54,7 +54,9 @@ def _to_numpy_f64(arr):
 #   state  (int8)        -> 1
 #   path_r (int64)       -> 8
 #   path_c (int64)       -> 8
-# Total ~33 bytes/pixel.  The caller's ``flow_dir`` and ``pour_points``
+# Total ~33 bytes/pixel.  The vectorized init also holds two boolean
+# masks plus their conjunction (~3 B/px) transiently; that fits in the
+# 50% guard headroom.  The caller's ``flow_dir`` and ``pour_points``
 # arrays already live in RAM before dispatch and are not double-counted.
 _BYTES_PER_PIXEL = 33
 
