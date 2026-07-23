@@ -1,3 +1,5 @@
+import hashlib
+
 import cupy
 import numba as nb
 import numpy as np
@@ -33,20 +35,26 @@ def _data_hash(data):
     the PCIe bus only to format numpy's truncated repr, so the hash also
     covered nothing but corner and edge values (issue #3691).
 
-    Instead, hash the shape plus the exact bytes of a small sample: the
-    four border rows/columns and a strided interior subset.  The border
-    keeps the hash sensitive to the corner perturbation the asv
-    benchmarks use to defeat mesh caching, and the interior stride makes
-    it strictly more discriminating than the old repr-based hash.  Only
-    the sample (a few thousand elements) crosses to the host.
+    Instead, digest the shape and dtype plus the exact bytes of a small
+    sample: the four border rows/columns and a strided interior subset.
+    The border keeps the hash sensitive to the corner perturbation the
+    asv benchmarks use to defeat mesh caching, and the interior stride
+    makes it strictly more discriminating than the old repr-based hash.
+    Only the sample (a few thousand elements) crosses to the host.
+
+    Uses blake2b rather than the built-in ``hash()`` so the value is
+    deterministic across processes (``hash()`` on bytes is salted per
+    process via PYTHONHASHSEED).
     """
     H, W = data.shape
     sample = cupy.concatenate([
         data[0, :], data[-1, :], data[:, 0], data[:, -1],
         data[::max(1, H // 32), ::max(1, W // 32)].ravel(),
     ])
-    return np.uint64(
-        hash((data.shape, sample.get().tobytes())) % (1 << 64))
+    digest = hashlib.blake2b(digest_size=8)
+    digest.update(str((data.shape, data.dtype)).encode())
+    digest.update(sample.get().tobytes())
+    return np.uint64(int.from_bytes(digest.digest(), 'little'))
 
 
 def create_triangulation(raster, optix):

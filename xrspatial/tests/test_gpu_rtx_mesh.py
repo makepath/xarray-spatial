@@ -264,6 +264,38 @@ def test_data_hash_detects_interior_change():
     assert _data_hash(data) != h_before
 
 
+def test_data_hash_distinguishes_dtypes():
+    """Same bytes, different dtype -> different hash.
+
+    All-zero float32 and int32 arrays are byte-identical, so this only
+    passes if the dtype participates in the digest.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    a = cupy.zeros((16, 16), dtype=np.float32)
+    b = cupy.zeros((16, 16), dtype=np.int32)
+    assert _data_hash(a) != _data_hash(b)
+
+
+def test_data_hash_stable_across_processes():
+    """The digest must not depend on per-process hash salting.
+
+    blake2b over shape/dtype/sample bytes is fully deterministic, so a
+    fixed input maps to a fixed uint64.  The built-in ``hash()`` on
+    bytes is salted via PYTHONHASHSEED and would fail this test on the
+    next run with a different seed.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    data = cupy.asarray(
+        np.arange(8 * 8, dtype=np.float32).reshape(8, 8))
+    assert _data_hash(data) == np.uint64(7205926626332456187)
+
+
 def test_data_hash_distinguishes_shapes():
     """Same values, different shape -> different hash."""
     import cupy
