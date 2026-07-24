@@ -92,7 +92,7 @@ def test_create_triangulation_accepts_single_nonzero_pixel():
     function returns the computed scale without trying to allocate
     device buffers we don't care about for this test.
     """
-    from xrspatial.gpu_rtx.mesh_utils import create_triangulation
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash, create_triangulation
 
     data = np.zeros((4, 4), dtype=np.float32)
     data[2, 2] = 5.0  # single non-zero -> maxH = 5.0
@@ -100,7 +100,7 @@ def test_create_triangulation_accepts_single_nonzero_pixel():
 
     # Make optix.getHash() return the same hash the function will compute
     # for the data, so the `if optixhash != datahash:` block is skipped.
-    expected_hash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
+    expected_hash = _data_hash(raster.data)
     optix = MagicMock()
     optix.getHash.return_value = int(expected_hash)
 
@@ -191,7 +191,7 @@ def test_triangulate_places_vertices_at_real_resolution():
 
 def test_create_triangulation_returns_resolution():
     """create_triangulation reports the resolution it built the mesh with."""
-    from xrspatial.gpu_rtx.mesh_utils import create_triangulation
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash, create_triangulation
 
     ny, nx = 4, 4
     xs = np.arange(nx, dtype=float) * 3.0
@@ -201,7 +201,7 @@ def test_create_triangulation_returns_resolution():
     raster = _cupy_raster(data, xs=xs, ys=ys)
 
     # Skip the build path by matching the data hash.
-    expected_hash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
+    expected_hash = _data_hash(raster.data)
     optix = MagicMock()
     optix.getHash.return_value = int(expected_hash)
 
@@ -210,3 +210,132 @@ def test_create_triangulation_returns_resolution():
     assert ns_res == pytest.approx(7.0)
     # z-scale stays resolution-independent: max(H, W) / maxH = 4 / 5.0.
     assert scale == pytest.approx(4.0 / 5.0)
+
+
+# ---------------------------------------------------------------------------
+# Mesh-cache hash without a full device-to-host copy (issue #3691)
+# ---------------------------------------------------------------------------
+
+
+def test_data_hash_deterministic():
+    """The same data always hashes to the same uint64."""
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    data = cupy.asarray(np.arange(64 * 48, dtype=np.float32).reshape(64, 48))
+    h1 = _data_hash(data)
+    h2 = _data_hash(cupy.array(data))  # independent copy
+    assert h1 == h2
+    assert isinstance(h1, np.uint64)
+
+
+def test_data_hash_detects_corner_change():
+    """Perturbing a corner value must change the hash.
+
+    The asv benchmarks defeat mesh caching by changing ``z[-1, -1]``
+    (benchmarks/benchmarks/common.py), so the hash has to stay
+    sensitive to corner values.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    data = cupy.ones((64, 48), dtype=np.float32)
+    h_before = _data_hash(data)
+    data[-1, -1] = 2.0
+    assert _data_hash(data) != h_before
+
+
+def test_data_hash_detects_interior_change():
+    """An interior-only change must alter the hash.
+
+    The old ``hash(str(data.get()))`` hashed numpy's truncated repr, so
+    two rasters differing only away from the edges collided.  The
+    strided interior sample removes that blind spot for sampled cells.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    data = cupy.ones((64, 48), dtype=np.float32)
+    h_before = _data_hash(data)
+    data[32, 24] = 7.0  # far from every edge, on the stride lattice
+    assert _data_hash(data) != h_before
+
+
+def test_data_hash_distinguishes_dtypes():
+    """Same bytes, different dtype -> different hash.
+
+    All-zero float32 and int32 arrays are byte-identical, so this only
+    passes if the dtype participates in the digest.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    a = cupy.zeros((16, 16), dtype=np.float32)
+    b = cupy.zeros((16, 16), dtype=np.int32)
+    assert _data_hash(a) != _data_hash(b)
+
+
+def test_data_hash_stable_across_processes():
+    """The digest must not depend on per-process hash salting.
+
+    blake2b over shape/dtype/sample bytes is fully deterministic, so a
+    fixed input maps to a fixed uint64.  The built-in ``hash()`` on
+    bytes is salted via PYTHONHASHSEED and would fail this test on the
+    next run with a different seed.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    data = cupy.asarray(
+        np.arange(8 * 8, dtype=np.float32).reshape(8, 8))
+    assert _data_hash(data) == np.uint64(7205926626332456187)
+
+
+def test_data_hash_distinguishes_shapes():
+    """Same values, different shape -> different hash."""
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _data_hash
+
+    a = cupy.ones((32, 64), dtype=np.float32)
+    b = cupy.ones((64, 32), dtype=np.float32)
+    assert _data_hash(a) != _data_hash(b)
+
+
+def test_triangulate_covers_grid_beyond_first_launch_batch():
+    """A single launch must fill vertices for the whole grid.
+
+    Guards the single-launch replacement of the old 100-block batching
+    loop (issue #3691): 400 x 300 = 120,000 cells exceeds the 102,400
+    threads the old loop dispatched per batch, so this fails if any part
+    of the grid stops being covered.
+    """
+    import cupy
+
+    from xrspatial.gpu_rtx.mesh_utils import _triangulate_terrain
+
+    ny, nx = 400, 300
+    ew_res, ns_res = 2.0, 3.0
+    data = np.arange(ny * nx, dtype=np.float32).reshape(ny, nx) + 1.0
+    raster = xr.DataArray(cupy.asarray(data), dims=["y", "x"])
+
+    verts = cupy.full(ny * nx * 3, np.nan, np.float32)
+    triangles = cupy.full((ny - 1) * (nx - 1) * 2 * 3, -1, np.int32)
+    _triangulate_terrain(verts, triangles, raster, 1.0, ew_res, ns_res)
+    cupy.cuda.Device(0).synchronize()
+
+    v = verts.get().reshape(ny * nx, 3)
+    assert not np.isnan(v).any()  # every vertex written
+    # Spot-check the last vertex, well past the old first-batch boundary.
+    assert v[-1, 0] == pytest.approx((nx - 1) * ew_res)
+    assert v[-1, 1] == pytest.approx((ny - 1) * ns_res)
+    assert v[-1, 2] == pytest.approx(float(ny * nx))
+
+    t = triangles.get()
+    assert (t >= 0).all()  # every triangle index written
+    assert t.max() == ny * nx - 1
