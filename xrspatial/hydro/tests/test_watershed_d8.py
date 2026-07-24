@@ -95,6 +95,24 @@ def test_nan_handling():
     assert np.isnan(result.data[1, 1])
 
 
+def test_pour_point_on_nan_flow_dir():
+    """A pour point placed on a NaN flow_dir cell is nodata, not a label."""
+    flow_dir = np.array([
+        [1.0, 0.0],
+        [np.nan, 1.0],
+    ], dtype=np.float64)
+    pour_points = np.full((2, 2), np.nan, dtype=np.float64)
+    pour_points[1, 0] = 9.0  # on the NaN flow_dir cell
+    pour_points[0, 1] = 7.0
+
+    fd_da = create_test_raster(flow_dir)
+    pp_da = create_test_raster(pour_points)
+    result = watershed(fd_da, pp_da)
+
+    assert np.isnan(result.data[1, 0])
+    assert result.data[0, 1] == 7.0
+
+
 def test_linear_chain():
     """Row of cells flowing east to a pour point at the end."""
     N = 6

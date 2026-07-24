@@ -18,7 +18,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
-                             is_cupy_array, is_dask_cupy)
+                             is_cupy_array)
 
 # Minimum tan(slope) clamp: tan(0.001°)
 _TAN_MIN = np.tan(np.radians(0.001))
@@ -64,13 +64,13 @@ def twi_d8(flow_accum: xr.DataArray,
     fa_data = flow_accum.data
     sl_data = slope_agg.data
 
-    if has_cuda_and_cupy() and is_dask_cupy(flow_accum):
-        out = _twi_dask_cupy(fa_data, sl_data, cellsize)
-
-    elif has_cuda_and_cupy() and is_cupy_array(fa_data):
+    if has_cuda_and_cupy() and is_cupy_array(fa_data):
         out = _twi_cupy(fa_data, sl_data, cellsize)
 
     elif da is not None and isinstance(fa_data, da.Array):
+        # Covers numpy- and cupy-backed dask arrays alike: TWI is purely
+        # elementwise, so cupy chunks run the same expression natively
+        # with no host round-trip.
         out = _twi_dask(fa_data, sl_data, cellsize)
 
     elif isinstance(fa_data, np.ndarray):
@@ -106,25 +106,9 @@ def _twi_cupy(fa, sl, cellsize):
 
 
 def _twi_dask(fa, sl, cellsize):
+    """Elementwise TWI on dask arrays (numpy- or cupy-backed chunks)."""
     import dask.array as _da
     sca = fa * cellsize
     tan_slope = _da.tan(_da.radians(sl))
     tan_slope = _da.where(tan_slope < _TAN_MIN, _TAN_MIN, tan_slope)
     return _da.log(sca / tan_slope)
-
-
-def _twi_dask_cupy(fa, sl, cellsize):
-    import cupy as cp
-    fa_np = fa.map_blocks(
-        lambda b: b.get(), dtype=fa.dtype,
-        meta=np.array((), dtype=fa.dtype),
-    )
-    sl_np = sl.map_blocks(
-        lambda b: b.get(), dtype=sl.dtype,
-        meta=np.array((), dtype=sl.dtype),
-    )
-    result = _twi_dask(fa_np, sl_np, cellsize)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )

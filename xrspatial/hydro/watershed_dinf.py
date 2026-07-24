@@ -219,17 +219,11 @@ def _watershed_dinf_cupy(flow_dir_data, pour_points_data):
     fd_np = _to_numpy_f64(flow_dir_data)
     pp_np = _to_numpy_f64(pour_points_data)
     h, w = fd_np.shape
-    labels = np.full((h, w), np.nan, dtype=np.float64)
-    state = np.zeros((h, w), dtype=np.int8)
-    for r in range(h):
-        for c in range(w):
-            if fd_np[r, c] != fd_np[r, c]:
-                pass
-            elif pp_np[r, c] == pp_np[r, c]:
-                labels[r, c] = pp_np[r, c]
-                state[r, c] = 3
-            else:
-                state[r, c] = 1
+    fd_valid = ~np.isnan(fd_np)
+    pp_valid = ~np.isnan(pp_np)
+    labels = np.where(fd_valid & pp_valid, pp_np, np.nan)
+    state = np.where(fd_valid,
+                     np.where(pp_valid, 3, 1), 0).astype(np.int8)
     out = _watershed_dinf_cpu(fd_np, labels, state, h, w)
     return cp.asarray(out)
 
@@ -699,17 +693,11 @@ def watershed_dinf(flow_dir_dinf: xr.DataArray,
         fd = data.astype(np.float64)
         pp = np.asarray(pp_data, dtype=np.float64)
         h, w = fd.shape
-        labels = np.full((h, w), np.nan, dtype=np.float64)
-        state = np.zeros((h, w), dtype=np.int8)
-        for r in range(h):
-            for c in range(w):
-                if fd[r, c] != fd[r, c]:
-                    pass
-                elif pp[r, c] == pp[r, c]:
-                    labels[r, c] = pp[r, c]
-                    state[r, c] = 3
-                else:
-                    state[r, c] = 1
+        fd_valid = ~np.isnan(fd)
+        pp_valid = ~np.isnan(pp)
+        labels = np.where(fd_valid & pp_valid, pp, np.nan)
+        state = np.where(fd_valid,
+                         np.where(pp_valid, 3, 1), 0).astype(np.int8)
         out = _watershed_dinf_cpu(fd, labels, state, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
