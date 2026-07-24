@@ -628,18 +628,21 @@ def _proximity_cuda_kernel(target_xs, target_ys, target_vals, n_targets,
     best_dist = 1.0e38
     best_idx = -1
 
+    # Round each candidate distance to float32 before comparing, matching the
+    # CPU brute-force path where _distance returns np.float32(d). This makes
+    # both the argmin and the max_distance range test float32 on every
+    # backend: two targets whose float64 distances differ only past the
+    # float32 mantissa are a tie, and the strict < keeps the first (lowest
+    # flat-index) target, the tie-break documented on allocation/direction.
+    # Comparing float64 here instead let the float64-closer target win on the
+    # GPU while the CPU called it a tie and picked the lowest index.
     for k in range(n_targets):
-        d = _gpu_distance(px, target_xs[k], py, target_ys[k], distance_metric)
+        d = np.float32(_gpu_distance(
+            px, target_xs[k], py, target_ys[k], distance_metric))
         if d < best_dist:
             best_dist = d
             best_idx = k
 
-    # Round the winning distance to float32 before the range test so the
-    # in-range decision matches the CPU brute-force path, where _distance
-    # returns np.float32(d). Comparing the float64 distance here let a target
-    # whose distance rounds down across a float32 ulp pass on the CPU but fail
-    # on the GPU (or the reverse) when max_distance sits in that ulp gap.
-    best_dist = np.float32(best_dist)
     if best_idx >= 0 and best_dist <= max_distance:
         if process_mode == PROXIMITY:
             out[iy, ix] = best_dist
@@ -852,10 +855,21 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     the tie-break policy documented on ``allocation``/``direction``.
 
     Query the two nearest targets; wherever they are equidistant, keep the one
-    with the smaller index. This resolves 2-way ties, which is what grid
-    geometry produces in practice. A pixel equidistant to three or more targets
-    relies on cKDTree returning the lower index among the rest, which it does
-    for the row-major target order used here but does not strictly promise.
+    with the smaller index. "Equidistant" is evaluated at float32 precision,
+    matching the brute-force and CUDA kernels, which compare float32-rounded
+    distances (see ``_distance``). Detecting ties with exact float64 equality
+    instead let this path pick the float64-closer target on grids whose
+    coordinates are not exact float64 lattice points (e.g. res 0.1), where a
+    geometric tie shows up as float64 distances separated by rounding noise
+    but identical in float32 -- diverging from the kernels' lowest-index pick.
+    This resolves 2-way ties, which is what grid geometry produces in
+    practice. A pixel tied with three or more targets relies on the two
+    float64-smallest of them (the pair cKDTree returns) including the
+    lowest-index one, which holds for exact ties under the row-major target
+    order used here but is not strictly promised. Concretely: a 3-way float32
+    tie whose lowest-flat-index member is the float64-largest of the three
+    resolves to a different target here than on the brute-force/CUDA kernels.
+    That takes three targets within one float32 ulp of the same distance.
     """
     # Match the inclusive dist <= max_distance check of the brute-force/CUDA
     # backends; cKDTree's bound is exclusive (see _inclusive_upper_bound).
@@ -869,10 +883,12 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
                               distance_upper_bound=upper)
     dists = dists2[:, 0]
     indices = idx2[:, 0]
-    # A tie exists where both neighbours are finite and equidistant. Prefer the
-    # smaller index in that case so the result is independent of cKDTree's
-    # internal traversal order.
-    tied = np.isfinite(dists2[:, 1]) & (dists2[:, 1] == dists)
+    # A tie exists where both neighbours are finite and equidistant at float32
+    # precision. Prefer the smaller index in that case so the result is
+    # independent of cKDTree's internal traversal order and of float64
+    # rounding noise the kernels' float32 comparison cannot see.
+    tied = (np.isfinite(dists2[:, 1])
+            & (dists2[:, 1].astype(np.float32) == dists.astype(np.float32)))
     if tied.any():
         indices = np.where(tied, np.minimum(idx2[:, 0], idx2[:, 1]), indices)
     return dists, indices
@@ -1777,12 +1793,14 @@ def allocation(
     expanding each chunk's borders to cover `max_distance`; otherwise the
     nearest targets are found with a KDTree query over all target pixels.
 
-    Tie-breaking: when two or more targets are exactly equidistant from a
-    pixel, the target with the lowest flat (row-major) index wins, i.e. the
-    first target encountered when scanning the raster top-to-bottom and
-    left-to-right. This policy is identical across all backends (numpy, cupy,
-    dask+numpy, dask+cupy), so the allocated value is deterministic regardless
-    of which backend computes it.
+    Tie-breaking: when two or more targets are equidistant from a pixel, the
+    target with the lowest flat (row-major) index wins, i.e. the first target
+    encountered when scanning the raster top-to-bottom and left-to-right.
+    Distances are compared at float32 precision (the precision of the
+    output), so targets whose distances differ only beyond the float32
+    mantissa count as equidistant. This policy is identical across all
+    backends (numpy, cupy, dask+numpy, dask+cupy), so the allocated value is
+    deterministic regardless of which backend computes it.
 
     Parameters
     ----------
@@ -1939,12 +1957,15 @@ def direction(
     expanding each chunk's borders to cover `max_distance`; otherwise the
     nearest targets are found with a KDTree query over all target pixels.
 
-    Tie-breaking: when two or more targets are exactly equidistant from a
-    pixel, the direction is computed toward the target with the lowest flat
-    (row-major) index, i.e. the first target encountered when scanning the
-    raster top-to-bottom and left-to-right. This policy is identical across
-    all backends (numpy, cupy, dask+numpy, dask+cupy), so the reported
-    direction is deterministic regardless of which backend computes it.
+    Tie-breaking: when two or more targets are equidistant from a pixel, the
+    direction is computed toward the target with the lowest flat (row-major)
+    index, i.e. the first target encountered when scanning the raster
+    top-to-bottom and left-to-right. Distances are compared at float32
+    precision (the precision of the output), so targets whose distances
+    differ only beyond the float32 mantissa count as equidistant. This policy
+    is identical across all backends (numpy, cupy, dask+numpy, dask+cupy), so
+    the reported direction is deterministic regardless of which backend
+    computes it.
 
     Parameters
     ----------

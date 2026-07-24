@@ -670,6 +670,65 @@ def test_direction_tie_break_chunk_column_order(
     general_output_checks(raster, result, expected)
 
 
+@pytest.fixture
+def tie_break_nonlattice_raster_data():
+    # Regression data for issue #3689. On a res-0.1 grid the linspace
+    # coordinates are not exact float64 lattice points, so a pixel that is
+    # geometrically equidistant to two targets sees float64 distances
+    # separated by rounding noise (~1e-13) that vanishes at float32, the
+    # precision of the output. The tie must be detected at float32 and
+    # resolved to the lowest flat (row-major) index on every backend. The
+    # numpy brute force already compared float32 distances, but the CUDA
+    # kernel compared float64 and the cKDTree paths detected ties with exact
+    # float64 equality, so each backend allocated such pixels to whichever
+    # target its own float64 arithmetic favoured.
+    data = np.zeros((40, 40), dtype=np.float64)
+    data[27, 35] = 1.0   # target A, flat index 1115
+    data[37, 25] = 2.0   # target B, flat index 1505
+    return data
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("max_distance", [np.inf, 3.5])
+@pytest.mark.parametrize("func", [allocation, direction])
+def test_tie_break_float32_precision_nonlattice_grid(
+        backend, max_distance, func, tie_break_nonlattice_raster_data):
+    data = tie_break_nonlattice_raster_data
+    res_attrs = {'res': (0.1, 0.1)}
+
+    numpy_raster = create_test_raster(data, backend='numpy', attrs=res_attrs)
+
+    # Sanity-check the fixture geometry: at least one pixel must be tied at
+    # float32 while its float64 distances favour target B (the higher flat
+    # index). Those are the pixels where a float64 comparison diverges from
+    # the documented float32 tie-break.
+    # Use the implementation's exact formula (sqrt of the sum of squares, see
+    # euclidean_distance), not np.hypot: the two can differ by one float64
+    # ulp, which is enough to flip a float32 tie in this regime.
+    xs = numpy_raster['x'].data
+    ys = numpy_raster['y'].data
+    dx_a, dy_a = xs[None, :] - xs[35], ys[:, None] - ys[27]
+    dx_b, dy_b = xs[None, :] - xs[25], ys[:, None] - ys[37]
+    d_a = np.sqrt(dx_a * dx_a + dy_a * dy_a)
+    d_b = np.sqrt(dx_b * dx_b + dy_b * dy_b)
+    tied_f32 = np.float32(d_a) == np.float32(d_b)
+    assert (tied_f32 & (d_b < d_a) & (d_a <= max_distance)).any()
+
+    expected = func(numpy_raster, max_distance=max_distance).data
+
+    # Every float32-tied pixel within range resolves to target A, the lowest
+    # flat index: allocation returns A's value; direction returns the angle
+    # toward A, which differs from the angle toward B by tens of degrees.
+    in_range = tied_f32 & (np.float32(d_a) <= max_distance)
+    if func is allocation:
+        assert (expected[in_range] == 1.0).all()
+
+    raster = create_test_raster(
+        data, backend=backend, attrs=res_attrs, chunks=(16, 16))
+    result = func(raster, max_distance=max_distance)
+    general_output_checks(raster, result, expected)
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_kdtree_no_targets():
     """No target pixels found → result is all NaN."""
