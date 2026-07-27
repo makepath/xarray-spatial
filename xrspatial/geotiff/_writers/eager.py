@@ -1224,6 +1224,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             arr = raw.compute()  # Dask -> numpy
             if hasattr(arr, 'get'):
                 arr = arr.get()  # Dask+CuPy -> numpy
+            # ``color_ramp`` statistics off the buffer we just
+            # materialised. ``cog=True`` (and a file-like destination)
+            # skips the streaming writer, so the ``chunk_observer``
+            # accumulation added for issue #3597 never runs and
+            # ``_write_sidecars`` would fall back to ``_finite_stats``
+            # on the still-lazy ``_sym_data`` -- a second full execution
+            # of the caller's graph (issue #3695). Feed the accumulator
+            # the materialised array instead, before the sentinel
+            # restore below rewrites NaN, so the statistics describe the
+            # same logical values ``_finite_stats`` would have seen.
+            if _sym_stops is not None and color_ramp_range is None:
+                from .._symbology import StreamingStats, _is_single_band
+                if _is_single_band(data):
+                    _sym_stream_stats = StreamingStats(nodata=_sym_nodata)
+                    _sym_stream_stats.update(arr)
         else:
             arr = np.asarray(raw)
         # Reject ambiguous 3D layouts. The validator runs

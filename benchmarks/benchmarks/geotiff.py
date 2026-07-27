@@ -102,6 +102,42 @@ class WriteCOG:
 
 
 # -------------------------------------------------------------------------
+# COG write with symbology from a dask source (#3695)
+#
+# cog=True skips the streaming writer, so the color_ramp statistics used to
+# be taken by re-running the source graph after the pixels were already
+# materialised: the caller's whole pipeline executed twice. The fix folds
+# the materialised buffer into the same StreamingStats accumulator the
+# streaming path uses. The dask parameter is the one that regresses; numpy
+# is kept as the no-graph control, and the no-ramp case below is the
+# baseline the ramp variant should stay close to.
+# -------------------------------------------------------------------------
+
+class WriteCOGSymbology:
+    params = ([512, 2048], ["numpy", "dask"])
+    param_names = ("nx", "backend")
+
+    def setup(self, nx, backend):
+        ny = nx // 2
+        self.da = _make_dataarray(ny, nx, backend)
+        self.dir = tempfile.mkdtemp(prefix="asv_geotiff_cog_sym_")
+        self.path = os.path.join(self.dir, f"cogsym_{nx}_{backend}.tif")
+
+    def teardown(self, nx, backend):
+        shutil.rmtree(getattr(self, "dir", ""), ignore_errors=True)
+
+    def time_write_cog_color_ramp(self, nx, backend):
+        to_geotiff(self.da, self.path, cog=True, color_ramp="viridis",
+                   overview_levels=[2, 4, 8], overview_resampling="mean",
+                   compression="zstd")
+
+    def time_write_cog_no_ramp(self, nx, backend):
+        to_geotiff(self.da, self.path, cog=True,
+                   overview_levels=[2, 4, 8], overview_resampling="mean",
+                   compression="zstd")
+
+
+# -------------------------------------------------------------------------
 # Eager read path (open_geotiff)
 #
 # The file is written once in setup; the benchmark measures decode +
