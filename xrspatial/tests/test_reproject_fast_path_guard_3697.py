@@ -238,6 +238,35 @@ class TestUnaliasedDatumGuard:
         from xrspatial.reproject._lite_crs import CRS as LiteCRS
         assert P._datum_offset_from_wgs84(LiteCRS(3857)) is None
 
+    def test_measurement_failure_fails_closed(self, monkeypatch):
+        # A CRS we could have measured but could not must be rejected, not
+        # waved through -- an unverifiable datum belongs on the pyproj path.
+        crs = pyproj.CRS.from_epsg(32633)
+        assert P._is_wgs84_compatible_ellipsoid(crs)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError('transform unavailable')
+
+        P._datum_offset_from_wgs84.cache_clear()
+        monkeypatch.setattr(pyproj.Transformer, 'from_crs', _boom)
+        try:
+            assert P._datum_offset_from_wgs84(crs) == math.inf
+            assert not P._is_wgs84_compatible_ellipsoid(crs)
+        finally:
+            P._datum_offset_from_wgs84.cache_clear()
+
+    def test_axis_order_only_crs_keeps_fast_path(self):
+        # EPSG:2193 and EPSG:3346 are north/east in WKT but reproject
+        # correctly because always_xy=True normalizes the ordering. The
+        # axis guard must not reject them; see the note in
+        # _is_wgs84_compatible_ellipsoid.
+        for epsg in (2193, 3346):
+            crs = pyproj.CRS.from_epsg(epsg)
+            assert [a.direction for a in crs.axis_info] == ['north', 'east']
+            assert P._crs_to_dict(crs).get('axis') is None
+            assert P._is_wgs84_compatible_ellipsoid(crs)
+            assert P._tmerc_params(crs) is not None
+
 
 # ---------------------------------------------------------------------------
 # Backend parity: the guard runs on the CPU and CUDA dispatchers alike

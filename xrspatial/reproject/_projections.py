@@ -178,9 +178,19 @@ def _datum_offset_from_wgs84(crs):
     Measuring the offset is the only test that does not depend on PROJ
     having a name for the datum.
 
-    Returns ``None`` when the offset cannot be measured (pyproj absent, a
-    lite CRS with no geodetic base, a failed transform). Callers treat
-    that as "no evidence of a shift" and keep their existing verdict.
+    The probe point is the CRS's own ``lon_0``/``lat_0``, which for a few
+    definitions sits outside the declared area of use. That is deliberate
+    and good enough: a Helmert shift varies slowly across a datum's extent,
+    so the reading is representative even off-centre, and the caller only
+    compares it against a threshold two orders of magnitude below the
+    shifts it has to catch.
+
+    Returns ``None`` only when there is nothing to measure -- pyproj is
+    absent, or *crs* is a lite CRS with no geodetic base, in which case the
+    curated built-in table already decides. Returns ``inf`` when a
+    measurement was possible but failed, so the caller rejects the fast
+    path rather than assuming no shift: an unverifiable datum should go to
+    pyproj, not to kernels that silently skip its shift.
     """
     geodetic = getattr(crs, 'geodetic_crs', None)
     if geodetic is None:
@@ -198,11 +208,11 @@ def _datum_offset_from_wgs84(crs):
         )
         lon_w, lat_w = transformer.transform(lon, lat)
         if not (math.isfinite(lon_w) and math.isfinite(lat_w)):
-            return None
+            return math.inf
         _, _, dist = pyproj.Geod(ellps='WGS84').inv(lon, lat, lon_w, lat_w)
         return abs(float(dist))
     except Exception:
-        return None
+        return math.inf
 
 
 def _is_metric(d):
@@ -1858,7 +1868,17 @@ def _is_supported_geographic(epsg):
 
 
 def _is_wgs84_compatible_ellipsoid(crs):
-    """True if *crs* uses WGS84/GRS80 OR a datum we can Helmert-shift.
+    """Whether the WGS84 kernels in this module can reproduce *crs*.
+
+    Despite the name this is the general fast-path precondition, not just
+    an ellipsoid test. Every ``*_params`` extractor calls it, and it says
+    no on three separate grounds: an ellipsoid that is not WGS84/GRS80, an
+    axis direction that is not east/north, and a datum far enough from
+    WGS84 that skipping its shift would move pixels. Anything it rejects
+    falls back to pyproj. Keep new "can the kernels handle this?" checks
+    here rather than scattering them across the extractors (GH #3697).
+
+    True if *crs* uses WGS84/GRS80 OR a datum we can Helmert-shift.
 
     Returns True for WGS84/NAD83 (no shift needed) and for datums
     with known Helmert parameters (NAD27, etc.) since the dispatch
@@ -1877,10 +1897,18 @@ def _is_wgs84_compatible_ellipsoid(crs):
         d = _crs_to_dict(crs)
     except Exception:
         return False
-    # Axis order and direction. Every kernel here emits (easting, northing)
-    # in that order. A CRS that stores (west, south) -- the South African
-    # Lo grids, +axis=wsu -- or (north, east) needs the components negated
-    # and swapped, which none of them do, so hand it to pyproj (GH #3697).
+    # Axis direction. Every kernel here emits easting and northing, so a
+    # CRS that counts west or south positive -- the South African Lo grids,
+    # +axis=wsu -- comes out negated. Hand those to pyproj (GH #3697).
+    #
+    # Only direction matters, not axis *order*. Every transformer in this
+    # package is built with always_xy=True, which normalizes a northing-
+    # first CRS to easting-first for us; EPSG:2193 and EPSG:3346 are
+    # north/east in WKT and reproject correctly today. Reading `axis` from
+    # the PROJ dict is therefore the right test even though PROJ omits the
+    # key for those two: it omits it exactly when order is the only
+    # difference. Do NOT widen this to crs.axis_info -- that would reject
+    # both of them for a difference always_xy has already handled.
     axis = d.get('axis')
     if axis is not None and axis != 'enu':
         return False
