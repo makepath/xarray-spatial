@@ -32,6 +32,20 @@ pyproj = pytest.importorskip('pyproj')
 WGS84 = 'EPSG:4326'
 
 
+def _crs_or_skip(spec):
+    """Build a CRS, skipping if this PROJ build's database lacks the code.
+
+    Several CRSs used below (EPSG:10481, 9549, 9207) are recent additions
+    to the EPSG registry, and PROJ ships a snapshot of that registry. An
+    older PROJ should skip rather than error out of an unrelated
+    assertion.
+    """
+    try:
+        return pyproj.CRS.from_user_input(spec)
+    except Exception:
+        pytest.skip(f'{spec} is not in this PROJ database')
+
+
 def _lon_field_error(crs_spec, lon_c, lat_c, span=0.5, n=401, out=32):
     """Max georeferencing error, in metres, of a reprojected raster.
 
@@ -41,8 +55,8 @@ def _lon_field_error(crs_spec, lon_c, lat_c, span=0.5, n=401, out=32):
     is a smooth ramp sampled far finer than the output, so what is left is
     georeferencing error rather than resampling error.
     """
-    tgt = pyproj.CRS.from_user_input(crs_spec)
-    src_crs = pyproj.CRS.from_epsg(4326)
+    tgt = _crs_or_skip(crs_spec)
+    src_crs = _crs_or_skip(4326)
     fwd = pyproj.Transformer.from_crs(src_crs, tgt, always_xy=True)
     inv = pyproj.Transformer.from_crs(tgt, src_crs, always_xy=True)
 
@@ -82,7 +96,7 @@ class TestLccSingleStandardParallel:
 
     def test_cone_constant_is_sin_lat1(self):
         # +proj=lcc +lat_1=45 +lat_0=45 with no lat_2 at all.
-        crs = pyproj.CRS.from_user_input(
+        crs = _crs_or_skip(
             '+proj=lcc +lat_1=45 +lat_0=45 +lon_0=-100 +k_0=1 '
             '+x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
         )
@@ -102,7 +116,7 @@ class TestLccSingleStandardParallel:
     def test_two_parallel_lcc_still_uses_both(self):
         # EPSG:2154 carries lat_1 and lat_2, so the 2SP branch must run and
         # produce a cone constant strictly between the two parallels.
-        crs = pyproj.CRS.from_epsg(2154)
+        crs = _crs_or_skip(2154)
         d = P._crs_to_dict(crs)
         assert d['lat_1'] != d['lat_2']
         n = P._lcc_params(crs)[1]
@@ -111,7 +125,7 @@ class TestLccSingleStandardParallel:
         assert _lon_field_error('EPSG:2154', 3.0, 46.5) < 1.0
 
     def test_aea_single_standard_parallel(self):
-        crs = pyproj.CRS.from_user_input(
+        crs = _crs_or_skip(
             '+proj=aea +lat_1=45 +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 '
             '+datum=WGS84 +units=m +no_defs'
         )
@@ -170,13 +184,13 @@ class TestAxisOrientation:
 
     def test_wsu_declined(self):
         # EPSG:2048 is the South African Lo19 grid: +axis=wsu.
-        crs = pyproj.CRS.from_epsg(2048)
+        crs = _crs_or_skip(2048)
         assert P._crs_to_dict(crs).get('axis') == 'wsu'
         assert P._tmerc_params(crs) is None
         assert not P._is_wgs84_compatible_ellipsoid(crs)
 
     def test_enu_still_accepted(self):
-        crs = pyproj.CRS.from_epsg(32633)
+        crs = _crs_or_skip(32633)
         assert P._is_wgs84_compatible_ellipsoid(crs)
 
     def test_reproject_south_oriented_grid(self):
@@ -200,7 +214,7 @@ class TestUnaliasedDatumGuard:
         (9207, 100.0),    # VN-2000 / TM-3 104-30
     ])
     def test_shifted_datum_declined(self, epsg, min_offset_m):
-        crs = pyproj.CRS.from_epsg(epsg)
+        crs = _crs_or_skip(epsg)
         d = P._crs_to_dict(crs)
         # The dict carries no datum name, which is exactly what used to
         # make the old name test read these as WGS84.
@@ -219,7 +233,7 @@ class TestUnaliasedDatumGuard:
         6350,    # NAD83(2011) / Conus Albers
     ])
     def test_aligned_datum_keeps_fast_path(self, epsg):
-        crs = pyproj.CRS.from_epsg(epsg)
+        crs = _crs_or_skip(epsg)
         assert P._is_wgs84_compatible_ellipsoid(crs)
         offset = P._datum_offset_from_wgs84(crs)
         if offset is not None:
@@ -241,7 +255,7 @@ class TestUnaliasedDatumGuard:
     def test_measurement_failure_fails_closed(self, monkeypatch):
         # A CRS we could have measured but could not must be rejected, not
         # waved through -- an unverifiable datum belongs on the pyproj path.
-        crs = pyproj.CRS.from_epsg(32633)
+        crs = _crs_or_skip(32633)
         assert P._is_wgs84_compatible_ellipsoid(crs)
 
         def _boom(*args, **kwargs):
@@ -261,7 +275,7 @@ class TestUnaliasedDatumGuard:
         # axis guard must not reject them; see the note in
         # _is_wgs84_compatible_ellipsoid.
         for epsg in (2193, 3346):
-            crs = pyproj.CRS.from_epsg(epsg)
+            crs = _crs_or_skip(epsg)
             assert [a.direction for a in crs.axis_info] == ['north', 'east']
             assert P._crs_to_dict(crs).get('axis') is None
             assert P._is_wgs84_compatible_ellipsoid(crs)
@@ -277,7 +291,7 @@ class TestBackendParity:
 
     @pytest.mark.parametrize('epsg', [2100, 2048, 10481])
     def test_cpu_dispatcher_declines(self, epsg):
-        tgt = pyproj.CRS.from_epsg(epsg)
+        tgt = _crs_or_skip(epsg)
         src = pyproj.CRS.from_epsg(4326)
         fwd = pyproj.Transformer.from_crs(src, tgt, always_xy=True)
         aou = tgt.area_of_use
@@ -294,7 +308,7 @@ class TestBackendParity:
         pytest.importorskip('cupy')
         from xrspatial.reproject._projections_cuda import try_cuda_transform
 
-        tgt = pyproj.CRS.from_epsg(epsg)
+        tgt = _crs_or_skip(epsg)
         src = pyproj.CRS.from_epsg(4326)
         fwd = pyproj.Transformer.from_crs(src, tgt, always_xy=True)
         aou = tgt.area_of_use
@@ -309,8 +323,8 @@ class TestBackendParity:
     ])
     def test_dask_matches_numpy(self, epsg, lon, lat):
         da = pytest.importorskip('dask.array')
-        tgt = pyproj.CRS.from_epsg(epsg)
-        src_crs = pyproj.CRS.from_epsg(4326)
+        tgt = _crs_or_skip(epsg)
+        src_crs = _crs_or_skip(4326)
         fwd = pyproj.Transformer.from_crs(src_crs, tgt, always_xy=True)
 
         n, span = 201, 0.4
