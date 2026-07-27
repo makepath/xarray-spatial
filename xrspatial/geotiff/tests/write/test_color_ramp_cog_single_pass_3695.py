@@ -72,12 +72,16 @@ def _ref_stats(arr, nodata=None):
     return _eager_finite_stats(np.asarray(arr), nodata)
 
 
-def _assert_aux_matches(path, ref):
+def _assert_aux_matches_rel(path, ref, rel):
     stats = _aux_stats(path)
-    assert stats["STATISTICS_MINIMUM"] == pytest.approx(ref[0], rel=1e-9)
-    assert stats["STATISTICS_MAXIMUM"] == pytest.approx(ref[1], rel=1e-9)
-    assert stats["STATISTICS_MEAN"] == pytest.approx(ref[2], rel=1e-9)
-    assert stats["STATISTICS_STDDEV"] == pytest.approx(ref[3], rel=1e-9)
+    assert stats["STATISTICS_MINIMUM"] == pytest.approx(ref[0], rel=rel)
+    assert stats["STATISTICS_MAXIMUM"] == pytest.approx(ref[1], rel=rel)
+    assert stats["STATISTICS_MEAN"] == pytest.approx(ref[2], rel=rel)
+    assert stats["STATISTICS_STDDEV"] == pytest.approx(ref[3], rel=rel)
+
+
+def _assert_aux_matches(path, ref):
+    _assert_aux_matches_rel(path, ref, rel=1e-9)
 
 
 _RNG = np.random.default_rng(3695)
@@ -233,6 +237,32 @@ def test_cog_constant_raster_writes_stats_but_no_qml(tmp_path):
     assert stats["STATISTICS_MINIMUM"] == pytest.approx(7.5)
     assert stats["STATISTICS_MAXIMUM"] == pytest.approx(7.5)
     assert not os.path.exists(str(tmp_path / "const_3695.qml"))
+
+
+def test_cog_float32_matches_streaming_write(tmp_path):
+    """float32 statistics agree with the cog=False write on the same data.
+
+    ``StreamingStats`` accumulates in float64 while ``_finite_stats``
+    accumulates at the input's native width, so a float32 source's mean and
+    stddev move by ~1e-7 relative against the old COG output. What matters is
+    that the two dask write paths now agree with each other, which they did
+    not before: cog=False has used the float64 accumulator since #3597.
+    """
+    base = _RNG.uniform(-1e4, 1e4, (64, 64)).astype("float32")
+    base[5, 5] = np.nan
+
+    cog_path = str(tmp_path / "f32_cog_3695.tif")
+    stream_path = str(tmp_path / "f32_stream_3695.tif")
+    da_cog, counter = _counting_da(base, chunks=(16, 16))
+    da_stream, _ = _counting_da(base, chunks=(16, 16))
+    to_geotiff(da_cog, cog_path, cog=True, color_ramp="viridis")
+    to_geotiff(da_stream, stream_path, color_ramp="viridis")
+
+    assert counter["n"] == _N_CHUNKS
+    assert _aux_stats(cog_path) == _aux_stats(stream_path)
+    # Still the same numbers as the native-width reduction to float32
+    # resolution, so the ramp bounds and stretch are unchanged in practice.
+    _assert_aux_matches_rel(cog_path, _ref_stats(base), rel=1e-6)
 
 
 def test_eager_numpy_cog_unaffected(tmp_path):

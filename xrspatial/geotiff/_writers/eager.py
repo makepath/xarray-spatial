@@ -1226,15 +1226,24 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             if hasattr(arr, 'get'):
                 arr = arr.get()  # Dask+CuPy -> numpy
             # ``color_ramp`` statistics off the buffer we just
-            # materialised. ``cog=True`` (and a file-like destination)
-            # skips the streaming writer, so the ``chunk_observer``
-            # accumulation added for issue #3597 never runs and
-            # ``_write_sidecars`` would fall back to ``_finite_stats``
-            # on the still-lazy ``_sym_data`` -- a second full execution
-            # of the caller's graph (issue #3695). Feed the accumulator
-            # the materialised array instead, before the sentinel
-            # restore below rewrites NaN, so the statistics describe the
-            # same logical values ``_finite_stats`` would have seen.
+            # materialised. ``cog=True`` skips the streaming writer, so
+            # the ``chunk_observer`` accumulation added for issue #3597
+            # never runs and ``_write_sidecars`` would fall back to
+            # ``_finite_stats`` on the still-lazy ``_sym_data`` -- a
+            # second full execution of the caller's graph (issue #3695).
+            # Feed the accumulator the materialised array instead,
+            # before the sentinel restore below rewrites NaN, so the
+            # statistics describe the same logical values
+            # ``_finite_stats`` would have seen.
+            #
+            # ``StreamingStats`` accumulates the moments in float64
+            # where ``_finite_stats`` accumulates at the input's native
+            # width, so a float32 source's mean / stddev shift by ~1e-7
+            # relative. That is the accumulator being more accurate, and
+            # it makes a ``cog=True`` write agree with the ``cog=False``
+            # streaming write on the same data rather than diverge.
+            # A file-like destination never reaches here with symbology
+            # pending: ``_sym_stops`` is only set for a string path.
             if _sym_stops is not None and color_ramp_range is None:
                 from .._symbology import StreamingStats, _is_single_band
                 if _is_single_band(data):
