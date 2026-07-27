@@ -445,11 +445,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``attrs['category_names']`` -- those get the RAT sidecar instead), a
         multiband array, a file-like destination, or data with no finite
         values. Computing the statistics is an extra reduction pass over the
-        data. The streaming dask write accumulates them from the buffers it
-        materialises anyway, so the source graph still runs once; the GPU
-        (``gpu=True``) and VRT (``.vrt``) write paths execute a dask source
-        a second time for the statistics (see ``color_ramp_range`` to skip
-        that). Ignored when ``pack=True``, whose on-disk packed values would
+        data. Both the streaming dask write and the ``cog=True`` write
+        accumulate them from the buffers they materialise anyway, so the
+        source graph still runs once; the GPU (``gpu=True``) and VRT
+        (``.vrt``) write paths execute a dask source a second time for the
+        statistics (see ``color_ramp_range`` to skip that). Ignored when
+        ``pack=True``, whose on-disk packed values would
         not match a ramp built from the logical values. Every string-path
         write refreshes the PAM ``.aux.xml``: a sidecar left by a previous
         write at the same path is removed and re-created only when this
