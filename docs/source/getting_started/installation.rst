@@ -80,9 +80,12 @@ needed:
      - Chunked, lazy, out-of-core processing on a single machine or a
        cluster. See :doc:`/reference/dask_laziness`.
    * - ``gpu``
-     - cupy, cuspatial
-     - The CuPy GPU backend. Needs an NVIDIA GPU and a CUDA toolkit
-       matching your cupy build.
+     - cupy-cuda12x
+     - The CuPy GPU backend on CUDA 12. Needs an NVIDIA GPU and a
+       matching driver.
+   * - ``gpu-cuda13``
+     - cupy-cuda13x
+     - The same backend built against CUDA 13.
    * - ``optional``
      - awkward, geopandas, spatialpandas, rtxpy
      - Additional ``polygonize`` return types and the ray-traced
@@ -98,11 +101,21 @@ needed:
 GPU notes
 =========
 
-``pip install 'xarray-spatial[gpu]'`` pulls in cupy and cuspatial. You
-also need an NVIDIA driver and a CUDA toolkit compatible with your cupy
-build; see the `CuPy install guide
-<https://docs.cupy.dev/en/stable/install.html>`_ if you are unsure which
-cupy package to pick.
+CuPy publishes a separate wheel per CUDA major version, so the extra has
+to name one. Pick the one that matches your driver::
+
+   pip install 'xarray-spatial[gpu]'         # CUDA 12
+   pip install 'xarray-spatial[gpu-cuda13]'  # CUDA 13
+
+Both pull the prebuilt wheel, so no local CUDA toolkit is needed -- only
+an NVIDIA GPU and a driver new enough for that CUDA major. The `CuPy
+install guide <https://docs.cupy.dev/en/stable/install.html>`_ has the
+driver requirements.
+
+Do not install the plain ``cupy`` package from PyPI. It is a source
+distribution that compiles CuPy from scratch and needs a full nvcc
+toolchain. If you manage your environment with conda, install ``cupy``
+from conda-forge and skip both extras.
 
 Two GPU features have runtime dependencies that are *not* part of the
 ``gpu`` extra because they ship as system libraries:

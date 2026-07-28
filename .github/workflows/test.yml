@@ -97,3 +97,25 @@ jobs:
           numpy==1.26.0 pandas==2.2.0 urllib3==2.7.0 zstandard==0.22.0
     - name: Run pytest (fast lane)
       run: pytest -m "not slow"
+
+  gpu-extras-resolve:
+    # The GPU extras name packages no test job ever installs, so a broken
+    # requirement sits there indefinitely. Issue #3699: the `gpu` extra
+    # pinned `cuspatial`, a PyPI name-holder whose install raises, plus the
+    # sdist-only `cupy` project, which made `pip install xarray-spatial[gpu]`
+    # fail on every machine. Resolve them (metadata only, no download) so a
+    # future edit that names an uninstallable package turns the PR red.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Upgrade pip
+      run: python -m pip install --upgrade pip
+    - name: Resolve gpu extra (CUDA 12)
+      run: pip install --dry-run --ignore-installed '.[gpu]'
+    - name: Resolve gpu-cuda13 extra (CUDA 13)
+      run: pip install --dry-run --ignore-installed '.[gpu-cuda13]'
