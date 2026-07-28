@@ -75,6 +75,10 @@ jobs:
   # the exact floor it declares. When it goes red, either the floor is wrong
   # or the code picked up a newer API -- fix one or the other, don't relax
   # the pins. See issue #3701.
+  #
+  # Unlike `run`, this stays on the fast lane for every trigger. The slow
+  # corpus cells exercise codecs, not dependency APIs, so running them a
+  # second time against old pins buys nothing.
   min-deps:
     runs-on: ubuntu-latest
     steps:

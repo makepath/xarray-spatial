@@ -5,6 +5,7 @@ distribution metadata, so they report on the working tree instead of on
 whatever was last `pip install`ed.
 """
 import configparser
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -16,10 +17,15 @@ pytestmark = pytest.mark.skipif(
     not SETUP_CFG.exists(), reason="setup.cfg is only present in a source checkout")
 
 
-def _parse(section, key):
+@lru_cache(maxsize=1)
+def _config():
     parser = configparser.ConfigParser()
     parser.read(SETUP_CFG)
-    raw = parser.get(section, key)
+    return parser
+
+
+def _parse(section, key):
+    raw = _config().get(section, key)
     out = {}
     for line in raw.splitlines():
         line = line.strip()
