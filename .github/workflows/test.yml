@@ -70,6 +70,34 @@ jobs:
         PYTHON_GIL: ${{ endsWith(matrix.python, 't') && '0' || '' }}
       run: pytest
 
+  # The `run` matrix above always resolves the newest of everything, so the
+  # lower bounds in setup.cfg are never exercised. This job pins each one to
+  # the exact floor it declares. When it goes red, either the floor is wrong
+  # or the code picked up a newer API -- fix one or the other, don't relax
+  # the pins. See issue #3701.
+  #
+  # Unlike `run`, this stays on the fast lane for every trigger. The slow
+  # corpus cells exercise codecs, not dependency APIs, so running them a
+  # second time against old pins buys nothing.
+  min-deps:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies at the declared floors
+      # One pip invocation so the pins take part in a single resolve
+      # instead of being downgraded on top of an already-solved tree.
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[tests] \
+          numba==0.59.0 scipy==1.11.2 xarray==2025.11.0 \
+          numpy==1.26.0 pandas==2.2.0 urllib3==2.7.0 zstandard==0.22.0
+    - name: Run pytest (fast lane)
+      run: pytest -m "not slow"
+
   gpu-extras-resolve:
     # The GPU extras name packages no test job ever installs, so a broken
     # requirement sits there indefinitely. Issue #3699: the `gpu` extra
