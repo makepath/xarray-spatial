@@ -445,11 +445,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``attrs['category_names']`` -- those get the RAT sidecar instead), a
         multiband array, a file-like destination, or data with no finite
         values. Computing the statistics is an extra reduction pass over the
-        data. The streaming dask write accumulates them from the buffers it
-        materialises anyway, so the source graph still runs once; the GPU
-        (``gpu=True``) and VRT (``.vrt``) write paths execute a dask source
-        a second time for the statistics (see ``color_ramp_range`` to skip
-        that). Ignored when ``pack=True``, whose on-disk packed values would
+        data. Both the streaming dask write and the ``cog=True`` write
+        accumulate them from the buffers they materialise anyway, so the
+        source graph still runs once; the GPU (``gpu=True``) and VRT
+        (``.vrt``) write paths execute a dask source a second time for the
+        statistics (see ``color_ramp_range`` to skip that). Ignored when
+        ``pack=True``, whose on-disk packed values would
         not match a ramp built from the logical values. Every string-path
         write refreshes the PAM ``.aux.xml``: a sidecar left by a previous
         write at the same path is removed and re-created only when this
@@ -1224,6 +1225,30 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             arr = raw.compute()  # Dask -> numpy
             if hasattr(arr, 'get'):
                 arr = arr.get()  # Dask+CuPy -> numpy
+            # ``color_ramp`` statistics off the buffer we just
+            # materialised. ``cog=True`` skips the streaming writer, so
+            # the ``chunk_observer`` accumulation added for issue #3597
+            # never runs and ``_write_sidecars`` would fall back to
+            # ``_finite_stats`` on the still-lazy ``_sym_data`` -- a
+            # second full execution of the caller's graph (issue #3695).
+            # Feed the accumulator the materialised array instead,
+            # before the sentinel restore below rewrites NaN, so the
+            # statistics describe the same logical values
+            # ``_finite_stats`` would have seen.
+            #
+            # ``StreamingStats`` accumulates the moments in float64
+            # where ``_finite_stats`` accumulates at the input's native
+            # width, so a float32 source's mean / stddev shift by ~1e-7
+            # relative. That is the accumulator being more accurate, and
+            # it makes a ``cog=True`` write agree with the ``cog=False``
+            # streaming write on the same data rather than diverge.
+            # A file-like destination never reaches here with symbology
+            # pending: ``_sym_stops`` is only set for a string path.
+            if _sym_stops is not None and color_ramp_range is None:
+                from .._symbology import StreamingStats, _is_single_band
+                if _is_single_band(data):
+                    _sym_stream_stats = StreamingStats(nodata=_sym_nodata)
+                    _sym_stream_stats.update(arr)
         else:
             arr = np.asarray(raw)
         # Reject ambiguous 3D layouts. The validator runs
