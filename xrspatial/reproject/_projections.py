@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 import threading
 import warnings
+from functools import lru_cache
 
 import numpy as np
 from numba import njit, prange
@@ -154,6 +155,76 @@ def _crs_to_dict(crs):
             category=UserWarning,
         )
         return crs.to_dict()
+
+
+# Largest datum offset from WGS84 the fast-path kernels will absorb. The
+# kernels project on the WGS84 ellipsoid and apply no datum shift, so a CRS
+# whose datum sits further away than this has to go through pyproj instead.
+# NAD83 and ETRS89 land 1-2 m from WGS84 and are deliberately treated as
+# WGS84 here (see _is_supported_geographic), so the bar sits above them.
+# Every datum this guard has to catch is far above it: GGRS87 is 325 m out,
+# VN-2000 226 m, Israel 1993 79 m. See GH #3697.
+_MAX_DATUM_OFFSET_M = 5.0
+
+
+@lru_cache(maxsize=256)
+def _datum_offset_from_wgs84(crs):
+    """Metres between *crs*'s datum and WGS84, measured at its own origin.
+
+    ``to_dict()`` only carries a ``+datum=`` key for datums PROJ has an
+    alias for. Everything else -- GGRS87, Israel 1993, VN-2000,
+    Hartebeesthoek94 -- arrives with the key missing, which the name test
+    in :func:`_is_wgs84_compatible_ellipsoid` used to read as "WGS84".
+    Measuring the offset is the only test that does not depend on PROJ
+    having a name for the datum.
+
+    The probe point is the CRS's own ``lon_0``/``lat_0``, which for a few
+    definitions sits outside the declared area of use. That is deliberate
+    and good enough: a Helmert shift varies slowly across a datum's extent,
+    so the reading is representative even off-centre, and the caller only
+    compares it against a threshold two orders of magnitude below the
+    shifts it has to catch.
+
+    Returns ``None`` only when there is nothing to measure -- pyproj is
+    absent, or *crs* is a lite CRS with no geodetic base, in which case the
+    curated built-in table already decides. Returns ``inf`` when a
+    measurement was possible but failed, so the caller rejects the fast
+    path rather than assuming no shift: an unverifiable datum should go to
+    pyproj, not to kernels that silently skip its shift.
+    """
+    geodetic = getattr(crs, 'geodetic_crs', None)
+    if geodetic is None:
+        return None
+    try:
+        import pyproj
+    except ImportError:
+        return None
+    try:
+        d = _crs_to_dict(crs)
+        lon = float(d.get('lon_0', 0.0))
+        lat = float(d.get('lat_0', d.get('lat_1', 0.0)))
+        transformer = pyproj.Transformer.from_crs(
+            geodetic, pyproj.CRS.from_epsg(4326), always_xy=True,
+        )
+        lon_w, lat_w = transformer.transform(lon, lat)
+        if not (math.isfinite(lon_w) and math.isfinite(lat_w)):
+            return math.inf
+        _, _, dist = pyproj.Geod(ellps='WGS84').inv(lon, lat, lon_w, lat_w)
+        return abs(float(dist))
+    except Exception:
+        return math.inf
+
+
+def _is_metric(d):
+    """True when a CRS's linear unit is the metre.
+
+    ``_lcc_params`` and ``_tmerc_params`` hand back a ``to_meter`` factor
+    and their callers apply it. The other extractors build metre-
+    denominated constants with nowhere to put such a factor, so a CRS in
+    feet has to fall back to pyproj rather than be read as metres. See
+    GH #3697.
+    """
+    return d.get('units', 'm') == 'm'
 
 
 def _get_datum_params(crs):
@@ -338,8 +409,16 @@ def _lcc_params(crs):
     if to_meter is None:
         return None
 
-    lat_1 = math.radians(d.get('lat_1', d.get('lat_0', 0.0)))
-    lat_2 = math.radians(d.get('lat_2', lat_1))
+    # Take the degree values first, then convert. Defaulting lat_2 to the
+    # already-radians lat_1 ran math.radians over it twice, turning a 47
+    # degree standard parallel into 0.82 degrees; the pair then looked
+    # distinct and the 2SP branch below computed a cone constant for a
+    # parallel pair that does not exist. PROJ writes a single-parallel LCC
+    # with no lat_2 at all, so every 1SP definition hit it (GH #3697).
+    lat_1_deg = d.get('lat_1', d.get('lat_0', 0.0))
+    lat_2_deg = d.get('lat_2', lat_1_deg)
+    lat_1 = math.radians(lat_1_deg)
+    lat_2 = math.radians(lat_2_deg)
     lat_0 = math.radians(d.get('lat_0', 0.0))
     lon_0 = math.radians(d.get('lon_0', 0.0))
     k0_param = d.get('k_0', d.get('k', 1.0))
@@ -476,9 +555,15 @@ def _aea_params(crs):
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
         return None
+    if not _is_metric(d):
+        return None
 
-    lat_1 = math.radians(d.get('lat_1', 0.0))
-    lat_2 = math.radians(d.get('lat_2', lat_1))
+    # Degrees first, then convert -- see the matching note in _lcc_params
+    # for what the double conversion did to a 1SP definition (GH #3697).
+    lat_1_deg = d.get('lat_1', 0.0)
+    lat_2_deg = d.get('lat_2', lat_1_deg)
+    lat_1 = math.radians(lat_1_deg)
+    lat_2 = math.radians(lat_2_deg)
     lat_0 = math.radians(d.get('lat_0', 0.0))
     lon_0 = math.radians(d.get('lon_0', 0.0))
 
@@ -581,6 +666,8 @@ def _cea_params(crs):
     if d.get('proj') != 'cea':
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
+    if not _is_metric(d):
         return None
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
@@ -703,6 +790,8 @@ def _sinu_params(crs):
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
         return None
+    if not _is_metric(d):
+        return None
     lon_0 = math.radians(d.get('lon_0', 0.0))
     fe = d.get('x_0', 0.0)
     fn = d.get('y_0', 0.0)
@@ -768,6 +857,8 @@ def _laea_params(crs):
     if d.get('proj') != 'laea':
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
+    if not _is_metric(d):
         return None
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
@@ -963,6 +1054,8 @@ def _stere_params(crs):
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
         return None
+    if not _is_metric(d):
+        return None
 
     lat_0 = d.get('lat_0', 0.0)
     if abs(abs(lat_0) - 90.0) > 1e-6:
@@ -1102,6 +1195,8 @@ def _sterea_params(crs):
     if d.get('proj') != 'sterea':
         return None
     if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
+    if not _is_metric(d):
         return None
 
     lat_0 = math.radians(d.get('lat_0', 0.0))
@@ -1773,7 +1868,17 @@ def _is_supported_geographic(epsg):
 
 
 def _is_wgs84_compatible_ellipsoid(crs):
-    """True if *crs* uses WGS84/GRS80 OR a datum we can Helmert-shift.
+    """Whether the WGS84 kernels in this module can reproduce *crs*.
+
+    Despite the name this is the general fast-path precondition, not just
+    an ellipsoid test. Every ``*_params`` extractor calls it, and it says
+    no on three separate grounds: an ellipsoid that is not WGS84/GRS80, an
+    axis direction that is not east/north, and a datum far enough from
+    WGS84 that skipping its shift would move pixels. Anything it rejects
+    falls back to pyproj. Keep new "can the kernels handle this?" checks
+    here rather than scattering them across the extractors (GH #3697).
+
+    True if *crs* uses WGS84/GRS80 OR a datum we can Helmert-shift.
 
     Returns True for WGS84/NAD83 (no shift needed) and for datums
     with known Helmert parameters (NAD27, etc.) since the dispatch
@@ -1792,6 +1897,21 @@ def _is_wgs84_compatible_ellipsoid(crs):
         d = _crs_to_dict(crs)
     except Exception:
         return False
+    # Axis direction. Every kernel here emits easting and northing, so a
+    # CRS that counts west or south positive -- the South African Lo grids,
+    # +axis=wsu -- comes out negated. Hand those to pyproj (GH #3697).
+    #
+    # Only direction matters, not axis *order*. Every transformer in this
+    # package is built with always_xy=True, which normalizes a northing-
+    # first CRS to easting-first for us; EPSG:2193 and EPSG:3346 are
+    # north/east in WKT and reproject correctly today. Reading `axis` from
+    # the PROJ dict is therefore the right test even though PROJ omits the
+    # key for those two: it omits it exactly when order is the only
+    # difference. Do NOT widen this to crs.axis_info -- that would reject
+    # both of them for a difference always_xy has already handled.
+    axis = d.get('axis')
+    if axis is not None and axis != 'enu':
+        return False
     # Explicit sphere radius: never WGS84-compatible.
     if 'R' in d:
         return False
@@ -1809,9 +1929,15 @@ def _is_wgs84_compatible_ellipsoid(crs):
         return False
     ellps = d.get('ellps', '')
     datum = d.get('datum', '')
-    # WGS84 and GRS80: no shift needed
+    # WGS84 and GRS80: no shift needed -- but only once we have checked
+    # that the datum really is WGS84-aligned. An unaliased datum reaches
+    # here with datum == '', so the name test alone let GGRS87, Israel
+    # 1993 and VN-2000 through on their GRS80/WGS84 ellipsoid (GH #3697).
     if (ellps in ('WGS84', 'GRS80', '')
             and datum in ('WGS84', 'NAD83', '')):
+        offset = _datum_offset_from_wgs84(crs)
+        if offset is not None and offset > _MAX_DATUM_OFFSET_M:
+            return False
         return True
     # Check if we have Helmert parameters for this datum
     key = datum if datum in _DATUM_PARAMS else ellps
