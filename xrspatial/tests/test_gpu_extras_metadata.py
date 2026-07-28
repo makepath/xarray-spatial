@@ -32,7 +32,10 @@ pytestmark = pytest.mark.skipif(
 
 def _extras():
     """Map extra name -> list of requirement strings, comments stripped."""
-    cfg = configparser.ConfigParser()
+    # interpolation=None: a stray `%` anywhere in setup.cfg would otherwise
+    # raise InterpolationSyntaxError and fail these tests for an unrelated
+    # reason.
+    cfg = configparser.ConfigParser(interpolation=None)
     cfg.read(SETUP_CFG)
     out = {}
     for name, block in cfg["options.extras_require"].items():
@@ -46,8 +49,13 @@ def _extras():
 
 
 def _project_name(req):
-    """Leading PEP 508 project name of a requirement string."""
-    return re.split(r"[\s<>=!~;\[]", req, maxsplit=1)[0].lower()
+    """Leading project name of a requirement string, PEP 503 normalized.
+
+    Normalizing means `cupy_cuda12x` and `cupy.cuda12x` compare equal to
+    `cupy-cuda12x`, the way pip treats them.
+    """
+    name = re.split(r"[\s<>=!~;\[]", req, maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def test_no_extra_declares_cuspatial():
