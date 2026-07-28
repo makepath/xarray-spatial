@@ -25,11 +25,6 @@ try:
 except ImportError:
     cupy = None
 
-try:
-    import cuspatial  # noqa: F401  -- reserved for future GPU geometry parsing
-except ImportError:
-    cuspatial = None
-
 #: Cached shapely module, populated by :func:`_require_shapely` on first use.
 #: shapely is an optional dependency (the ``vector`` extra). It is imported
 #: lazily so ``import xrspatial`` does not pull in shapely (and GEOS) for users
