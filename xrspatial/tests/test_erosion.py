@@ -225,22 +225,24 @@ def _to_numpy(result):
     return data
 
 
-def _check_nodata_confined(backend, chunks=(32, 32)):
-    """A single NaN cell must stay a single NaN cell.
+def _check_nodata_confined(backend, chunks=(32, 32), nodata=np.nan):
+    """A single non-finite cell must stay a single non-finite cell.
 
     Before #3703 the droplet ran on past a NaN gradient, indexed the
     heightmap with int(nan) (out of bounds), and painted NaN across the
     brush footprint, so one nodata cell grew to cover most of the raster.
     """
     data = _make_terrain(size=64)
-    data[30, 30] = np.nan
+    data[30, 30] = nodata
     agg = _input(data, backend, chunks=chunks)
     result = _to_numpy(erode(agg, iterations=2000, seed=42))
 
-    assert np.isnan(result[30, 30]), "the nodata cell was overwritten"
-    assert int(np.isnan(result).sum()) == 1, (
-        f"nodata spread to {int(np.isnan(result).sum())} cells"
+    np.testing.assert_array_equal(
+        result[30, 30], np.float32(nodata),
+        err_msg="the nodata cell was overwritten",
     )
+    spread = int((~np.isfinite(result)).sum())
+    assert spread == 1, f"nodata spread to {spread} cells"
 
     # The rest of the raster still erodes normally.
     finite = np.isfinite(result)
@@ -268,12 +270,14 @@ def test_erode_nodata_confined_dask_cupy():
     _check_nodata_confined('dask+cupy', chunks=(16, 16))
 
 
-def test_erode_inf_confined():
+def test_erode_inf_confined_numpy():
     """An Inf cell behaves the same way a NaN cell does: it stays put."""
-    data = _make_terrain(size=64)
-    data[30, 30] = np.inf
-    result = erode(_input(data, 'numpy'), iterations=2000, seed=42)
-    assert int((~np.isfinite(result.data)).sum()) == 1
+    _check_nodata_confined('numpy', nodata=np.inf)
+
+
+@cuda_and_cupy_available
+def test_erode_inf_confined_cupy():
+    _check_nodata_confined('cupy', nodata=np.inf)
 
 
 def test_erode_all_nodata_raster():

@@ -121,7 +121,11 @@ def _erode_cpu(heightmap, random_pos, boy, box, bw,
             dir_y = dir_y * inertia - grad_y * (1 - inertia)
 
             dir_len = (dir_x * dir_x + dir_y * dir_y) ** 0.5
-            if dir_len < 1e-10:
+            # A nodata cell in the stencil above makes the gradient, and
+            # therefore dir_len, non-finite.  `dir_len < 1e-10` is False for
+            # NaN, so the finite check has to be spelled out or the droplet
+            # runs on with a NaN position.
+            if dir_len < 1e-10 or not math.isfinite(dir_len):
                 break
             dir_x /= dir_len
             dir_y /= dir_len
@@ -129,12 +133,11 @@ def _erode_cpu(heightmap, random_pos, boy, box, bw,
             new_x = pos_x + dir_x
             new_y = pos_y + dir_y
 
-            # A nodata cell in the stencil above makes the gradient, and
-            # therefore new_x / new_y, NaN.  Every comparison against NaN is
-            # False, so the guard has to be written as "inside the valid box"
-            # and break on anything else.  Written the other way round a NaN
-            # falls through to int(new_x), which numba evaluates to INT64_MIN,
-            # and the reads below index outside the array.
+            # Every comparison against NaN is False, so this guard has to be
+            # written as "inside the valid box" and break on anything else.
+            # Written the other way round a NaN falls through to int(new_x),
+            # which numba evaluates to INT64_MIN, and the reads below index
+            # outside the array.
             if not (new_x >= 1 and new_x < width - 2
                     and new_y >= 1 and new_y < height - 2):
                 break
@@ -254,7 +257,9 @@ if cuda is not None:
             dir_y = dir_y * inertia - grad_y * (1 - inertia)
 
             dir_len = (dir_x * dir_x + dir_y * dir_y) ** 0.5
-            if dir_len < 1e-10:
+            # See the matching comment in _erode_cpu: `dir_len < 1e-10` is
+            # False for a NaN gradient coming out of a nodata stencil.
+            if dir_len < 1e-10 or not math.isfinite(dir_len):
                 return
             dir_x /= dir_len
             dir_y /= dir_len
@@ -262,9 +267,8 @@ if cuda is not None:
             new_x = pos_x + dir_x
             new_y = pos_y + dir_y
 
-            # See the matching comment in _erode_cpu: written as a pair of
-            # rejection tests a NaN position slips through both and the reads
-            # below index outside the array.
+            # Written as a pair of rejection tests a NaN position slips
+            # through both and the reads below index outside the array.
             if not (new_x >= 1 and new_x < width - 2):
                 return
             if not (new_y >= 1 and new_y < height - 2):
@@ -485,6 +489,13 @@ def erode(agg, iterations=50000, seed=42, params=None):
         is outside the allowed range.
     MemoryError
         If the projected working set exceeds available memory.
+
+    Notes
+    -----
+    Non-finite cells act as barriers. A droplet whose interpolation stencil
+    covers a NaN or an Inf dies there without touching the heightmap, so
+    nodata cells come back unchanged and the finite terrain around them
+    erodes normally.
     """
     _validate_scalar(
         iterations, func_name='erode', name='iterations',
