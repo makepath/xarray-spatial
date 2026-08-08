@@ -214,6 +214,92 @@ def test_erode_dask_cupy_runs():
     assert np.isfinite(result_np).all()
 
 
+# ---- nodata handling (issue #3703) ----
+
+def _to_numpy(result):
+    data = result.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return data
+
+
+def _check_nodata_confined(backend, chunks=(32, 32), nodata=np.nan):
+    """A single non-finite cell must stay a single non-finite cell.
+
+    Before #3703 the droplet ran on past a NaN gradient, indexed the
+    heightmap with int(nan) (out of bounds), and painted NaN across the
+    brush footprint, so one nodata cell grew to cover most of the raster.
+    """
+    data = _make_terrain(size=64)
+    data[30, 30] = nodata
+    agg = _input(data, backend, chunks=chunks)
+    result = _to_numpy(erode(agg, iterations=2000, seed=42))
+
+    np.testing.assert_array_equal(
+        result[30, 30], np.float32(nodata),
+        err_msg="the nodata cell was overwritten",
+    )
+    spread = int((~np.isfinite(result)).sum())
+    assert spread == 1, f"nodata spread to {spread} cells"
+
+    # The rest of the raster still erodes normally.
+    finite = np.isfinite(result)
+    changed = int((result[finite] != data[finite]).sum())
+    assert changed > 100, f"only {changed} finite cells changed"
+
+
+def test_erode_nodata_confined_numpy():
+    _check_nodata_confined('numpy')
+
+
+@dask_array_available
+def test_erode_nodata_confined_dask_numpy():
+    _check_nodata_confined('dask+numpy', chunks=(16, 16))
+
+
+@cuda_and_cupy_available
+def test_erode_nodata_confined_cupy():
+    _check_nodata_confined('cupy')
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_erode_nodata_confined_dask_cupy():
+    _check_nodata_confined('dask+cupy', chunks=(16, 16))
+
+
+def test_erode_inf_confined_numpy():
+    """An Inf cell behaves the same way a NaN cell does: it stays put."""
+    _check_nodata_confined('numpy', nodata=np.inf)
+
+
+@cuda_and_cupy_available
+def test_erode_inf_confined_cupy():
+    _check_nodata_confined('cupy', nodata=np.inf)
+
+
+def test_erode_all_nodata_raster():
+    """An all-nodata raster comes back all-nodata instead of crashing."""
+    data = np.full((32, 32), np.nan, dtype=np.float32)
+    result = erode(_input(data, 'numpy'), iterations=1000, seed=42)
+    assert np.isnan(result.data).all()
+
+
+def test_erode_nodata_border_leaves_interior_intact():
+    """A nodata border must not eat into the terrain behind it."""
+    data = _make_terrain(size=48)
+    data[:2, :] = np.nan
+    data[-2:, :] = np.nan
+    data[:, :2] = np.nan
+    data[:, -2:] = np.nan
+    expected_nan = int(np.isnan(data).sum())
+
+    result = erode(_input(data, 'numpy'), iterations=3000, seed=42)
+    assert int(np.isnan(result.data).sum()) == expected_nan
+
+
 # ---- parameter validation (issue #1275) ----
 
 def test_erode_iterations_zero_rejected():
