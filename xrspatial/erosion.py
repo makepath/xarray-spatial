@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import xarray as xr
 from numba import jit
@@ -127,7 +129,14 @@ def _erode_cpu(heightmap, random_pos, boy, box, bw,
             new_x = pos_x + dir_x
             new_y = pos_y + dir_y
 
-            if new_x < 1 or new_x >= width - 2 or new_y < 1 or new_y >= height - 2:
+            # A nodata cell in the stencil above makes the gradient, and
+            # therefore new_x / new_y, NaN.  Every comparison against NaN is
+            # False, so the guard has to be written as "inside the valid box"
+            # and break on anything else.  Written the other way round a NaN
+            # falls through to int(new_x), which numba evaluates to INT64_MIN,
+            # and the reads below index outside the array.
+            if not (new_x >= 1 and new_x < width - 2
+                    and new_y >= 1 and new_y < height - 2):
                 break
 
             h_old = h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) + \
@@ -143,6 +152,14 @@ def _erode_cpu(heightmap, random_pos, boy, box, bw,
                      heightmap[new_node_y + 1, new_node_x + 1] * new_fx * new_fy)
 
             h_diff = h_new - h_old
+
+            # Nodata in either stencil leaves h_diff non-finite.  Both branch
+            # conditions below are False for NaN, so control would reach the
+            # erosion branch and subtract NaN from every cell under the brush,
+            # spreading nodata across the grid one droplet at a time.  Kill
+            # the droplet instead: nodata acts as a barrier.
+            if not math.isfinite(h_diff):
+                break
 
             sed_capacity = max(-h_diff, min_slope) * speed * water * capacity
 
@@ -245,9 +262,12 @@ if cuda is not None:
             new_x = pos_x + dir_x
             new_y = pos_y + dir_y
 
-            if new_x < 1 or new_x >= width - 2:
+            # See the matching comment in _erode_cpu: written as a pair of
+            # rejection tests a NaN position slips through both and the reads
+            # below index outside the array.
+            if not (new_x >= 1 and new_x < width - 2):
                 return
-            if new_y < 1 or new_y >= height - 2:
+            if not (new_y >= 1 and new_y < height - 2):
                 return
 
             h_old = (h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) +
@@ -263,6 +283,11 @@ if cuda is not None:
                      heightmap[new_node_y + 1, new_node_x + 1] * new_fx * new_fy)
 
             h_diff = h_new - h_old
+
+            # Nodata anywhere in either stencil: kill the particle rather than
+            # letting the erosion branch atomically add NaN to the brush.
+            if not math.isfinite(h_diff):
+                return
 
             neg_h_diff = -h_diff
             if neg_h_diff < min_slope:
