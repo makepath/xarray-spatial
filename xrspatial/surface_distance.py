@@ -1433,6 +1433,13 @@ def surface_distance(
     Edge cost accounts for both horizontal distance and elevation
     change: ``sqrt(horizontal_dist^2 + dz^2)``.
 
+    Surface distance supports NumPy, CuPy, Dask with NumPy, and Dask with
+    CuPy backed xarray DataArray.  The return value is of the same type as
+    the input: a NumPy-backed input gives a NumPy-backed result, a
+    CuPy-backed input gives a CuPy-backed result, and a Dask-backed input
+    gives a Dask-backed result.  ``method='geodesic'`` is the exception --
+    it is implemented for NumPy-backed input only.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
@@ -1456,13 +1463,53 @@ def surface_distance(
     method : str, default='planar'
         ``'planar'`` uses cell sizes in map units.
         ``'geodesic'`` computes great-circle horizontal distances
-        from lat/lon coordinates (elevation in meters).
+        from lat/lon coordinates (elevation in meters).  Geodesic mode
+        requires a NumPy-backed DataArray; CuPy, Dask with NumPy, and
+        Dask with CuPy input raises ``NotImplementedError``.
 
     Returns
     -------
     xr.DataArray or xr.Dataset
         2-D array of surface distance values (float32).
         Source pixels have distance 0.  Unreachable pixels are NaN.
+
+    Examples
+    --------
+    A single source in the top-left corner and a peak in the middle of an
+    otherwise flat 3x3 grid:
+
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import surface_distance
+        >>> source = np.array([
+        ...     [1., 0., 0.],
+        ...     [0., 0., 0.],
+        ...     [0., 0., 0.],
+        ... ])
+        >>> elevation = np.array([
+        ...     [0., 0., 0.],
+        ...     [0., 3., 0.],
+        ...     [0., 0., 0.],
+        ... ])
+        >>> n, m = source.shape
+        >>> raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
+        >>> elev = xr.DataArray(
+        ...     elevation, dims=['y', 'x'], name='elevation')
+        >>> elev['y'] = np.arange(n)[::-1]
+        >>> elev['x'] = np.arange(m)
+
+        >>> surface_distance(raster, elev).values
+        array([[0.       , 1.       , 2.       ],
+               [1.       , 3.3166249, 2.4142137],
+               [2.       , 2.4142137, 3.4142137]], dtype=float32)
+
+    Climbing to the summit costs ``sqrt(2 + 9) = 3.32``, while the far
+    corner is reached for 3.41 by walking around the peak along the flat
+    edges rather than over it.
     """
     result_data = _compute(
         raster, elevation, x, y, target_values, max_distance,
@@ -1492,6 +1539,11 @@ def surface_allocation(
     For each pixel, returns the value of the nearest target pixel by
     surface distance through the elevation model.
 
+    Surface allocation supports NumPy, CuPy, Dask with NumPy, and Dask
+    with CuPy backed xarray DataArray, and returns the same type it was
+    given.  ``method='geodesic'`` is implemented for NumPy-backed input
+    only.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
@@ -1504,7 +1556,41 @@ def surface_allocation(
     Returns
     -------
     xr.DataArray or xr.Dataset
-        2-D array of allocation values (float32).
+        2-D array of allocation values (float32).  Pixels that cannot
+        reach any target are NaN.
+
+    Examples
+    --------
+    Two sources on opposite corners, separated by a peak in the middle:
+
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import surface_allocation
+        >>> source = np.array([
+        ...     [1., 0., 0.],
+        ...     [0., 0., 0.],
+        ...     [0., 2., 0.],
+        ... ])
+        >>> elevation = np.array([
+        ...     [0., 0., 0.],
+        ...     [0., 3., 0.],
+        ...     [0., 0., 0.],
+        ... ])
+        >>> n, m = source.shape
+        >>> raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
+        >>> elev = xr.DataArray(
+        ...     elevation, dims=['y', 'x'], name='elevation')
+        >>> elev['y'] = np.arange(n)[::-1]
+        >>> elev['x'] = np.arange(m)
+
+        >>> surface_allocation(raster, elev).values
+        array([[1., 1., 1.],
+               [1., 2., 2.],
+               [2., 2., 2.]], dtype=float32)
     """
     result_data = _compute(
         raster, elevation, x, y, target_values, max_distance,
@@ -1535,6 +1621,11 @@ def surface_direction(
     nearest target pixel by surface distance.  0 = source pixel,
     90 = east, 180 = south, 270 = west, 360 = north.
 
+    Surface direction supports NumPy, CuPy, Dask with NumPy, and Dask
+    with CuPy backed xarray DataArray, and returns the same type it was
+    given.  ``method='geodesic'`` is implemented for NumPy-backed input
+    only.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
@@ -1547,7 +1638,51 @@ def surface_direction(
     Returns
     -------
     xr.DataArray or xr.Dataset
-        2-D array of direction values (float32, degrees).
+        2-D array of direction values (float32, degrees).  Pixels that
+        cannot reach any target are NaN.
+
+    Notes
+    -----
+    On a Dask-backed input with an infinite ``max_distance``, or one large
+    enough that the search radius exceeds the chunk size, the bearings are
+    currently measured from the wrong origin in every chunk except the
+    first.  Track the fix in
+    https://github.com/xarray-contrib/xarray-spatial/issues/3713.  Setting
+    a finite ``max_distance`` smaller than the chunk size takes the
+    ``map_overlap`` path, which is unaffected.
+
+    Examples
+    --------
+    A single source at the centre of a flat 3x3 grid.  Each pixel reports
+    the compass bearing back toward that source:
+
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import surface_direction
+        >>> source = np.array([
+        ...     [0., 0., 0.],
+        ...     [0., 1., 0.],
+        ...     [0., 0., 0.],
+        ... ])
+        >>> elevation = np.zeros((3, 3))
+        >>> n, m = source.shape
+        >>> raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
+        >>> elev = xr.DataArray(
+        ...     elevation, dims=['y', 'x'], name='elevation')
+        >>> elev['y'] = np.arange(n)[::-1]
+        >>> elev['x'] = np.arange(m)
+
+        >>> surface_direction(raster, elev).values
+        array([[135., 180., 225.],
+               [ 90.,   0., 270.],
+               [ 45., 360., 315.]], dtype=float32)
+
+    The pixel east of the source reads 270 (west) because the bearing
+    points back at the source, and the source itself reads 0.
     """
     result_data = _compute(
         raster, elevation, x, y, target_values, max_distance,

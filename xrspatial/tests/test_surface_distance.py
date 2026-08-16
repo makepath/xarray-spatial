@@ -1,5 +1,7 @@
 """Tests for xrspatial.surface_distance."""
 
+import inspect
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -792,3 +794,130 @@ class TestMemoryGuard:
                 surface_distance(raster, elevation)
             with pytest.raises(MemoryError, match="dask"):
                 surface_distance(raster, elevation)
+
+
+# ---------------------------------------------------------------------------
+# Tests — docstring contract
+# ---------------------------------------------------------------------------
+
+
+_PUBLIC = [surface_distance, surface_allocation, surface_direction]
+
+
+def _flat_doc(func):
+    """Docstring with line wrapping collapsed, so pinned phrases survive."""
+    return " ".join(inspect.getdoc(func).split())
+
+
+@pytest.mark.parametrize("func", _PUBLIC)
+def test_docstring_has_examples_section(func):
+    """Every public surface-distance function ships a runnable example."""
+    doc = inspect.getdoc(func)
+    assert any(ln.strip() == "Examples" for ln in doc.splitlines()), (
+        f"{func.__name__} docstring has no Examples section"
+    )
+    assert ">>>" in doc, f"{func.__name__} Examples section has no code"
+    # Three dots renders as literal text instead of a code block.
+    assert "... sourcecode::" not in doc
+
+
+@pytest.mark.parametrize("func", _PUBLIC)
+def test_docstring_states_all_backends(func):
+    """All three functions dispatch to numpy, cupy, dask+numpy, dask+cupy.
+
+    The docstrings named no backend at all, leaving users to guess. Pin the
+    phrases so the claim cannot silently disappear; reword the assertions,
+    not the docs, if the wording is revised while staying accurate.
+    """
+    doc = _flat_doc(func)
+    assert "CuPy" in doc
+    assert "Dask with NumPy" in doc
+    assert "Dask with CuPy" in doc
+
+
+@pytest.mark.parametrize("func", _PUBLIC)
+def test_docstring_notes_geodesic_is_numpy_only(func):
+    """geodesic raises NotImplementedError on every non-numpy backend."""
+    doc = _flat_doc(func)
+    assert "NumPy-backed input only" in doc or (
+        "requires a NumPy-backed DataArray" in doc
+    )
+
+
+def test_geodesic_rejects_dask():
+    """The documented geodesic limitation matches what the code does."""
+    if da is None:
+        pytest.skip("dask not installed")
+
+    source = np.zeros((4, 4), dtype=np.float64)
+    source[1, 1] = 1.0
+    elev = np.zeros((4, 4), dtype=np.float64)
+    raster = _make_raster(source, backend='dask+numpy', chunks=(2, 2))
+    elevation = _make_raster(elev, backend='dask+numpy', chunks=(2, 2))
+
+    with pytest.raises(NotImplementedError, match="geodesic"):
+        surface_distance(raster, elevation, method='geodesic')
+
+
+def _docstring_example_rasters(source, elevation):
+    """Build the y-descending DataArrays used by the Examples blocks."""
+    n, m = source.shape
+    raster = xr.DataArray(source, dims=['y', 'x'], name='raster')
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+    elev = xr.DataArray(elevation, dims=['y', 'x'], name='elevation')
+    elev['y'] = np.arange(n)[::-1]
+    elev['x'] = np.arange(m)
+    return raster, elev
+
+
+_PEAK_ELEVATION = np.array([
+    [0., 0., 0.],
+    [0., 3., 0.],
+    [0., 0., 0.],
+])
+
+
+@pytest.mark.parametrize("func, source, expected", [
+    (
+        surface_distance,
+        np.array([[1., 0., 0.],
+                  [0., 0., 0.],
+                  [0., 0., 0.]]),
+        np.array([[0., 1., 2.],
+                  [1., 3.3166249, 2.4142137],
+                  [2., 2.4142137, 3.4142137]], dtype=np.float32),
+    ),
+    (
+        surface_allocation,
+        np.array([[1., 0., 0.],
+                  [0., 0., 0.],
+                  [0., 2., 0.]]),
+        np.array([[1., 1., 1.],
+                  [1., 2., 2.],
+                  [2., 2., 2.]], dtype=np.float32),
+    ),
+])
+def test_docstring_example_matches_output(func, source, expected):
+    """The pinned output in each Examples block is what the code returns."""
+    raster, elev = _docstring_example_rasters(source, _PEAK_ELEVATION)
+    result = func(raster, elev)
+    assert result.dtype == np.float32
+    np.testing.assert_allclose(result.values, expected, rtol=1e-6)
+
+
+def test_direction_docstring_example_matches_output():
+    """surface_direction()'s pinned Examples output, on the numpy backend."""
+    source = np.array([
+        [0., 0., 0.],
+        [0., 1., 0.],
+        [0., 0., 0.],
+    ])
+    raster, elev = _docstring_example_rasters(source, np.zeros((3, 3)))
+
+    expected = np.array([[135., 180., 225.],
+                         [90., 0., 270.],
+                         [45., 360., 315.]], dtype=np.float32)
+    result = surface_direction(raster, elev)
+    assert result.dtype == np.float32
+    np.testing.assert_allclose(result.values, expected, rtol=1e-6)
