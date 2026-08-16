@@ -2489,6 +2489,8 @@ class TestDaskFrictionFminCache:
     def test_multi_stop_dask_friction_matches_numpy(self):
         # Routes 3 segments through the same friction raster, so the
         # second and third segments hit the f_min cache
+        from xrspatial.pathfinding import _dask_fmin_cache
+
         data = np.ones((6, 6))
         friction = np.linspace(1.0, 2.0, 36).reshape(6, 6)
         agg_np = _make_raster(data)
@@ -2502,7 +2504,12 @@ class TestDaskFrictionFminCache:
         fr_dask = _make_raster(friction)
         fr_dask.data = da.from_array(fr_dask.data, chunks=(3, 3))
 
+        _dask_fmin_cache.clear()
         result = multi_stop_search(agg_dask, waypoints, friction=fr_dask)
+        # All 3 segments resolved f_min through one cache entry; a
+        # per-call graph token would show up here as extra entries
+        assert len(_dask_fmin_cache) == 1
+
         np.testing.assert_allclose(
             result.data.compute(), expected.values, equal_nan=True)
         assert result.attrs['total_cost'] == pytest.approx(

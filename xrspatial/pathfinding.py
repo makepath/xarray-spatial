@@ -1389,6 +1389,10 @@ def _held_karp(dist, start, end):
 def _nearest_neighbor_2opt(dist, start, end):
     """Heuristic TSP for large N: nearest-neighbor + 2-opt with fixed endpoints.
 
+    A tour containing an unavoidable inf edge (an unreachable waypoint
+    pair) still receives finite local improvements; its total cost stays
+    inf.
+
     Parameters
     ----------
     dist : 2-D array-like, shape (N, N)
