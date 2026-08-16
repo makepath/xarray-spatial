@@ -755,10 +755,10 @@ class TestMemoryGuard:
 
         from unittest.mock import patch
 
-        # 200x200 total (~6.4 MB at 80 B/pixel) chunked at 20x20
-        # (~32 KB per chunk).  Mock available memory to 1 MB: the full
+        # 200x200 total (~10.9 MB at 272 B/pixel) chunked at 20x20
+        # (~109 KB per chunk).  Mock available memory to 1 MB: the full
         # array would exceed 50% of that, but each 20x20 chunk needs
-        # only ~32 KB so per-chunk allocation passes.
+        # only ~109 KB so per-chunk allocation passes.
         source = np.zeros((200, 200), dtype=np.float64)
         source[100, 100] = 1.0
         elev = np.zeros((200, 200), dtype=np.float64)
@@ -792,3 +792,153 @@ class TestMemoryGuard:
                 surface_distance(raster, elevation)
             with pytest.raises(MemoryError, match="dask"):
                 surface_distance(raster, elevation)
+
+
+# ---------------------------------------------------------------------------
+# Regression — Dijkstra heap sizing (issue #3722)
+# ---------------------------------------------------------------------------
+
+
+def _checkerboard_inputs(h, w, backend='numpy', chunks=(3, 3), latlon=False):
+    """Dense checkerboard sources over rough random elevation.
+
+    Half the pixels are sources, which drives the lazy-deletion heap past
+    one slot per pixel.  With the old ``max_heap = height * width`` sizing
+    this walks off the end of the heap arrays.
+    """
+    rng = np.random.default_rng(0)
+    elev = rng.random((h, w)) * 5000.0
+    rr, cc = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
+    source = ((rr + cc) % 2 == 0).astype(np.float64)
+
+    raster = _make_raster(source, backend=backend, chunks=chunks)
+    elevation = _make_raster(elev, backend=backend, chunks=chunks)
+    if latlon:
+        coords = {'y': np.linspace(10.0, 10.5, h),
+                  'x': np.linspace(20.0, 20.5, w)}
+        raster = raster.assign_coords(coords)
+        elevation = elevation.assign_coords(coords)
+    return raster, elevation, source
+
+
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_dense_sources_do_not_overflow_heap(connectivity):
+    """A checkerboard source mask must not corrupt the Dijkstra heap.
+
+    Regression for #3722: the heap was sized ``height * width`` but a
+    lazy-deletion Dijkstra pushes a pixel once per improving relaxation,
+    so a dense source mask overflowed it and wrote out of bounds.
+    """
+    raster, elevation, source = _checkerboard_inputs(80, 80)
+
+    result = _compute(surface_distance(raster, elevation,
+                                       connectivity=connectivity))
+
+    assert np.isfinite(result).all()
+    # Every source pixel is at distance zero, every other pixel is reachable.
+    assert (result[source > 0] == 0).all()
+    assert (result[source == 0] > 0).all()
+
+
+def test_dense_sources_do_not_overflow_heap_geodesic():
+    """Same regression for the geodesic kernel (#3722)."""
+    raster, elevation, source = _checkerboard_inputs(80, 80, latlon=True)
+
+    result = _compute(surface_distance(raster, elevation, connectivity=8,
+                                       method='geodesic'))
+
+    assert np.isfinite(result).all()
+    assert (result[source > 0] == 0).all()
+
+
+def test_dense_sources_do_not_overflow_heap_dask():
+    """Same regression through the iterative dask tile path (#3722)."""
+    if da is None:
+        pytest.skip("dask not installed")
+
+    raster, elevation, source = _checkerboard_inputs(
+        80, 80, backend='dask+numpy', chunks=(40, 40))
+
+    with pytest.warns(UserWarning, match="iterative tile Dijkstra"):
+        lazy = surface_distance(raster, elevation, connectivity=8)
+    result = _compute(lazy)
+
+    assert np.isfinite(result).all()
+    assert (result[source > 0] == 0).all()
+
+
+def test_heap_bound_covers_worst_case_push_count():
+    """The allocated heap must cover every push the kernel can make.
+
+    Each pixel is pushed once when seeded and at most once per settled
+    neighbour, so the bound is ``height * width * (n_neighbors + 1)``.
+    Assert the kernel's peak heap usage stays inside that on the dense
+    input that used to overflow.
+    """
+    from xrspatial.cost_distance import _heap_push, _heap_pop
+    from xrspatial.utils import ngjit
+
+    @ngjit
+    def _peak_heap(elev_data, height, width, dy, dx, dd, dist):
+        n_neighbors = len(dy)
+        cap = height * width * (n_neighbors + 1)
+        h_keys = np.empty(cap, dtype=np.float64)
+        h_rows = np.empty(cap, dtype=np.int64)
+        h_cols = np.empty(cap, dtype=np.int64)
+        h_size = 0
+        peak = 0
+        visited = np.zeros((height, width), dtype=np.int8)
+
+        for r in range(height):
+            for c in range(width):
+                if dist[r, c] < np.inf:
+                    h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                        dist[r, c], r, c)
+                    if h_size > peak:
+                        peak = h_size
+
+        while h_size > 0:
+            cost_u, ur, uc, h_size = _heap_pop(h_keys, h_rows, h_cols,
+                                               h_size)
+            if visited[ur, uc]:
+                continue
+            visited[ur, uc] = 1
+            elev_u = elev_data[ur, uc]
+            for i in range(n_neighbors):
+                vr = ur + dy[i]
+                vc = uc + dx[i]
+                if vr < 0 or vr >= height or vc < 0 or vc >= width:
+                    continue
+                if visited[vr, vc]:
+                    continue
+                elev_v = elev_data[vr, vc]
+                if not np.isfinite(elev_v):
+                    continue
+                dz = elev_v - elev_u
+                new_cost = cost_u + np.sqrt(dd[i] * dd[i] + dz * dz)
+                if new_cost < dist[vr, vc]:
+                    dist[vr, vc] = new_cost
+                    h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                        new_cost, vr, vc)
+                    if h_size > peak:
+                        peak = h_size
+        return peak
+
+    h = w = 60
+    rng = np.random.default_rng(0)
+    elev = rng.random((h, w)) * 5000.0
+    rr, cc = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
+    dist = np.full((h, w), np.inf)
+    dist[(rr + cc) % 2 == 0] = 0.0
+
+    dy = np.array([-1, -1, -1, 0, 0, 1, 1, 1], dtype=np.int64)
+    dx = np.array([-1, 0, 1, -1, 1, -1, 0, 1], dtype=np.int64)
+    d = np.sqrt(2.0)
+    dd = np.array([d, 1.0, d, 1.0, 1.0, d, 1.0, d], dtype=np.float64)
+
+    peak = _peak_heap(elev, h, w, dy, dx, dd, dist)
+
+    # The old sizing (height * width) is not enough for this input ...
+    assert peak > h * w
+    # ... but the new bound is.
+    assert peak <= h * w * (len(dy) + 1)
