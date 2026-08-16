@@ -2,6 +2,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.pathfinding import a_star_search, multi_stop_search
+from xrspatial.utils import has_cuda_and_cupy
 
 from .common import get_xr_dataarray
 
@@ -36,12 +37,12 @@ class MultiStopSearchDaskMemory:
 
 
 class AStarSearch:
-    params = ([100, 300, 1000], [4, 8], ["numpy", "cupy", "dask"])
+    params = ([100, 300, 1000], [4, 8], ["numpy", "cupy", "dask", "dask+cupy"])
     param_names = ("nx", "connectivity", "type")
 
     def setup(self, nx, connectivity, type):
-        if type == "dask" and nx > 300:
-            # The dask backend is a pure-Python sparse A* that loads
+        if type in ("dask", "dask+cupy") and nx > 300:
+            # The dask backends run a pure-Python sparse A* that loads
             # chunks on demand; at nx=1000 a single call takes ~4 s,
             # which would dominate the suite's runtime.
             raise NotImplementedError()
@@ -50,7 +51,7 @@ class AStarSearch:
         self.start = self.agg.y[0], self.agg.x[0]
         self.goal = self.agg.y[-1], self.agg.x[-1]
         # snap_start/snap_goal raise on dask-backed arrays by design
-        self.snap = type != "dask"
+        self.snap = type not in ("dask", "dask+cupy")
 
     def time_a_star_search(self, nx, connectivity, type):
         a_star_search(
@@ -58,6 +59,64 @@ class AStarSearch:
             connectivity=connectivity,
             snap_start=self.snap, snap_goal=self.snap
         )
+
+
+class AStarSearchObstacles:
+    """A* through a barrier field with friction (issue #3705).
+
+    The open-grid AStarSearch benchmark is A*'s best case: the heuristic
+    walks almost straight to the goal.  Walls with alternating gaps force
+    a serpentine route, so the frontier and visited set actually grow,
+    and the friction surface exercises the friction-weighted cost path.
+    Regressions in barrier handling or frontier bookkeeping are invisible
+    to the open-grid benchmark but show up here.
+    """
+
+    params = ([100, 300], ["numpy", "cupy", "dask"])
+    param_names = ("nx", "type")
+
+    def setup(self, nx, type):
+        ny = nx // 2
+        z = np.ones((ny, nx), dtype=np.float64)
+        # Vertical walls (value 0) with a one-cell gap alternating
+        # between the top and bottom row
+        step = max(2, nx // 10)
+        for wi, col in enumerate(range(step, nx - 1, step)):
+            z[:, col] = 0.0
+            if wi % 2 == 0:
+                z[0, col] = 1.0
+            else:
+                z[-1, col] = 1.0
+        # Left-to-right friction gradient
+        f = 1.0 + np.linspace(0.0, 4.0, nx)[np.newaxis, :] * np.ones(
+            (ny, 1), dtype=np.float64)
+
+        if type == "cupy":
+            if not has_cuda_and_cupy():
+                raise NotImplementedError()
+            import cupy
+            z = cupy.asarray(z)
+            f = cupy.asarray(f)
+        elif type == "dask":
+            import dask.array as da
+            chunks = (max(1, ny // 2), max(1, nx // 2))
+            z = da.from_array(z, chunks=chunks)
+            f = da.from_array(f, chunks=chunks)
+
+        y = np.linspace(ny - 1, 0, ny)
+        x = np.linspace(0, nx - 1, nx)
+        self.agg = xr.DataArray(z, coords=dict(y=y, x=x), dims=["y", "x"])
+        self.friction = xr.DataArray(
+            f, coords=dict(y=y, x=x), dims=["y", "x"])
+        self.start = float(y[-1]), float(x[0])
+        self.goal = float(y[0]), float(x[-1])
+
+    def time_a_star_search_barriers(self, nx, type):
+        a_star_search(self.agg, self.start, self.goal, barriers=[0])
+
+    def time_a_star_search_barriers_friction(self, nx, type):
+        a_star_search(self.agg, self.start, self.goal, barriers=[0],
+                      friction=self.friction)
 
 
 class MultiStopSearch:
