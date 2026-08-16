@@ -2312,3 +2312,205 @@ def test_barriers_default_none_matches_empty_list():
     m_none = multi_stop_search(agg, [start, goal], barriers=None)
     np.testing.assert_allclose(
         m_none.values, r_default.values, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# LOW-backlog cleanup tests (#3705)
+# ---------------------------------------------------------------------------
+
+def test_chunk_cache_eviction():
+    """_ChunkCache evicts the least-recently-used entry at maxsize."""
+    from collections import Counter
+
+    from xrspatial.pathfinding import _ChunkCache
+
+    loads = Counter()
+
+    def make_loader(key):
+        def load():
+            loads[key] += 1
+            return key.upper()
+        return load
+
+    cache = _ChunkCache(maxsize=2)
+    assert cache.get('a', make_loader('a')) == 'A'
+    assert cache.get('b', make_loader('b')) == 'B'
+    # Hit on 'a' refreshes its LRU position without reloading
+    assert cache.get('a', make_loader('a')) == 'A'
+    assert loads['a'] == 1
+
+    # Third key evicts 'b' (least recently used), not 'a'
+    assert cache.get('c', make_loader('c')) == 'C'
+    assert cache.get('a', make_loader('a')) == 'A'
+    assert loads['a'] == 1
+    assert cache.get('b', make_loader('b')) == 'B'
+    assert loads['b'] == 2
+
+
+def test_held_karp_two_cities():
+    """n == 2 shortcut returns the direct edge in both directions."""
+    dist = [[0, 7], [3, 0]]
+    order, cost = _held_karp(dist, 0, 1)
+    assert order == [0, 1]
+    assert cost == 7
+    order, cost = _held_karp(dist, 1, 0)
+    assert order == [1, 0]
+    assert cost == 3
+
+
+def test_nearest_neighbor_2opt_improvement_branch():
+    """A tour the greedy construction gets wrong is fixed by 2-opt.
+
+    Nearest-neighbor from 0 picks 1 (cost 1) then 2 then 3, giving
+    [0, 1, 2, 3] with cost 1 + 1 + 10 = 12.  Reversing the interior
+    gives [0, 2, 1, 3] with cost 2 + 1 + 1 = 4, so the improvement
+    branch must fire.
+    """
+    dist = [
+        [0, 1, 2, 50],
+        [1, 0, 1, 1],
+        [2, 1, 0, 10],
+        [50, 1, 10, 0],
+    ]
+    order, cost = _nearest_neighbor_2opt(dist, 0, 3)
+    assert order == [0, 2, 1, 3]
+    assert cost == 4
+
+
+def test_nearest_neighbor_2opt_asymmetric_consistency():
+    """Delta scoring stays exact on asymmetric matrices.
+
+    The returned cost must equal the cost recomputed from the returned
+    order, and never exceed the greedy nearest-neighbor tour it started
+    from.
+    """
+    def tour_cost(dist, t):
+        return sum(dist[t[k]][t[k + 1]] for k in range(len(t) - 1))
+
+    def greedy(dist, start, end):
+        n = len(dist)
+        remaining = set(range(n)) - {start, end}
+        tour, cur = [start], start
+        while remaining:
+            cur = min(remaining, key=lambda c: dist[cur][c])
+            tour.append(cur)
+            remaining.remove(cur)
+        return tour + [end]
+
+    rng = np.random.default_rng(3705)
+    for n in (5, 8):
+        for _ in range(5):
+            dist = rng.integers(1, 20, size=(n, n)).astype(float).tolist()
+            for i in range(n):
+                dist[i][i] = 0.0
+            order, cost = _nearest_neighbor_2opt(dist, 0, n - 1)
+            assert order[0] == 0 and order[-1] == n - 1
+            assert sorted(order) == list(range(n))
+            assert cost == pytest.approx(tour_cost(dist, order))
+            assert cost <= tour_cost(dist, greedy(dist, 0, n - 1)) + 1e-9
+
+
+def test_nearest_neighbor_2opt_inf_edge_still_improves():
+    """An unavoidable inf edge must not block finite local improvements.
+
+    Every edge into city 4 is inf, so the total stays inf, but the
+    interior [1, 2] reversal is still an improvement and must be
+    applied (inf-aware prefix sums; naive prefix subtraction would
+    produce nan and reject it).
+    """
+    inf = float('inf')
+    dist = [
+        [0, 1, 2, 50, inf],
+        [1, 0, 1, 5, inf],
+        [2, 1, 0, 10, inf],
+        [50, 5, 10, 0, inf],
+        [inf, inf, inf, inf, 0],
+    ]
+    order, cost = _nearest_neighbor_2opt(dist, 0, 4)
+    assert order == [0, 2, 1, 3, 4]
+    assert cost == inf
+
+
+def test_get_pixel_id_default_dims():
+    """Omitted xdim/ydim fall back to the raster's last two dims."""
+    import xarray as xr
+
+    from xrspatial.pathfinding import _get_pixel_id
+
+    agg = xr.DataArray(np.zeros((5, 5)), dims=['y', 'x'])
+    agg['y'] = np.linspace(4, 0, 5)
+    agg['x'] = np.linspace(0, 4, 5)
+
+    assert _get_pixel_id((4.0, 0.0), agg) == (0, 0)
+    assert _get_pixel_id((0.0, 4.0), agg) == (4, 4)
+    assert (_get_pixel_id((2.0, 3.0), agg)
+            == _get_pixel_id((2.0, 3.0), agg, 'x', 'y'))
+
+
+class TestEmptySurface:
+    """A zero-size surface raises a clear error, not a numpy internal one."""
+
+    @staticmethod
+    def _empty_raster(shape):
+        import xarray as xr
+        r = xr.DataArray(np.ones(shape), dims=('y', 'x'),
+                         attrs={'res': (1.0, 1.0)})
+        r['y'] = np.linspace(shape[0] - 1, 0, shape[0])
+        r['x'] = np.linspace(0, shape[1] - 1, shape[1])
+        return r
+
+    @pytest.mark.parametrize('shape', [(0, 0), (0, 4), (4, 0)])
+    def test_a_star_search_empty_raises(self, shape):
+        r = self._empty_raster(shape)
+        with pytest.raises(ValueError, match='empty'):
+            a_star_search(r, (0.0, 0.0), (1.0, 1.0))
+
+    def test_multi_stop_search_empty_raises(self):
+        r = self._empty_raster((0, 0))
+        with pytest.raises(ValueError, match='empty'):
+            multi_stop_search(r, [(0.0, 0.0), (1.0, 1.0)])
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+class TestDaskFrictionFminCache:
+
+    def test_fmin_cached_by_graph_token(self):
+        from xrspatial.pathfinding import _dask_fmin_cache, _dask_friction_fmin
+
+        f = da.from_array(
+            np.array([[2.0, 3.0], [0.5, -1.0]]), chunks=(1, 2))
+        _dask_fmin_cache.clear()
+        assert _dask_friction_fmin(f) == 0.5
+        assert f.name in _dask_fmin_cache
+        # Second call is served from the cache
+        assert _dask_friction_fmin(f) == 0.5
+        assert len(_dask_fmin_cache) == 1
+
+    def test_multi_stop_dask_friction_matches_numpy(self):
+        # Routes 3 segments through the same friction raster, so the
+        # second and third segments hit the f_min cache
+        from xrspatial.pathfinding import _dask_fmin_cache
+
+        data = np.ones((6, 6))
+        friction = np.linspace(1.0, 2.0, 36).reshape(6, 6)
+        agg_np = _make_raster(data)
+        fr_np = _make_raster(friction)
+        waypoints = [(5.0, 0.0), (0.0, 2.0), (5.0, 4.0), (0.0, 5.0)]
+
+        expected = multi_stop_search(agg_np, waypoints, friction=fr_np)
+
+        agg_dask = _make_raster(data)
+        agg_dask.data = da.from_array(agg_dask.data, chunks=(3, 3))
+        fr_dask = _make_raster(friction)
+        fr_dask.data = da.from_array(fr_dask.data, chunks=(3, 3))
+
+        _dask_fmin_cache.clear()
+        result = multi_stop_search(agg_dask, waypoints, friction=fr_dask)
+        # All 3 segments resolved f_min through one cache entry; a
+        # per-call graph token would show up here as extra entries
+        assert len(_dask_fmin_cache) == 1
+
+        np.testing.assert_allclose(
+            result.data.compute(), expected.values, equal_nan=True)
+        assert result.attrs['total_cost'] == pytest.approx(
+            expected.attrs['total_cost'])
