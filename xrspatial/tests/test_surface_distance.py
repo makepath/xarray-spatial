@@ -558,7 +558,8 @@ def _serpentine_elevation(n):
 
 
 @pytest.mark.skipif(not has_cuda_and_cupy(), reason="cupy/cuda not available")
-@pytest.mark.parametrize("mode", [surface_distance, surface_allocation])
+@pytest.mark.parametrize(
+    "mode", [surface_distance, surface_allocation, surface_direction])
 def test_cupy_long_path_matches_numpy(mode):
     """CuPy must relax until it converges, not for a fixed H+W (#3721).
 

@@ -608,7 +608,7 @@ def _surface_distance_cupy(source_data, elev_data, cellsize_x, cellsize_y,
             f"and was stopped.  Some pixels may be reported as unreachable "
             f"when a path exists.  Please report this raster upstream.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=4,
         )
 
     # Extract output
