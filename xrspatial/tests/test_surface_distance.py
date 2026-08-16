@@ -364,7 +364,10 @@ def test_target_values():
 @pytest.mark.parametrize("func",
                          [surface_distance, surface_allocation,
                           surface_direction])
-def test_target_values_none_matches_empty_list(backend, func):
+# 1.5 keeps the dask pad below the (3, 3) chunk size so the bounded
+# map_overlap route runs; np.inf takes the iterative tile route.
+@pytest.mark.parametrize("max_distance", [1.5, np.inf])
+def test_target_values_none_matches_empty_list(backend, func, max_distance):
     """target_values=None means the same thing as [] on every backend.
 
     The proximity trio and cost_distance already accept None; issue #3712
@@ -379,10 +382,12 @@ def test_target_values_none_matches_empty_list(backend, func):
     elevation = _make_raster(elev, backend)
 
     with_none = _compute(func(raster, elevation, target_values=None,
-                              max_distance=2.0))
+                              max_distance=max_distance))
     with_empty = _compute(func(raster, elevation, target_values=[],
-                               max_distance=2.0))
+                               max_distance=max_distance))
 
+    # An all-NaN comparison would pass vacuously.
+    assert np.isfinite(with_none).any()
     np.testing.assert_allclose(with_none, with_empty, equal_nan=True)
 
 
