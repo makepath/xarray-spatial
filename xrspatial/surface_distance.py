@@ -357,13 +357,20 @@ def _finalize_alloc(alloc, dist, max_distance):
 
 
 def _finalize_direction(src_row, src_col, dist, cellsize_x, cellsize_y,
-                        max_distance):
+                        max_distance, row_offset=0, col_offset=0):
     """Compute compass bearing from each pixel to its allocated source.
 
     Uses pixel index differences scaled by cell size.
+
+    ``src_row``/``src_col`` may hold indices in a wider coordinate space
+    than the block being finalized -- the dask iterative path records
+    global indices while each block sees only its own shape.  The
+    offsets shift the pixel grid into that same space so the difference
+    is taken between comparable indices.
     """
     H, W = dist.shape
-    row_idx, col_idx = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+    row_idx, col_idx = np.meshgrid(np.arange(H) + row_offset,
+                                   np.arange(W) + col_offset, indexing='ij')
 
     # Coordinate differences (source - pixel)
     dx = (src_col.astype(np.float64) - col_idx) * cellsize_x
@@ -381,7 +388,8 @@ def _finalize_direction(src_row, src_col, dist, cellsize_x, cellsize_y,
 
 
 def _extract_output(dist, alloc, src_row, src_col,
-                    cellsize_x, cellsize_y, max_distance, mode):
+                    cellsize_x, cellsize_y, max_distance, mode,
+                    row_offset=0, col_offset=0):
     """Select and finalize the requested output from raw Dijkstra arrays."""
     if mode == DISTANCE:
         return _finalize_dist(dist, max_distance)
@@ -389,7 +397,8 @@ def _extract_output(dist, alloc, src_row, src_col,
         return _finalize_alloc(alloc, dist, max_distance)
     else:
         return _finalize_direction(src_row, src_col, dist,
-                                   cellsize_x, cellsize_y, max_distance)
+                                   cellsize_x, cellsize_y, max_distance,
+                                   row_offset, col_offset)
 
 
 # ---------------------------------------------------------------------------
@@ -1174,8 +1183,11 @@ def _assemble_sd(source_da, elev_da, boundaries, elev_bdry,
             max_distance, dy, dx, dd, row_offset, col_offset,
         )
 
+        # _run_tile records global src_row/src_col, so the pixel grid has
+        # to be built in global coordinates too.
         return _extract_output(dist, alloc_arr, srow, scol,
-                               cellsize_x, cellsize_y, max_distance, mode)
+                               cellsize_x, cellsize_y, max_distance, mode,
+                               row_offset, col_offset)
 
     return da.map_blocks(
         _tile_fn,
