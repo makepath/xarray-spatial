@@ -339,6 +339,44 @@ def test_direction_follows_y_axis_orientation():
         assert out[1, 2] == pytest.approx(270.0, abs=1.0)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("func", [surface_distance, surface_allocation])
+def test_distance_and_allocation_ignore_axis_direction(backend, func):
+    """Only the bearing cares which way the axes run (#3719).
+
+    _compute hands the backends signed cell sizes so _finalize_direction
+    can build a compass bearing. That is safe only because every
+    edge-cost consumer squares or abs()es the cell size first. Flipping
+    the y axis must leave distance and allocation untouched apart from
+    the row order.
+    """
+    source = np.zeros((6, 6), dtype=np.float64)
+    source[1, 1] = 1.0
+    source[4, 4] = 2.0
+    elev = np.random.default_rng(11).uniform(0, 20, (6, 6))
+
+    def _build(y_coords):
+        arrays = []
+        for data in (source, elev):
+            arr = xr.DataArray(
+                data.copy(), dims=['y', 'x'],
+                coords={'y': y_coords, 'x': np.arange(6, dtype=np.float64)},
+                attrs={'res': (1.0, 1.0)})
+            if backend == 'dask+numpy':
+                if da is None:
+                    pytest.skip("dask not installed")
+                arr.data = da.from_array(arr.data, chunks=(3, 3))
+            arrays.append(arr)
+        return arrays
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        up = _compute(func(*_build(np.arange(6, dtype=np.float64))))
+        down = _compute(func(*_build(np.arange(6, dtype=np.float64)[::-1])))
+
+    np.testing.assert_allclose(down, up, rtol=1e-6, equal_nan=True)
+
+
 def test_direction_matches_proximity_direction():
     """surface_direction on flat terrain agrees with proximity.direction.
 

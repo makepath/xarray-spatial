@@ -337,6 +337,9 @@ def _coord_step_sign(raster, dim):
     Returns -1.0 for a descending coordinate (the north-up convention on
     the y axis), +1.0 otherwise.  Rasters without a usable coordinate on
     *dim* fall back to +1.0, which is index order.
+
+    The axis is assumed monotonic, the same assumption ``calc_res``
+    already makes when it divides the coordinate span by ``n - 1``.
     """
     if dim not in raster.coords:
         return 1.0
@@ -638,8 +641,10 @@ def _surface_distance_cupy(source_data, elev_data, cellsize_x, cellsize_y,
         dy_np = cp.asnumpy(dy_coord)
         zeros = np.zeros((H, W), dtype=np.float64)
         result = _vectorized_calc_direction(zeros, dx_np, zeros, dy_np)
-        mask_np = cp.asnumpy(cp.isinf(dist) | (dist > max_distance)
-                             | (srow < 0))
+        # Same rule as _finalize_direction: a finite in-budget distance
+        # always came with an assigned source, so `dist` alone marks the
+        # unreachable pixels and all three outputs share one NaN mask.
+        mask_np = cp.asnumpy(cp.isinf(dist) | (dist > max_distance))
         result[mask_np] = np.nan
         out = cp.asarray(result)
 
