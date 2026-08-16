@@ -47,15 +47,12 @@ except ImportError:
     class cupy:  # type: ignore[no-redef]
         ndarray = False
 
-from xrspatial.cost_distance import _heap_push, _heap_pop
-from xrspatial.proximity import _vectorized_calc_direction
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args, get_dataarray_resolution, ngjit,
-    has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
-)
+from xrspatial.cost_distance import _heap_pop, _heap_push
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import _dask_task_name_kwargs
+from xrspatial.proximity import _vectorized_calc_direction
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             get_dataarray_resolution, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # ---------------------------------------------------------------------------
 # Constants
