@@ -408,6 +408,36 @@ def test_invalid_method():
         surface_distance(source, elev, method='fast')
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy',
+                                     'dask+cupy'])
+@pytest.mark.parametrize("func", [surface_distance, surface_allocation,
+                                  surface_direction])
+@pytest.mark.parametrize("bad", [np.nan, -5.0])
+def test_invalid_max_distance(backend, func, bad):
+    """NaN / negative max_distance must raise, not diverge by backend.
+
+    Before this check NaN slipped past the numpy kernel's `cost_u >
+    max_distance` break (full unbounded surface) but blocked the CUDA
+    kernel's `best <= max_distance` accept (seeds only), and a negative
+    budget reached dask as a negative map_overlap depth.  See issue #3711.
+    """
+    data = np.zeros((4, 4))
+    data[0, 0] = 1.0
+    source = _make_raster(data, backend=backend)
+    elev = _make_raster(np.zeros((4, 4)), backend=backend)
+    with pytest.raises(ValueError, match="max_distance must be non-negative"):
+        func(source, elev, max_distance=bad)
+
+
+@pytest.mark.parametrize("bad", [1.0, [[1.0, 2.0], [3.0, 4.0]]])
+def test_invalid_target_values_shape(bad):
+    """Non-1D target_values must be rejected before reaching numba."""
+    source = _make_raster(np.ones((3, 3)))
+    elev = _make_raster(np.zeros((3, 3)))
+    with pytest.raises(ValueError, match="target_values must be a 1-D"):
+        surface_distance(source, elev, target_values=bad)
+
+
 # ---------------------------------------------------------------------------
 # Tests — dask-specific
 # ---------------------------------------------------------------------------

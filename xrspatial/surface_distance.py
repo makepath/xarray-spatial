@@ -1316,7 +1316,27 @@ def _compute(raster, elevation, x, y, target_values, max_distance,
     cellsize_y = abs(float(cellsize_y))
 
     target_values = np.asarray(target_values, dtype=np.float64)
+    if target_values.ndim != 1:
+        raise ValueError(
+            "target_values must be a 1-D sequence of numbers, got "
+            "{0}-D input {1!r}.".format(target_values.ndim,
+                                        target_values.tolist())
+        )
+
     max_distance_f = float(max_distance)
+    # NaN defeats both bound tests: the numba kernel's `cost_u >
+    # max_distance` break and the CUDA kernel's `best <= max_distance`
+    # accept.  The first falls through and searches without a bound, the
+    # second rejects every relaxation, so the same call returns a full
+    # distance surface on numpy and a seeds-only raster on cupy.  A
+    # negative budget masks even the zero-distance sources on numpy/cupy
+    # and reaches dask as a negative map_overlap depth.  Reject both,
+    # matching proximity()'s guard.
+    if np.isnan(max_distance_f) or max_distance_f < 0:
+        raise ValueError(
+            "max_distance must be non-negative, got {0!r}.".format(
+                max_distance)
+        )
 
     # Build neighbour offsets
     if connectivity == 8:
