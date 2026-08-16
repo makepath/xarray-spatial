@@ -35,6 +35,11 @@ def _validate_surface_dims(surface, x, y, func_name):
             f"got {surface.dims}. Pass the actual dimension names via the "
             f"`x=` and `y=` parameters."
         )
+    if 0 in surface.shape:
+        raise ValueError(
+            f"{func_name}(): `surface` is empty (shape {surface.shape}); "
+            f"pathfinding requires at least one cell."
+        )
 
 
 def _validate_barriers(barriers):
@@ -283,8 +288,8 @@ def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
 
     # parent of the (i, j) pixel is the pixel at
     # (parent_ys[i, j], parent_xs[i, j])
-    parent_ys = np.ones((height, width), dtype=np.int64) * NONE
-    parent_xs = np.ones((height, width), dtype=np.int64) * NONE
+    parent_ys = np.full((height, width), NONE, dtype=np.int64)
+    parent_xs = np.full((height, width), NONE, dtype=np.int64)
 
     # parent of start is itself
     parent_ys[start_py, start_px] = start_py
@@ -651,6 +656,28 @@ class _ChunkCache:
         return value
 
 
+# Minimum-positive-friction values, keyed by the dask array's graph token
+# (content-derived, so a mutated or different raster gets a fresh entry).
+# multi_stop_search routes N-1 segments through a_star_search with the same
+# friction raster; without this, every segment re-runs a full nanmin scan
+# (#3660 follow-up, bundled in #3705).
+_DASK_FMIN_CACHE_SIZE = 16
+_dask_fmin_cache = OrderedDict()
+
+
+def _dask_friction_fmin(friction_data):
+    key = friction_data.name
+    if key in _dask_fmin_cache:
+        _dask_fmin_cache.move_to_end(key)
+        return _dask_fmin_cache[key]
+    positive_friction = da.where(friction_data > 0, friction_data, np.inf)
+    f_min = float(da.nanmin(positive_friction).compute())
+    if len(_dask_fmin_cache) >= _DASK_FMIN_CACHE_SIZE:
+        _dask_fmin_cache.popitem(last=False)
+    _dask_fmin_cache[key] = f_min
+    return f_min
+
+
 # ---------------------------------------------------------------------------
 # Sparse dask A*
 # ---------------------------------------------------------------------------
@@ -738,6 +765,11 @@ def _a_star_dask(surface_da, friction_da, start_py, start_px,
 
         g_u = g_cost[(py, px)]
 
+        # Friction at the popped node is invariant across its neighbors;
+        # fetch it once instead of once per neighbor.
+        if use_friction:
+            f_u_val = _get_value(friction_da, friction_cache, py, px)
+
         for i in range(n_neighbors):
             ny = py + int(dy[i])
             nx = px + int(dx[i])
@@ -752,7 +784,6 @@ def _a_star_dask(surface_da, friction_da, start_py, start_px,
                 continue
 
             if use_friction:
-                f_u_val = _get_value(friction_da, friction_cache, py, px)
                 f_v_val = _get_value(friction_da, friction_cache, ny, nx)
                 if not (np.isfinite(f_v_val) and f_v_val > 0.0):
                     continue
@@ -1065,12 +1096,15 @@ def a_star_search(surface: xr.DataArray,
                 "snap_goal is not supported with dask-backed arrays; "
                 "ensure the goal pixel is valid before calling a_star_search"
             )
-        # Single-pixel crossability check via .compute()
-        start_val = float(surface_data[start_py, start_px].compute())
-        if _is_not_crossable_py(start_val, barriers):
+        # Single-pixel crossability checks, batched into one compute so
+        # the scheduler round-trip happens once instead of twice.
+        start_val, goal_val = dask.compute(
+            surface_data[start_py, start_px],
+            surface_data[goal_py, goal_px],
+        )
+        if _is_not_crossable_py(float(start_val), barriers):
             warnings.warn("Start at a non crossable location", Warning)
-        goal_val = float(surface_data[goal_py, goal_px].compute())
-        if _is_not_crossable_py(goal_val, barriers):
+        if _is_not_crossable_py(float(goal_val), barriers):
             warnings.warn("End at a non crossable location", Warning)
     elif _is_cupy_backend:
         # CuPy: use .get() for scalar access in numpy-land
@@ -1124,10 +1158,9 @@ def a_star_search(surface: xr.DataArray,
             else:
                 friction_data = da.from_array(
                     friction_data, chunks=surface_data.chunks)
-            # f_min via dask (same pattern as cost_distance)
-            positive_friction = da.where(
-                friction_data > 0, friction_data, np.inf)
-            f_min = float(da.nanmin(positive_friction).compute())
+            # f_min via dask (same pattern as cost_distance), cached so
+            # multi-segment routes scan the friction raster only once
+            f_min = _dask_friction_fmin(friction_data)
             if not (np.isfinite(f_min) and f_min > 0):
                 raise ValueError("friction has no positive finite values")
         else:
@@ -1356,6 +1389,10 @@ def _held_karp(dist, start, end):
 def _nearest_neighbor_2opt(dist, start, end):
     """Heuristic TSP for large N: nearest-neighbor + 2-opt with fixed endpoints.
 
+    A tour containing an unavoidable inf edge (an unreachable waypoint
+    pair) still receives finite local improvements; its total cost stays
+    inf.
+
     Parameters
     ----------
     dist : 2-D array-like, shape (N, N)
@@ -1380,22 +1417,56 @@ def _nearest_neighbor_2opt(dist, start, end):
         cur = nearest
     tour.append(end)
 
-    # 2-opt local search (only swap interior segment, keep endpoints fixed)
-    def _tour_cost(t):
-        return sum(dist[t[i]][t[i + 1]] for i in range(len(t) - 1))
+    # 2-opt local search (only swap interior segment, keep endpoints fixed).
+    # Candidate moves are scored in O(1) from prefix sums over the current
+    # tour's forward and backward edge costs, instead of re-summing the whole
+    # tour per candidate.  Reversing tour[i:j+1] removes the forward edges
+    # i-1..j and adds the two new boundary edges plus the interior edges
+    # traversed backward (which differ from the forward ones when *dist* is
+    # asymmetric, e.g. with snapped waypoints).  Infinite edges (unreachable
+    # waypoint pairs) are tracked as counts next to the sums of finite edges,
+    # because subtracting prefix sums that both contain inf gives nan and
+    # would silently reject valid moves.
+    INF = float('inf')
 
+    def _prefix_sums(t):
+        m = len(t)
+        fwd_sum = [0.0] * m
+        fwd_inf = [0] * m
+        bwd_sum = [0.0] * m
+        bwd_inf = [0] * m
+        for k in range(m - 1):
+            fe = dist[t[k]][t[k + 1]]
+            be = dist[t[k + 1]][t[k]]
+            fwd_sum[k + 1] = fwd_sum[k] + (0.0 if fe == INF else fe)
+            fwd_inf[k + 1] = fwd_inf[k] + (fe == INF)
+            bwd_sum[k + 1] = bwd_sum[k] + (0.0 if be == INF else be)
+            bwd_inf[k + 1] = bwd_inf[k] + (be == INF)
+        return fwd_sum, fwd_inf, bwd_sum, bwd_inf
+
+    def _edge_range(sums, infs, lo, hi):
+        # Sum of tour edges lo..hi-1 (INF if the range has an inf edge)
+        if infs[hi] - infs[lo]:
+            return INF
+        return sums[hi] - sums[lo]
+
+    fwd_sum, fwd_inf, bwd_sum, bwd_inf = _prefix_sums(tour)
     improved = True
     while improved:
         improved = False
         for i in range(1, len(tour) - 2):
             for j in range(i + 1, len(tour) - 1):
-                # Reverse segment tour[i:j+1]
-                new_tour = tour[:i] + tour[i:j + 1][::-1] + tour[j + 1:]
-                if _tour_cost(new_tour) < _tour_cost(tour):
-                    tour = new_tour
+                removed = _edge_range(fwd_sum, fwd_inf, i - 1, j + 1)
+                added = (dist[tour[i - 1]][tour[j]]
+                         + _edge_range(bwd_sum, bwd_inf, i, j)
+                         + dist[tour[i]][tour[j + 1]])
+                if added < removed:
+                    # Reverse segment tour[i:j+1]
+                    tour = tour[:i] + tour[i:j + 1][::-1] + tour[j + 1:]
+                    fwd_sum, fwd_inf, bwd_sum, bwd_inf = _prefix_sums(tour)
                     improved = True
 
-    return tour, _tour_cost(tour)
+    return tour, _edge_range(fwd_sum, fwd_inf, 0, len(tour) - 1)
 
 
 def _segment_to_numpy(seg_data):

@@ -58,6 +58,13 @@ def get_xr_dataarray(
     elif type == "dask":
         import dask.array as da
         z = da.from_array(z, chunks=(max(1, ny // 2), max(1, nx // 2)))
+    elif type == "dask+cupy":
+        if not has_cuda_and_cupy():
+            raise NotImplementedError()
+        import cupy
+        import dask.array as da
+        z = da.from_array(
+            cupy.asarray(z), chunks=(max(1, ny // 2), max(1, nx // 2)))
     else:
         raise RuntimeError(f"Unrecognised type {type}")
 
