@@ -676,6 +676,71 @@ def test_geodesic_basic():
 
 
 # ---------------------------------------------------------------------------
+# Metadata propagation (issue #3708)
+# ---------------------------------------------------------------------------
+
+
+def _metadata_backends():
+    backends = ['numpy']
+    if da is not None:
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if da is not None:
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("func", [surface_distance, surface_allocation,
+                                  surface_direction])
+@pytest.mark.parametrize("max_distance", [3.0, np.inf],
+                         ids=['bounded', 'unbounded'])
+@pytest.mark.parametrize("backend", _metadata_backends())
+def test_output_name_consistent_across_backends(backend, max_distance, func):
+    """Outputs must not adopt the dask graph token as .name.
+
+    Without the post-construction reset the dask backends returned
+    '_trim-<hash>' (bounded map_overlap route),
+    'xrspatial.surface_*-<hash>' (unbounded iterative route) or
+    'asarray-<hash>' (dask+cupy unbounded), while numpy and cupy returned
+    None.  Same bug class as cost_distance #3344 and pathfinding #3652.
+    """
+    source = np.zeros((6, 6), dtype=np.float64)
+    source[0, 0] = 1.0
+    elev = np.arange(36, dtype=np.float64).reshape(6, 6) * 0.1
+    raster = _make_raster(source, backend=backend)
+    elevation = _make_raster(elev, backend=backend)
+
+    result = func(raster, elevation, max_distance=max_distance)
+    assert result.name is None
+
+
+@pytest.mark.parametrize("func", [surface_distance, surface_allocation,
+                                  surface_direction])
+@pytest.mark.parametrize("backend", _metadata_backends())
+def test_output_preserves_attrs_coords_dims(backend, func):
+    """attrs, coords and dims come through unchanged on every backend."""
+    source = np.zeros((6, 6), dtype=np.float64)
+    source[0, 0] = 1.0
+    elev = np.arange(36, dtype=np.float64).reshape(6, 6) * 0.1
+    raster = _make_raster(source, backend=backend)
+    elevation = _make_raster(elev, backend=backend)
+    raster.attrs.update({'crs': 3857, 'nodatavals': (-9999.0,),
+                         'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 0.0)})
+    raster = raster.assign_coords(spatial_ref=0)
+
+    result = func(raster, elevation, max_distance=3.0)
+
+    assert result.dims == raster.dims
+    assert result.attrs == raster.attrs
+    assert set(result.coords) == set(raster.coords)
+    for name in raster.coords:
+        np.testing.assert_array_equal(result.coords[name].values,
+                                      raster.coords[name].values)
+    assert result.dtype == np.float32
+
+
+# ---------------------------------------------------------------------------
 # Memory guard
 # ---------------------------------------------------------------------------
 
