@@ -171,6 +171,28 @@ def _check_gpu_memory(rows, cols):
 
 
 @ngjit
+def _heap_grow(keys, rows, cols, size):
+    """Return copies of the heap arrays with twice the capacity.
+
+    The Dijkstra kernels below use a lazy-deletion min-heap: a pixel is
+    pushed again every time its tentative distance improves, and stale
+    entries linger until a pop skips them.  Live occupancy is therefore
+    bounded by the number of improving relaxations, not by the pixel
+    count, and a fixed ``height * width`` heap can overflow (#3723).
+    Growing on demand keeps the usual footprint at one entry per pixel
+    without capping the number of pushes.
+    """
+    cap = 2 * len(keys)
+    new_keys = np.empty(cap, dtype=np.float64)
+    new_rows = np.empty(cap, dtype=np.int64)
+    new_cols = np.empty(cap, dtype=np.int64)
+    new_keys[:size] = keys[:size]
+    new_rows[:size] = rows[:size]
+    new_cols[:size] = cols[:size]
+    return new_keys, new_rows, new_cols
+
+
+@ngjit
 def _seed_sources(source_data, elev_data, target_values,
                   dist, alloc, src_row, src_col):
     """Seed source pixels into pre-allocated output arrays.
@@ -211,7 +233,9 @@ def _dijkstra(elev_data, height, width, max_distance,
     """
     n_neighbors = len(dy)
 
-    max_heap = height * width
+    # Starting capacity: one entry per pixel, which the seeding loop below
+    # can never exceed.  Relaxations can, so _heap_grow doubles it there.
+    max_heap = max(height * width, 1)
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)
@@ -260,6 +284,9 @@ def _dijkstra(elev_data, height, width, max_distance,
                 alloc[vr, vc] = alloc[ur, uc]
                 src_row[vr, vc] = src_row[ur, uc]
                 src_col[vr, vc] = src_col[ur, uc]
+                if h_size == len(h_keys):
+                    h_keys, h_rows, h_cols = _heap_grow(
+                        h_keys, h_rows, h_cols, h_size)
                 h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
                                     new_cost, vr, vc)
 
@@ -274,7 +301,8 @@ def _dijkstra_geodesic(elev_data, height, width, max_distance,
     """
     n_neighbors = len(dy)
 
-    max_heap = height * width
+    # See _dijkstra for the heap-capacity rationale.
+    max_heap = max(height * width, 1)
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)
@@ -322,6 +350,9 @@ def _dijkstra_geodesic(elev_data, height, width, max_distance,
                 alloc[vr, vc] = alloc[ur, uc]
                 src_row[vr, vc] = src_row[ur, uc]
                 src_col[vr, vc] = src_col[ur, uc]
+                if h_size == len(h_keys):
+                    h_keys, h_rows, h_cols = _heap_grow(
+                        h_keys, h_rows, h_cols, h_size)
                 h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
                                     new_cost, vr, vc)
 

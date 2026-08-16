@@ -792,3 +792,124 @@ class TestMemoryGuard:
                 surface_distance(raster, elevation)
             with pytest.raises(MemoryError, match="dask"):
                 surface_distance(raster, elevation)
+
+
+# ---------------------------------------------------------------------------
+# Heap capacity regression (#3723)
+# ---------------------------------------------------------------------------
+
+
+def _reference_surface_distance(source, elev, connectivity=8, cellsize=1.0):
+    """Pure-Python multi-source Dijkstra reference for surface distance."""
+    import heapq
+
+    h, w = source.shape
+    diag = np.sqrt(2.0) * cellsize
+    if connectivity == 8:
+        nbrs = [(-1, -1, diag), (-1, 0, cellsize), (-1, 1, diag),
+                (0, -1, cellsize), (0, 1, cellsize),
+                (1, -1, diag), (1, 0, cellsize), (1, 1, diag)]
+    else:
+        nbrs = [(0, -1, cellsize), (-1, 0, cellsize),
+                (1, 0, cellsize), (0, 1, cellsize)]
+
+    dist = np.full((h, w), np.inf)
+    heap = []
+    for r in range(h):
+        for c in range(w):
+            if (source[r, c] != 0 and np.isfinite(source[r, c])
+                    and np.isfinite(elev[r, c])):
+                dist[r, c] = 0.0
+                heapq.heappush(heap, (0.0, r, c))
+
+    done = np.zeros((h, w), dtype=bool)
+    while heap:
+        d, r, c = heapq.heappop(heap)
+        if done[r, c]:
+            continue
+        done[r, c] = True
+        for dr, dc, hd in nbrs:
+            vr, vc = r + dr, c + dc
+            if not (0 <= vr < h and 0 <= vc < w) or done[vr, vc]:
+                continue
+            if not np.isfinite(elev[vr, vc]):
+                continue
+            dz = elev[vr, vc] - elev[r, c]
+            nd = d + np.sqrt(hd * hd + dz * dz)
+            if nd < dist[vr, vc]:
+                dist[vr, vc] = nd
+                heapq.heappush(heap, (nd, vr, vc))
+    return dist
+
+
+def _dense_target_scene(n=48, n_targets=921, relief=200.0, seed=1):
+    """Dense-target scene that overflowed the old height*width heap."""
+    rng = np.random.default_rng(seed)
+    source = np.zeros((n, n), dtype=np.float64)
+    source.flat[rng.choice(n * n, size=n_targets, replace=False)] = 1.0
+    elev = rng.random((n, n)) * relief
+    return source, elev
+
+
+def test_dense_targets_do_not_overflow_the_heap():
+    """A lazy-deletion heap can exceed height*width live entries.
+
+    Before #3723 the heap arrays were sized height*width, so this scene
+    made _heap_push write past the end of them (SIGABRT without bounds
+    checking, IndexError with NUMBA_BOUNDSCHECK=1).
+    """
+    source, elev = _dense_target_scene()
+    raster = _make_raster(source)
+    elevation = _make_raster(elev)
+
+    result = _compute(surface_distance(raster, elevation, connectivity=8))
+    expected = _reference_surface_distance(source, elev, connectivity=8)
+
+    assert np.all(np.isfinite(result))
+    np.testing.assert_allclose(result, expected.astype(np.float32),
+                               rtol=1e-5, atol=1e-4)
+
+
+def test_dense_targets_allocation_and_direction_do_not_overflow():
+    """The allocation and direction modes share the same Dijkstra kernel."""
+    source, elev = _dense_target_scene()
+    raster = _make_raster(source)
+    elevation = _make_raster(elev)
+
+    alloc = _compute(surface_allocation(raster, elevation, connectivity=8))
+    direction = _compute(surface_direction(raster, elevation, connectivity=8))
+
+    assert np.all(alloc == 1.0)
+    assert np.all(np.isfinite(direction))
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dense_targets_dask_iterative_does_not_overflow():
+    """The dask iterative path runs the same kernel per tile."""
+    source, elev = _dense_target_scene()
+    raster_np = _make_raster(source)
+    elev_np = _make_raster(elev)
+    raster = _make_raster(source, backend='dask+numpy', chunks=(48, 48))
+    elevation = _make_raster(elev, backend='dask+numpy', chunks=(48, 48))
+
+    np_result = _compute(surface_distance(raster_np, elev_np))
+    with pytest.warns(UserWarning, match="iterative"):
+        dask_result = _compute(surface_distance(raster, elevation))
+
+    np.testing.assert_allclose(dask_result, np_result, rtol=1e-5,
+                               equal_nan=True)
+
+
+def test_geodesic_dense_targets_do_not_overflow():
+    """_dijkstra_geodesic carries the same heap sizing."""
+    source, elev = _dense_target_scene(n=32, n_targets=410, relief=200.0)
+    h, w = source.shape
+    coords = {'y': np.linspace(10.0, 10.0 + 0.01 * (h - 1), h),
+              'x': np.linspace(20.0, 20.0 + 0.01 * (w - 1), w)}
+    raster = xr.DataArray(source, dims=['y', 'x'], coords=coords,
+                          attrs={'res': (0.01, 0.01)})
+    elevation = xr.DataArray(elev, dims=['y', 'x'], coords=coords,
+                             attrs={'res': (0.01, 0.01)})
+
+    result = _compute(surface_distance(raster, elevation, method='geodesic'))
+    assert np.all(np.isfinite(result))
