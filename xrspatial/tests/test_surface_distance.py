@@ -359,6 +359,42 @@ def test_target_values():
     assert sd[0, 1] == pytest.approx(2.0, abs=1e-5)
 
 
+@pytest.mark.parametrize("backend",
+                         ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("func",
+                         [surface_distance, surface_allocation,
+                          surface_direction])
+def test_target_values_none_matches_empty_list(backend, func):
+    """target_values=None means the same thing as [] on every backend.
+
+    The proximity trio and cost_distance already accept None; issue #3712
+    reported that the surface_* trio raised a numba TypingError instead.
+    """
+    source = np.zeros((6, 6), dtype=np.float64)
+    source[0, 0] = 1.0
+    source[5, 5] = 3.0
+    elev = np.arange(36, dtype=np.float64).reshape(6, 6) * 0.5
+
+    raster = _make_raster(source, backend)
+    elevation = _make_raster(elev, backend)
+
+    with_none = _compute(func(raster, elevation, target_values=None,
+                              max_distance=2.0))
+    with_empty = _compute(func(raster, elevation, target_values=[],
+                               max_distance=2.0))
+
+    np.testing.assert_allclose(with_none, with_empty, equal_nan=True)
+
+
+def test_target_values_default_is_not_mutable():
+    """The public signatures must not carry a mutable default."""
+    import inspect
+
+    for func in (surface_distance, surface_allocation, surface_direction):
+        default = inspect.signature(func).parameters['target_values'].default
+        assert default is None, f"{func.__name__} has a mutable default"
+
+
 # ---------------------------------------------------------------------------
 # Tests — connectivity
 # ---------------------------------------------------------------------------
