@@ -1505,6 +1505,15 @@ def surface_allocation(
     -------
     xr.DataArray or xr.Dataset
         2-D array of allocation values (float32).
+
+    Notes
+    -----
+    When two or more targets are exactly equidistant from a pixel, which
+    one is reported is unspecified and varies by backend: the numpy and
+    dask paths break the tie on Dijkstra's pop order, the cupy path on
+    the order its relaxation passes converge.  The distances themselves
+    agree; only the reported source differs.  Do not depend on the
+    tie-break.
     """
     result_data = _compute(
         raster, elevation, x, y, target_values, max_distance,
@@ -1548,6 +1557,12 @@ def surface_direction(
     -------
     xr.DataArray or xr.Dataset
         2-D array of direction values (float32, degrees).
+
+    Notes
+    -----
+    When two or more targets are exactly equidistant from a pixel, which
+    one the bearing points at is unspecified and varies by backend.  See
+    :func:`surface_allocation`.
     """
     result_data = _compute(
         raster, elevation, x, y, target_values, max_distance,

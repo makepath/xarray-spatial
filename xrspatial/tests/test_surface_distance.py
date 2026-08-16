@@ -792,3 +792,149 @@ class TestMemoryGuard:
                 surface_distance(raster, elevation)
             with pytest.raises(MemoryError, match="dask"):
                 surface_distance(raster, elevation)
+
+
+# ---------------------------------------------------------------------------
+# Reference parity — golden values from scipy.sparse.csgraph.dijkstra
+# ---------------------------------------------------------------------------
+#
+# The expected arrays below were produced by an independent reference:
+# scipy 1.16.1 ``scipy.sparse.csgraph.dijkstra`` run over an explicitly
+# built grid graph whose edge weights are ``sqrt(horizontal**2 + dz**2)``,
+# the cost model surface_distance documents.  xrspatial reproduced them
+# bit for bit (max abs difference 0.0) across the numpy, dask+numpy, cupy
+# and dask+cupy backends.  These tests pin that parity so it cannot break
+# silently; regenerate them only against the reference, never against
+# xrspatial's own output.
+
+_REF_ELEV = np.array([
+    [0.,  10.,  25.,  40.,  55.,  40.,  25.,  10.],
+    [0.,  12.,  30.,  60.,  75.,  60.,  30.,  12.],
+    [0.,  15.,  40.,  90., 120.,  90.,  40.,  15.],
+    [0.,  15.,  40.,  np.nan, np.nan,  90.,  40.,  15.],
+    [0.,  12.,  30.,  np.nan, np.nan,  60.,  30.,  12.],
+    [0.,  10.,  25.,  40.,  55.,  40.,  25.,  10.],
+    [0.,   8.,  18.,  28.,  36.,  28.,  18.,   8.],
+    [0.,   5.,  10.,  15.,  20.,  15.,  10.,   5.],
+])
+
+_REF_SOURCE = np.zeros((8, 8), dtype=np.float64)
+_REF_SOURCE[0, 0] = 1.0
+_REF_SOURCE[7, 7] = 2.0
+
+_REF_CELLSIZE = 30.0
+
+_REF_DISTANCE_8 = np.array([
+    [0.0000, 31.6228, 65.1638, 98.7048, 132.2458, 165.7868, 199.3279, 210.6487],  # noqa: E501
+    [30.0000, 44.0908, 78.5269, 120.1638, 153.7048, 174.9659, 195.4324, 180.5821],  # noqa: E501
+    [60.0000, 74.2404, 94.9239, 152.0116, 193.6485, 198.7048, 167.2159, 150.4324],  # noqa: E501
+    [90.0000, 104.2404, 123.4847, np.nan, np.nan, 170.6465, 137.2159, 120.4324],
+    [120.0000, 134.0908, 149.2404, np.nan, np.nan, 128.2201, 105.5931, 90.2828],
+    [150.0000, 163.5890, 176.9478, 149.6591, 125.7057, 92.1646, 75.1793, 60.2162],  # noqa: E501
+    [180.0000, 193.1741, 164.1876, 134.4155, 107.0445, 75.9962, 44.3734, 30.1496],  # noqa: E501
+    [210.0000, 182.4829, 152.0691, 121.6553, 91.2414, 60.8276, 30.4138, 0.0000],
+])
+
+_REF_DISTANCE_4 = np.array([
+    [0.0000, 31.6228, 65.1638, 98.7048, 132.2458, 165.7868, 199.3279, 210.6487],  # noqa: E501
+    [30.0000, 61.6894, 95.5776, 134.7603, 168.3013, 201.8424, 215.5678, 180.5821],  # noqa: E501
+    [60.0000, 91.8390, 127.2004, 177.1867, 219.6131, 233.8779, 184.3046, 150.4324],  # noqa: E501
+    [90.0000, 121.8390, 157.2004, np.nan, np.nan, 203.8779, 154.3046, 120.4324],
+    [120.0000, 151.9886, 186.9743, np.nan, np.nan, 161.4514, 122.6818, 90.2828],
+    [150.0000, 181.6228, 213.9233, 186.6618, 158.9370, 125.3959, 92.2680, 60.2162],  # noqa: E501
+    [180.0000, 211.0484, 183.1174, 154.3508, 124.1333, 93.0849, 61.4622, 30.1496],  # noqa: E501
+    [210.0000, 182.4829, 152.0691, 121.6553, 91.2414, 60.8276, 30.4138, 0.0000],
+])
+
+_REF_ALLOCATION_8 = np.array([
+    [1., 1., 1., 1., 1., 1., 1., 2.],
+    [1., 1., 1., 1., 1., 1., 2., 2.],
+    [1., 1., 1., 1., 1., 1., 2., 2.],
+    [1., 1., 1., np.nan, np.nan, 2., 2., 2.],
+    [1., 1., 1., np.nan, np.nan, 2., 2., 2.],
+    [1., 1., 2., 2., 2., 2., 2., 2.],
+    [1., 1., 2., 2., 2., 2., 2., 2.],
+    [1., 2., 2., 2., 2., 2., 2., 2.],
+])
+
+
+@pytest.mark.parametrize("connectivity,expected",
+                         [(8, _REF_DISTANCE_8), (4, _REF_DISTANCE_4)])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_reference_parity_scipy_csgraph(backend, connectivity, expected):
+    """Distances match scipy.sparse.csgraph.dijkstra on the same graph."""
+    raster = _make_raster(_REF_SOURCE, backend=backend, chunks=(4, 4),
+                          res=_REF_CELLSIZE)
+    elevation = _make_raster(_REF_ELEV, backend=backend, chunks=(4, 4),
+                             res=_REF_CELLSIZE)
+
+    result = _compute(surface_distance(raster, elevation,
+                                       connectivity=connectivity))
+
+    np.testing.assert_array_equal(np.isnan(result), np.isnan(expected))
+    np.testing.assert_allclose(result, expected, rtol=1e-5, equal_nan=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_reference_parity_allocation(backend):
+    """Allocation matches the scipy reference's nearest-source labels."""
+    raster = _make_raster(_REF_SOURCE, backend=backend, chunks=(4, 4),
+                          res=_REF_CELLSIZE)
+    elevation = _make_raster(_REF_ELEV, backend=backend, chunks=(4, 4),
+                             res=_REF_CELLSIZE)
+
+    result = _compute(surface_allocation(raster, elevation))
+
+    np.testing.assert_array_equal(np.isnan(result),
+                                  np.isnan(_REF_ALLOCATION_8))
+    np.testing.assert_allclose(result, _REF_ALLOCATION_8, equal_nan=True)
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="cupy/cuda not available")
+def test_reference_parity_cupy():
+    """The cupy backend reproduces the same reference distances."""
+    raster = _make_raster(_REF_SOURCE, backend='cupy', res=_REF_CELLSIZE)
+    elevation = _make_raster(_REF_ELEV, backend='cupy', res=_REF_CELLSIZE)
+
+    result = _compute(surface_distance(raster, elevation))
+
+    np.testing.assert_allclose(result, _REF_DISTANCE_8, rtol=1e-5,
+                               equal_nan=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_tilted_plane_matches_analytic_surface_distance(backend):
+    """A tilted plane has a closed-form surface distance.
+
+    On a plane dipping at a constant gradient along +x, the true distance
+    along the surface from the origin is ``sqrt(dx**2 + dy**2 + dz**2)``.
+    The grid graph reproduces it exactly along the row, column and main
+    diagonal through the source, where the octile path is the straight
+    line, so no metrication error enters.
+    """
+    n = 12
+    cellsize = 30.0
+    gradient = 0.5
+
+    _, xx = np.mgrid[0:n, 0:n].astype(np.float64)
+    elev = gradient * xx * cellsize
+    source = np.zeros((n, n), dtype=np.float64)
+    source[0, 0] = 1.0
+
+    raster = _make_raster(source, backend=backend, chunks=(6, 6),
+                          res=cellsize)
+    elevation = _make_raster(elev, backend=backend, chunks=(6, 6),
+                             res=cellsize)
+    result = _compute(surface_distance(raster, elevation))
+
+    k = np.arange(n, dtype=np.float64)
+    # Straight down-dip along row 0.
+    np.testing.assert_allclose(
+        result[0, :], k * cellsize * np.sqrt(1 + gradient ** 2), rtol=1e-5)
+    # Across-dip along column 0: the plane is level in y.
+    np.testing.assert_allclose(result[:, 0], k * cellsize, rtol=1e-5)
+    # Main diagonal.
+    np.testing.assert_allclose(
+        result[np.arange(n), np.arange(n)],
+        np.sqrt(2 * (k * cellsize) ** 2 + (gradient * k * cellsize) ** 2),
+        rtol=1e-5)
