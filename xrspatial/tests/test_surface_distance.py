@@ -900,6 +900,24 @@ def test_dense_targets_dask_iterative_does_not_overflow():
                                equal_nan=True)
 
 
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_dense_targets_dask_bounded_does_not_overflow():
+    """The bounded map_overlap path runs the kernel per padded chunk."""
+    source, elev = _dense_target_scene()
+    raster_np = _make_raster(source)
+    elev_np = _make_raster(elev)
+    raster = _make_raster(source, backend='dask+numpy', chunks=(16, 16))
+    elevation = _make_raster(elev, backend='dask+numpy', chunks=(16, 16))
+
+    np_result = _compute(surface_distance(raster_np, elev_np,
+                                          max_distance=10.0))
+    dask_result = _compute(surface_distance(raster, elevation,
+                                            max_distance=10.0))
+
+    np.testing.assert_allclose(dask_result, np_result, rtol=1e-5,
+                               equal_nan=True)
+
+
 def test_geodesic_dense_targets_do_not_overflow():
     """_dijkstra_geodesic carries the same heap sizing."""
     source, elev = _dense_target_scene(n=32, n_targets=410, relief=200.0)
