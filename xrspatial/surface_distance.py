@@ -1435,6 +1435,25 @@ def _compute(raster, elevation, x, y, target_values, max_distance,
 # ---------------------------------------------------------------------------
 
 
+def _wrap_result(result_data, raster):
+    """Wrap raw output in a DataArray carrying the input's spatial metadata.
+
+    The name is reset after construction: on dask backends
+    ``xr.DataArray(..., name=None)`` adopts the dask array's graph key
+    (``_trim-<hash>`` from map_overlap, ``xrspatial.surface_*-<hash>`` from
+    the iterative path) as ``.name``, while numpy and cupy return None.
+    Issue #3708; same fix as cost_distance #3344 and pathfinding #3652.
+    """
+    result = xr.DataArray(
+        result_data,
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs,
+    )
+    result.name = None
+    return result
+
+
 @supports_dataset
 def surface_distance(
     raster: xr.DataArray,
@@ -1488,12 +1507,7 @@ def surface_distance(
         raster, elevation, x, y, target_values, max_distance,
         connectivity, method, DISTANCE,
     )
-    return xr.DataArray(
-        result_data,
-        coords=raster.coords,
-        dims=raster.dims,
-        attrs=raster.attrs,
-    )
+    return _wrap_result(result_data, raster)
 
 
 @supports_dataset
@@ -1530,12 +1544,7 @@ def surface_allocation(
         raster, elevation, x, y, target_values, max_distance,
         connectivity, method, ALLOCATION,
     )
-    return xr.DataArray(
-        result_data,
-        coords=raster.coords,
-        dims=raster.dims,
-        attrs=raster.attrs,
-    )
+    return _wrap_result(result_data, raster)
 
 
 @supports_dataset
@@ -1573,9 +1582,4 @@ def surface_direction(
         raster, elevation, x, y, target_values, max_distance,
         connectivity, method, DIRECTION,
     )
-    return xr.DataArray(
-        result_data,
-        coords=raster.coords,
-        dims=raster.dims,
-        attrs=raster.attrs,
-    )
+    return _wrap_result(result_data, raster)
