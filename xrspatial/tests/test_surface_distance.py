@@ -1,5 +1,7 @@
 """Tests for xrspatial.surface_distance."""
 
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -297,6 +299,179 @@ def test_direction_cardinal_points():
 
     # South of source (2, 1): direction to source is north = 360
     assert sd_dir[2, 1] == pytest.approx(360.0, abs=1.0)
+
+
+def test_direction_follows_y_axis_orientation():
+    """Bearings must use the y coordinate, not the row index (#3719).
+
+    A north-up raster has y descending with the row index. Reading the row
+    index as if it were y mirrors every bearing across the east-west axis.
+    """
+    source = np.zeros((3, 3), dtype=np.float64)
+    source[1, 1] = 1.0
+    elev = np.zeros((3, 3), dtype=np.float64)
+
+    def _build(y_coords):
+        return (
+            xr.DataArray(source, dims=['y', 'x'],
+                         coords={'y': y_coords,
+                                 'x': np.arange(3, dtype=np.float64)}),
+            xr.DataArray(elev, dims=['y', 'x'],
+                         coords={'y': y_coords,
+                                 'x': np.arange(3, dtype=np.float64)}),
+        )
+
+    # Descending y: row 0 is north of the source, so it points north (360).
+    north_up = _compute(surface_direction(
+        *_build(np.array([2.0, 1.0, 0.0]))))
+    assert north_up[0, 1] == pytest.approx(360.0, abs=1.0)
+    assert north_up[2, 1] == pytest.approx(180.0, abs=1.0)
+
+    # Ascending y: row 0 is south of the source, so it points south (180).
+    south_up = _compute(surface_direction(
+        *_build(np.array([0.0, 1.0, 2.0]))))
+    assert south_up[0, 1] == pytest.approx(180.0, abs=1.0)
+    assert south_up[2, 1] == pytest.approx(360.0, abs=1.0)
+
+    # East/west is unaffected by the y orientation.
+    for out in (north_up, south_up):
+        assert out[1, 0] == pytest.approx(90.0, abs=1.0)
+        assert out[1, 2] == pytest.approx(270.0, abs=1.0)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("func", [surface_distance, surface_allocation])
+def test_distance_and_allocation_ignore_axis_direction(backend, func):
+    """Only the bearing cares which way the axes run (#3719).
+
+    _compute hands the backends signed cell sizes so _finalize_direction
+    can build a compass bearing. That is safe only because every
+    edge-cost consumer squares or abs()es the cell size first. Flipping
+    the y axis must leave distance and allocation untouched apart from
+    the row order.
+    """
+    source = np.zeros((6, 6), dtype=np.float64)
+    source[1, 1] = 1.0
+    source[4, 4] = 2.0
+    elev = np.random.default_rng(11).uniform(0, 20, (6, 6))
+
+    def _build(y_coords):
+        arrays = []
+        for data in (source, elev):
+            arr = xr.DataArray(
+                data.copy(), dims=['y', 'x'],
+                coords={'y': y_coords, 'x': np.arange(6, dtype=np.float64)},
+                attrs={'res': (1.0, 1.0)})
+            if backend == 'dask+numpy':
+                if da is None:
+                    pytest.skip("dask not installed")
+                arr.data = da.from_array(arr.data, chunks=(3, 3))
+            arrays.append(arr)
+        return arrays
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        up = _compute(func(*_build(np.arange(6, dtype=np.float64))))
+        down = _compute(func(*_build(np.arange(6, dtype=np.float64)[::-1])))
+
+    np.testing.assert_allclose(down, up, rtol=1e-6, equal_nan=True)
+
+
+def test_direction_matches_proximity_direction():
+    """surface_direction on flat terrain agrees with proximity.direction.
+
+    Both document the same compass convention, so on zero relief with one
+    source they must return the same bearings (#3719).
+    """
+    from xrspatial.proximity import direction
+
+    source = np.zeros((5, 5), dtype=np.float64)
+    source[3, 1] = 1.0
+    elev = np.zeros((5, 5), dtype=np.float64)
+    y_coords = np.array([40.0, 39.0, 38.0, 37.0, 36.0])  # descending
+    x_coords = np.arange(5, dtype=np.float64)
+
+    raster = xr.DataArray(source, dims=['y', 'x'],
+                          coords={'y': y_coords, 'x': x_coords})
+    elevation = xr.DataArray(elev, dims=['y', 'x'],
+                             coords={'y': y_coords, 'x': x_coords})
+
+    np.testing.assert_allclose(
+        _compute(surface_direction(raster, elevation)),
+        _compute(direction(raster)),
+        rtol=1e-5,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+@pytest.mark.parametrize("max_distance", [np.inf, 4.0])
+def test_dask_direction_matches_numpy(max_distance):
+    """Dask direction must match numpy on every chunk (#3719).
+
+    The unbounded path re-runs each tile with global source indices; those
+    have to be rebased before the bearing is measured against the block's
+    own index grid, or every chunk but the first is wrong.
+    """
+    source = np.zeros((8, 10), dtype=np.float64)
+    source[2, 3] = 1.0
+    elev = np.random.default_rng(7).uniform(0, 5, (8, 10))
+
+    raster_np = _make_raster(source, backend='numpy')
+    elev_np = _make_raster(elev, backend='numpy')
+    raster_dask = _make_raster(source, backend='dask+numpy', chunks=(4, 5))
+    elev_dask = _make_raster(elev, backend='dask+numpy', chunks=(4, 5))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        np_result = _compute(surface_direction(
+            raster_np, elev_np, max_distance=max_distance))
+        dask_result = _compute(surface_direction(
+            raster_dask, elev_dask, max_distance=max_distance))
+
+    np.testing.assert_allclose(dask_result, np_result, rtol=1e-5,
+                               equal_nan=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("max_distance", [np.inf, 4.0])
+def test_direction_nan_mask_matches_distance(backend, max_distance):
+    """Direction is NaN exactly where distance is NaN (#3719).
+
+    Guards the tiled dask path, where a chunk whose source lives in a
+    neighbouring chunk must still get a bearing.
+    """
+    source = np.zeros((8, 10), dtype=np.float64)
+    source[2, 3] = 1.0
+    elev = np.random.default_rng(7).uniform(0, 5, (8, 10))
+
+    raster = _make_raster(source, backend=backend, chunks=(4, 5))
+    elevation = _make_raster(elev, backend=backend, chunks=(4, 5))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        dist = _compute(surface_distance(raster, elevation,
+                                         max_distance=max_distance))
+        bearing = _compute(surface_direction(raster, elevation,
+                                             max_distance=max_distance))
+
+    np.testing.assert_array_equal(np.isnan(bearing), np.isnan(dist))
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="cupy/cuda not available")
+def test_cupy_direction_matches_numpy():
+    """CuPy direction must match the numpy baseline (#3719)."""
+    source = np.zeros((8, 10), dtype=np.float64)
+    source[2, 3] = 1.0
+    elev = np.random.default_rng(7).uniform(0, 5, (8, 10))
+
+    np_result = _compute(surface_direction(
+        _make_raster(source), _make_raster(elev)))
+    cp_result = _compute(surface_direction(
+        _make_raster(source, backend='cupy'),
+        _make_raster(elev, backend='cupy')))
+
+    np.testing.assert_allclose(cp_result, np_result, rtol=1e-5,
+                               equal_nan=True)
 
 
 # ---------------------------------------------------------------------------
