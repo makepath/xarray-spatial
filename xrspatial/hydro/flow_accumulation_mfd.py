@@ -46,6 +46,7 @@ from xrspatial.hydro.flow_accumulation_d8 import (
     _WEIGHT_BYTES_PER_PIXEL,
     _cell_weight,
     _no_weight_cupy,
+    _to_numpy_f64,
     _validate_weight,
     _weight_as_dask,
 )
@@ -711,9 +712,8 @@ def _process_tile_mfd(iy, ix, fractions_da, boundaries, frac_bdry,
     if weight_da is None:
         weight, has_weight = _NO_WEIGHT, 0
     else:
-        weight = np.asarray(
-            weight_da[y_start:y_end, x_start:x_end].compute(),
-            dtype=np.float64)
+        weight = _to_numpy_f64(
+            weight_da[y_start:y_end, x_start:x_end].compute())
         has_weight = 1
 
     accum = _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds,
@@ -833,7 +833,7 @@ def _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
         if weight_block is None:
             weight, has_weight = _NO_WEIGHT, 0
         else:
-            weight = np.asarray(weight_block, dtype=np.float64)
+            weight = _to_numpy_f64(weight_block)
             has_weight = 1
         return _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds,
                                            weight, has_weight)
@@ -950,8 +950,7 @@ def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
     if isinstance(data, np.ndarray):
         _check_memory(data.shape[1], data.shape[2], weighted=weighted)
         if weighted:
-            w_np = w_data.get() if hasattr(w_data, 'get') else w_data
-            w_np, has_w = np.asarray(w_np, dtype=np.float64), 1
+            w_np, has_w = _to_numpy_f64(w_data), 1
         else:
             w_np, has_w = _NO_WEIGHT, 0
         out = _flow_accum_mfd_cpu(

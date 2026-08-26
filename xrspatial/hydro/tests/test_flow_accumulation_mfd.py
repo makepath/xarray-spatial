@@ -527,14 +527,11 @@ class TestFlowAccumulationMFDWeight:
             flow_accumulation_mfd(mfd, weight=xr.ones_like(weight)).values,
             flow_accumulation_mfd(mfd).values, equal_nan=True)
 
-    def test_mass_conserved_on_plane(self):
-        """On a south-sloping plane every interior column drains to the
-        bottom interior row, so the bottom row sums to the sum of all
-        finite interior weights that do not leave through the side edges."""
+    def test_uniform_weight_scales_count(self):
+        """A uniform weight w scales the unweighted count by w everywhere,
+        since the MFD split is linear in the accumulated value."""
         elev = _make_plane_south(7, 7)
         mfd = flow_direction_mfd(elev)
-        # Uniform weight on a plane flowing straight south: bottom-row value
-        # at column c is the column sum of interior weights above it.
         weight = xr.DataArray(np.full((7, 7), 2.5), dims=['y', 'x'])
         accum = flow_accumulation_mfd(mfd, weight=weight)
         count = flow_accumulation_mfd(mfd)

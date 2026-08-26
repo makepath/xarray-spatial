@@ -318,7 +318,7 @@ def test_dinf_weight_ones_equals_count():
 
 
 def test_dinf_weight_split_proportionally():
-    """A weight flowing at pi/4 is split 50/50 between E and NE... via D-inf."""
+    """A weight flowing at pi/8 is split 50/50 between E and NE by D-inf."""
     pi = np.pi
     # Bottom-left cell flows at pi/8: half-way between E (0) and NE (pi/4).
     flow_dir = np.array([
@@ -365,10 +365,11 @@ def _dinf_weighted_reference():
 def test_dinf_weight_dask_equals_numpy(chunks):
     flow_dir, weight, expected = _dinf_weighted_reference()
     dask_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
-    dask_w = create_test_raster(weight, backend='dask', chunks=(2, 7))
-    np.testing.assert_allclose(
-        flow_accumulation_dinf(dask_agg, weight=dask_w).data.compute(),
-        expected, equal_nan=True)
+    for w_chunks in (chunks, (2, 7)):
+        dask_w = create_test_raster(weight, backend='dask', chunks=w_chunks)
+        np.testing.assert_allclose(
+            flow_accumulation_dinf(dask_agg, weight=dask_w).data.compute(),
+            expected, equal_nan=True)
 
 
 @cuda_and_cupy_available

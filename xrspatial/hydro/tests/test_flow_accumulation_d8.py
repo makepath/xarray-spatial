@@ -579,3 +579,38 @@ def test_weight_dask_cupy_equals_numpy():
     np.testing.assert_allclose(
         flow_accumulation(agg, weight=w).data.compute().get(),
         expected, equal_nan=True)
+
+
+def test_weight_integer_dtype():
+    """Integer weights are coerced to float64."""
+    agg = create_test_raster(_BOWL_FLOW_DIR)
+    w_int = create_test_raster(np.full((5, 5), 3, dtype=np.int32))
+    w_float = create_test_raster(np.full((5, 5), 3.0))
+    result = flow_accumulation(agg, weight=w_int)
+    assert result.dtype == np.float64
+    np.testing.assert_allclose(
+        result.data, flow_accumulation(agg, weight=w_float).data, equal_nan=True)
+
+
+def test_weight_dataset_input():
+    """A Dataset flow_dir applies the same weight to every variable."""
+    agg = create_test_raster(_BOWL_FLOW_DIR)
+    w = create_test_raster(np.full((5, 5), 2.0))
+    ds = xr.Dataset({'a': agg, 'b': agg})
+    out = flow_accumulation(ds, weight=w)
+    expected = flow_accumulation(agg, weight=w).data
+    for var in ('a', 'b'):
+        np.testing.assert_allclose(out[var].data, expected, equal_nan=True)
+
+
+def test_weight_forwarded_by_accessor_and_routing():
+    """weight= reaches the router via flow_accumulation(routing=) and .xrs."""
+    import xrspatial.accessor  # noqa: F401
+    agg = create_test_raster(_BOWL_FLOW_DIR)
+    w = create_test_raster(np.full((5, 5), 2.0))
+    expected = flow_accumulation(agg, weight=w).data
+    np.testing.assert_allclose(
+        flow_accumulation(agg, weight=w, routing='d8').data, expected,
+        equal_nan=True)
+    np.testing.assert_allclose(
+        agg.xrs.flow_accumulation(weight=w).data, expected, equal_nan=True)
