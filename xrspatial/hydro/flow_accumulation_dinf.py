@@ -41,8 +41,16 @@ from xrspatial.utils import (
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro.flow_accumulation_d8 import (
+    _NO_WEIGHT,
+    _WEIGHT_BYTES_PER_PIXEL,
+    _cell_weight,
     _find_ready_and_finalize,
+    _no_weight_cupy,
     _preprocess_tiles,
+    _validate_weight,
+    _weight_as_dask,
+    _weight_tile,
+    _weight_tile_cupy,
 )
 
 
@@ -103,9 +111,10 @@ def _available_gpu_memory_bytes():
         return 0
 
 
-def _check_memory(height, width):
+def _check_memory(height, width, weighted=False):
     """Raise MemoryError if the BFS kernel would exceed 50% of RAM."""
-    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    per_pixel = _BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     available = _available_memory_bytes()
     if required > 0.5 * available:
         raise MemoryError(
@@ -116,7 +125,7 @@ def _check_memory(height, width):
         )
 
 
-def _check_gpu_memory(height, width):
+def _check_gpu_memory(height, width, weighted=False):
     """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
 
     Skips the check (returns silently) when ``_available_gpu_memory_bytes``
@@ -126,7 +135,8 @@ def _check_gpu_memory(height, width):
     available = _available_gpu_memory_bytes()
     if available <= 0:
         return
-    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    per_pixel = _GPU_BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     if required > 0.5 * available:
         raise MemoryError(
             f"flow_accumulation_dinf on a {height}x{width} grid requires "
@@ -201,7 +211,7 @@ def _angle_to_neighbors(angle):
 # =====================================================================
 
 @ngjit
-def _flow_accum_dinf_cpu(flow_dir, height, width):
+def _flow_accum_dinf_cpu(flow_dir, height, width, weight, has_weight):
     """Kahn's BFS topological sort for Dinf flow accumulation."""
     accum = np.empty((height, width), dtype=np.float64)
     in_degree = np.zeros((height, width), dtype=np.int32)
@@ -212,7 +222,7 @@ def _flow_accum_dinf_cpu(flow_dir, height, width):
             v = flow_dir[r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
             else:
                 accum[r, c] = np.nan
 
@@ -277,7 +287,8 @@ def _flow_accum_dinf_cpu(flow_dir, height, width):
 # =====================================================================
 
 @cuda.jit
-def _init_accum_indegree_dinf(flow_dir, accum, in_degree, state, H, W):
+def _init_accum_indegree_dinf(flow_dir, accum, in_degree, state, H, W,
+                              weight, has_weight):
     """Initialise accum/in_degree/state for Dinf on GPU."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -290,7 +301,13 @@ def _init_accum_indegree_dinf(flow_dir, accum, in_degree, state, H, W):
         return
 
     state[i, j] = 1
-    accum[i, j] = 1.0
+    if has_weight == 0:
+        accum[i, j] = 1.0
+    else:
+        w = weight[i, j]
+        if w != w:  # NaN weight -> zero contribution
+            w = 0.0
+        accum[i, j] = w
 
     if v < 0.0:  # pit
         return
@@ -421,12 +438,14 @@ def _pull_from_frontier_dinf(flow_dir, accum, in_degree, state, H, W):
             in_degree[i, j] -= 1
 
 
-def _flow_accum_dinf_cupy(flow_dir_data):
+def _flow_accum_dinf_cupy(flow_dir_data, weight=None):
     """GPU driver: iterative frontier peeling for Dinf."""
     import cupy as cp
 
     H, W = flow_dir_data.shape
     flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    has_weight = 0 if weight is None else 1
+    weight_f64 = _no_weight_cupy() if weight is None else weight
 
     accum = cp.zeros((H, W), dtype=cp.float64)
     in_degree = cp.zeros((H, W), dtype=cp.int32)
@@ -436,7 +455,7 @@ def _flow_accum_dinf_cupy(flow_dir_data):
     griddim, blockdim = cuda_args((H, W))
 
     _init_accum_indegree_dinf[griddim, blockdim](
-        flow_dir_f64, accum, in_degree, state, H, W)
+        flow_dir_f64, accum, in_degree, state, H, W, weight_f64, has_weight)
 
     max_iter = H * W
     for _ in range(max_iter):
@@ -456,12 +475,15 @@ def _flow_accum_dinf_cupy(flow_dir_data):
 
 def _flow_accum_dinf_tile_cupy(flow_dir_data,
                                 seed_top, seed_bottom, seed_left, seed_right,
-                                seed_tl, seed_tr, seed_bl, seed_br):
+                                seed_tl, seed_tr, seed_bl, seed_br,
+                                weight=None):
     """GPU seeded Dinf flow accumulation for a single tile."""
     import cupy as cp
 
     H, W = flow_dir_data.shape
     flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    has_weight = 0 if weight is None else 1
+    weight_f64 = _no_weight_cupy() if weight is None else weight
 
     accum = cp.zeros((H, W), dtype=cp.float64)
     in_degree = cp.zeros((H, W), dtype=cp.int32)
@@ -471,7 +493,7 @@ def _flow_accum_dinf_tile_cupy(flow_dir_data,
     griddim, blockdim = cuda_args((H, W))
 
     _init_accum_indegree_dinf[griddim, blockdim](
-        flow_dir_f64, accum, in_degree, state, H, W)
+        flow_dir_f64, accum, in_degree, state, H, W, weight_f64, has_weight)
 
     accum[0, :] += cp.asarray(seed_top)
     accum[H - 1, :] += cp.asarray(seed_bottom)
@@ -506,7 +528,8 @@ def _flow_accum_dinf_tile_cupy(flow_dir_data,
 def _flow_accum_dinf_tile_kernel(flow_dir, h, w,
                                   seed_top, seed_bottom,
                                   seed_left, seed_right,
-                                  seed_tl, seed_tr, seed_bl, seed_br):
+                                  seed_tl, seed_tr, seed_bl, seed_br,
+                                  weight, has_weight):
     """Seeded BFS Dinf flow accumulation for a single tile."""
     accum = np.empty((h, w), dtype=np.float64)
     in_degree = np.zeros((h, w), dtype=np.int32)
@@ -517,7 +540,7 @@ def _flow_accum_dinf_tile_kernel(flow_dir, h, w,
             v = flow_dir[r, c]
             if v == v:
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
             else:
                 accum[r, c] = np.nan
 
@@ -723,7 +746,8 @@ def _compute_seeds_dinf(iy, ix, boundaries, flow_bdry,
 
 
 def _process_tile_dinf(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                       chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       chunks_y, chunks_x, n_tile_y, n_tile_x,
+                       weight_da=None):
     """Run seeded Dinf BFS on one tile; update boundaries in-place."""
     chunk = np.asarray(
         flow_dir_da.blocks[iy, ix].compute(), dtype=np.float64)
@@ -732,8 +756,10 @@ def _process_tile_dinf(iy, ix, flow_dir_da, boundaries, flow_bdry,
     seeds = _compute_seeds_dinf(
         iy, ix, boundaries, flow_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
+    weight, has_weight = _weight_tile(weight_da, iy, ix)
 
-    accum = _flow_accum_dinf_tile_kernel(chunk, h, w, *seeds)
+    accum = _flow_accum_dinf_tile_kernel(chunk, h, w, *seeds,
+                                         weight, has_weight)
 
     new_top = accum[0, :].copy()
     new_bottom = accum[-1, :].copy()
@@ -759,12 +785,14 @@ def _process_tile_dinf(iy, ix, flow_dir_da, boundaries, flow_bdry,
     return change
 
 
-def _flow_accum_dinf_dask_iterative(flow_dir_da):
+def _flow_accum_dinf_dask_iterative(flow_dir_da, weight_da=None):
     """Iterative boundary-propagation for Dinf dask arrays."""
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, flow_dir_da.chunks)
 
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
     flow_bdry = flow_bdry.snapshot()
@@ -780,7 +808,7 @@ def _flow_accum_dinf_dask_iterative(flow_dir_da):
             for ix in range(n_tile_x):
                 c = _process_tile_dinf(iy, ix, flow_dir_da, boundaries,
                                        flow_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -788,7 +816,7 @@ def _flow_accum_dinf_dask_iterative(flow_dir_da):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile_dinf(iy, ix, flow_dir_da, boundaries,
                                        flow_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -798,14 +826,16 @@ def _flow_accum_dinf_dask_iterative(flow_dir_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
-                                 chunks_y, chunks_x, n_tile_y, n_tile_x)
+                                 chunks_y, chunks_x, n_tile_y, n_tile_x,
+                                 weight_da)
 
 
 def _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
-                          chunks_y, chunks_x, n_tile_y, n_tile_x):
+                          chunks_y, chunks_x, n_tile_y, n_tile_x,
+                          weight_da=None):
     """Build lazy dask array by re-running each Dinf tile with converged seeds."""
 
-    def _tile_fn(flow_dir_block, block_info=None):
+    def _tile_fn(flow_dir_block, weight_block=None, block_info=None):
         if block_info is None or 0 not in block_info:
             return np.full(flow_dir_block.shape, np.nan, dtype=np.float64)
         iy, ix = block_info[0]['chunk-location']
@@ -813,12 +843,18 @@ def _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
         seeds = _compute_seeds_dinf(
             iy, ix, boundaries, flow_bdry,
             chunks_y, chunks_x, n_tile_y, n_tile_x)
+        if weight_block is None:
+            weight, has_weight = _NO_WEIGHT, 0
+        else:
+            weight, has_weight = _to_numpy_f64(weight_block), 1
         return _flow_accum_dinf_tile_kernel(
-            np.asarray(flow_dir_block, dtype=np.float64), h, w, *seeds)
+            np.asarray(flow_dir_block, dtype=np.float64), h, w, *seeds,
+            weight, has_weight)
 
+    inputs = [flow_dir_da] if weight_da is None else [flow_dir_da, weight_da]
     return da.map_blocks(
         _tile_fn,
-        flow_dir_da,
+        *inputs,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
         **_dask_task_name_kwargs('xrspatial.flow_accumulation_dinf'),
@@ -826,7 +862,8 @@ def _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
 
 
 def _process_tile_dinf_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                             chunks_y, chunks_x, n_tile_y, n_tile_x):
+                             chunks_y, chunks_x, n_tile_y, n_tile_x,
+                             weight_da=None):
     """Run seeded GPU Dinf flow accumulation on one tile."""
     import cupy as cp
 
@@ -837,7 +874,8 @@ def _process_tile_dinf_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
         iy, ix, boundaries, flow_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    accum = _flow_accum_dinf_tile_cupy(chunk, *seeds)
+    accum = _flow_accum_dinf_tile_cupy(
+        chunk, *seeds, weight=_weight_tile_cupy(weight_da, iy, ix))
 
     new_top = accum[0, :].get().copy()
     new_bottom = accum[-1, :].get().copy()
@@ -864,35 +902,42 @@ def _process_tile_dinf_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
 
 
 def _assemble_result_dinf_cupy(flow_dir_da, boundaries, flow_bdry,
-                                chunks_y, chunks_x, n_tile_y, n_tile_x):
+                                chunks_y, chunks_x, n_tile_y, n_tile_x,
+                                weight_da=None):
     """Build lazy dask+cupy array using GPU Dinf tile kernel."""
     import cupy as cp
 
-    def _tile_fn(flow_dir_block, block_info=None):
+    def _tile_fn(flow_dir_block, weight_block=None, block_info=None):
         if block_info is None or 0 not in block_info:
             return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
         iy, ix = block_info[0]['chunk-location']
         seeds = _compute_seeds_dinf(
             iy, ix, boundaries, flow_bdry,
             chunks_y, chunks_x, n_tile_y, n_tile_x)
+        weight = None if weight_block is None else cp.asarray(
+            weight_block, dtype=cp.float64)
         return _flow_accum_dinf_tile_cupy(
-            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds)
+            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds,
+            weight=weight)
 
+    inputs = [flow_dir_da] if weight_da is None else [flow_dir_da, weight_da]
     return da.map_blocks(
         _tile_fn,
-        flow_dir_da,
+        *inputs,
         dtype=np.float64,
         meta=cp.array((), dtype=cp.float64),
         **_dask_task_name_kwargs('xrspatial.flow_accumulation_dinf'),
     )
 
 
-def _flow_accum_dinf_dask_cupy(flow_dir_da):
+def _flow_accum_dinf_dask_cupy(flow_dir_da, weight_da=None):
     """Dask+CuPy Dinf: native GPU processing per tile."""
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, flow_dir_da.chunks)
 
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
     flow_bdry = flow_bdry.snapshot()
@@ -909,7 +954,7 @@ def _flow_accum_dinf_dask_cupy(flow_dir_da):
                 c = _process_tile_dinf_cupy(
                     iy, ix, flow_dir_da, boundaries,
                     flow_bdry, chunks_y, chunks_x,
-                    n_tile_y, n_tile_x)
+                    n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -918,7 +963,7 @@ def _flow_accum_dinf_dask_cupy(flow_dir_da):
                 c = _process_tile_dinf_cupy(
                     iy, ix, flow_dir_da, boundaries,
                     flow_bdry, chunks_y, chunks_x,
-                    n_tile_y, n_tile_x)
+                    n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -928,7 +973,8 @@ def _flow_accum_dinf_dask_cupy(flow_dir_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_result_dinf_cupy(flow_dir_da, boundaries, flow_bdry,
-                                       chunks_y, chunks_x, n_tile_y, n_tile_x)
+                                       chunks_y, chunks_x, n_tile_y, n_tile_x,
+                                       weight_da)
 
 
 # =====================================================================
@@ -937,6 +983,7 @@ def _flow_accum_dinf_dask_cupy(flow_dir_da):
 
 @supports_dataset
 def flow_accumulation_dinf(flow_dir: xr.DataArray,
+                           weight: xr.DataArray | None = None,
                            name: str = 'flow_accumulation') -> xr.DataArray:
     """Compute flow accumulation from a D-infinity flow direction grid.
 
@@ -944,6 +991,10 @@ def flow_accumulation_dinf(flow_dir: xr.DataArray,
     ``flow_direction_dinf``) and accumulates upstream contributing
     area.  Flow is split proportionally between two neighbors
     following Tarboton (1997).
+
+    By default each cell contributes 1, so the result is a (fractional)
+    count of upstream cells.  Pass ``weight`` (for example a
+    precipitation or melt field) to accumulate that quantity instead.
 
     Parameters
     ----------
@@ -955,6 +1006,13 @@ def flow_accumulation_dinf(flow_dir: xr.DataArray,
         CuPy-backed Dask.
         If a Dataset is passed, the operation is applied to each
         data variable independently.
+    weight : xarray.DataArray, optional
+        2-D raster on the same grid as ``flow_dir`` giving each cell's
+        own contribution.  When given, each output cell is the
+        proportionally split sum of ``weight`` over itself and every
+        upstream cell draining through it.  NaN weights contribute 0
+        and do not change the output NaN mask; weights at cells where
+        ``flow_dir`` is NaN are ignored.
     name : str, default='flow_accumulation'
         Name of output DataArray.
 
@@ -964,7 +1022,8 @@ def flow_accumulation_dinf(flow_dir: xr.DataArray,
         2-D float64 array of flow accumulation values.  Each cell
         holds the total upstream contributing area (including itself)
         that drains through it, weighted by D-inf proportional
-        splitting.  NaN where the input has NaN.
+        splitting, or the split sum of ``weight`` over those cells
+        when ``weight`` is given.  NaN where the input has NaN.
 
     References
     ----------
@@ -976,17 +1035,27 @@ def flow_accumulation_dinf(flow_dir: xr.DataArray,
                      name='flow_dir')
 
     data = flow_dir.data
+    weighted = weight is not None
+    w_data = _validate_weight(weight, flow_dir, 'flow_accumulation_dinf') \
+        if weighted else None
 
     if isinstance(data, np.ndarray):
-        _check_memory(*data.shape)
-        out = _flow_accum_dinf_cpu(data.astype(np.float64), *data.shape)
+        _check_memory(*data.shape, weighted=weighted)
+        if weighted:
+            w_np, has_w = _to_numpy_f64(w_data), 1
+        else:
+            w_np, has_w = _NO_WEIGHT, 0
+        out = _flow_accum_dinf_cpu(data.astype(np.float64), *data.shape,
+                                   w_np, has_w)
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        _check_gpu_memory(*data.shape)
-        out = _flow_accum_dinf_cupy(data)
+        import cupy as cp
+        _check_gpu_memory(*data.shape, weighted=weighted)
+        w_cp = cp.asarray(w_data, dtype=cp.float64) if weighted else None
+        out = _flow_accum_dinf_cupy(data, w_cp)
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir):
-        out = _flow_accum_dinf_dask_cupy(data)
+        out = _flow_accum_dinf_dask_cupy(data, w_data)
     elif da is not None and isinstance(data, da.Array):
-        out = _flow_accum_dinf_dask_iterative(data)
+        out = _flow_accum_dinf_dask_iterative(data, w_data)
     else:
         raise TypeError(f"Unsupported array type: {type(data)}")
 
