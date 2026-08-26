@@ -614,3 +614,15 @@ def test_weight_forwarded_by_accessor_and_routing():
         equal_nan=True)
     np.testing.assert_allclose(
         agg.xrs.flow_accumulation(weight=w).data, expected, equal_nan=True)
+
+
+def test_weight_dataset_accessor():
+    """ds.xrs.flow_accumulation(weight=) weights every variable."""
+    import xrspatial.accessor  # noqa: F401
+    agg = create_test_raster(_BOWL_FLOW_DIR)
+    w = create_test_raster(np.full((5, 5), 2.0))
+    ds = xr.Dataset({'a': agg, 'b': agg})
+    out = ds.xrs.flow_accumulation(weight=w)
+    expected = flow_accumulation(agg, weight=w).data
+    for var in ('a', 'b'):
+        np.testing.assert_allclose(out[var].data, expected, equal_nan=True)
