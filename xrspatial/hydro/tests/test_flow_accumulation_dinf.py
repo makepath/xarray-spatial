@@ -272,3 +272,122 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match=r"7x11"):
                 flow_accumulation_dinf(agg)
+
+
+# ===========================================================================
+# Weighted accumulation (#3734)
+# ===========================================================================
+
+def _dinf_weighted_case():
+    """3x3 with the centre pit fed by cardinal + diagonal neighbours."""
+    pi = np.pi
+    flow_dir = np.array([
+        [7 * pi / 4, 3 * pi / 2, 5 * pi / 4],
+        [0.0,        -1.0,       pi],
+        [pi / 4,     pi / 2,     3 * pi / 4],
+    ], dtype=np.float64)
+    weight = np.array([
+        [1.0, 2.0, 3.0],
+        [4.0, 10.0, np.nan],
+        [0.5, 1.5, -2.0],
+    ], dtype=np.float64)
+    return flow_dir, weight
+
+
+def test_dinf_weight_known_values():
+    """Centre pit collects the weights of all 8 neighbours plus its own."""
+    flow_dir, weight = _dinf_weighted_case()
+    result = flow_accumulation_dinf(
+        create_test_raster(flow_dir), weight=create_test_raster(weight))
+    # Each neighbour keeps its own weight (nothing upstream of it);
+    # the NaN weight contributes 0 at (1, 2).
+    expected = weight.copy()
+    expected[1, 2] = 0.0
+    expected[1, 1] = 10.0 + 1 + 2 + 3 + 4 + 0 + 0.5 + 1.5 - 2
+    np.testing.assert_allclose(result.data, expected)
+    assert not np.isnan(result.data).any()
+
+
+def test_dinf_weight_ones_equals_count():
+    flow_dir, _ = _dinf_weighted_case()
+    agg = create_test_raster(flow_dir)
+    np.testing.assert_allclose(
+        flow_accumulation_dinf(agg, weight=create_test_raster(
+            np.ones_like(flow_dir))).data,
+        flow_accumulation_dinf(agg).data, equal_nan=True)
+
+
+def test_dinf_weight_split_proportionally():
+    """A weight flowing at pi/8 is split 50/50 between E and NE by D-inf."""
+    pi = np.pi
+    # Bottom-left cell flows at pi/8: half-way between E (0) and NE (pi/4).
+    flow_dir = np.array([
+        [-1.0, -1.0],
+        [pi / 8, -1.0],
+    ], dtype=np.float64)
+    weight = np.array([[0.0, 0.0], [8.0, 0.0]], dtype=np.float64)
+    result = flow_accumulation_dinf(
+        create_test_raster(flow_dir), weight=create_test_raster(weight))
+    np.testing.assert_allclose(result.data[1, 0], 8.0)
+    np.testing.assert_allclose(result.data[1, 1], 4.0)  # E
+    np.testing.assert_allclose(result.data[0, 1], 4.0)  # NE
+    np.testing.assert_allclose(result.data[0, 0], 0.0)
+
+
+def test_dinf_weight_shape_mismatch_raises():
+    flow_dir, weight = _dinf_weighted_case()
+    with pytest.raises(ValueError, match="weight"):
+        flow_accumulation_dinf(create_test_raster(flow_dir),
+                               weight=create_test_raster(weight[:, :2]))
+
+
+def _dinf_weighted_reference():
+    """Acyclic D-inf grid derived from a noisy tilted DEM.
+
+    Random angles would form cycles, which the BFS does not define
+    consistently across tilings, so derive directions from a surface.
+    """
+    from xrspatial.hydro import flow_direction_dinf
+    rng = np.random.default_rng(3734)
+    elev = rng.random((12, 15)) + np.add.outer(
+        np.arange(12) * 0.5, np.arange(15) * 0.3)
+    elev[6, 7] = np.nan
+    flow_dir = flow_direction_dinf(create_test_raster(elev)).data
+    weight = rng.random(flow_dir.shape) * 5.0
+    weight[3, 4] = np.nan
+    expected = flow_accumulation_dinf(
+        create_test_raster(flow_dir), weight=create_test_raster(weight)).data
+    return flow_dir, weight, expected
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [(3, 3), (4, 5), (12, 15), (1, 1)])
+def test_dinf_weight_dask_equals_numpy(chunks):
+    flow_dir, weight, expected = _dinf_weighted_reference()
+    dask_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    for w_chunks in (chunks, (2, 7)):
+        dask_w = create_test_raster(weight, backend='dask', chunks=w_chunks)
+        np.testing.assert_allclose(
+            flow_accumulation_dinf(dask_agg, weight=dask_w).data.compute(),
+            expected, equal_nan=True)
+
+
+@cuda_and_cupy_available
+def test_dinf_weight_cupy_equals_numpy():
+    flow_dir, weight, expected = _dinf_weighted_reference()
+    np.testing.assert_allclose(
+        flow_accumulation_dinf(
+            create_test_raster(flow_dir, backend='cupy'),
+            weight=create_test_raster(weight, backend='cupy')).data.get(),
+        expected, equal_nan=True)
+
+
+@cuda_and_cupy_available
+def test_dinf_weight_dask_cupy_equals_numpy():
+    flow_dir, weight, expected = _dinf_weighted_reference()
+    np.testing.assert_allclose(
+        flow_accumulation_dinf(
+            create_test_raster(flow_dir, backend='dask+cupy', chunks=(4, 5)),
+            weight=create_test_raster(weight, backend='dask+cupy',
+                                      chunks=(4, 5))).data.compute().get(),
+        expected, equal_nan=True)

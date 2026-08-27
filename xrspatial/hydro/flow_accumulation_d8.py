@@ -32,8 +32,9 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro._boundary_store import BoundaryStore
-from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
-                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_matching_shape,
+                             _validate_raster, cuda_args, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -47,7 +48,9 @@ from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args
 #   queue_c  : int64   -> 8
 # Total ~29 bytes/pixel.  The caller-provided ``flow_dir`` array already
 # lives in RAM before the kernel runs and is not double-counted here.
+# A ``weight`` raster adds one float64 copy (8 bytes/pixel).
 _BYTES_PER_PIXEL = 29
+_WEIGHT_BYTES_PER_PIXEL = 8
 
 # GPU peak working set per pixel for ``_flow_accum_cupy``:
 #   accum     : float64 -> 8
@@ -89,9 +92,10 @@ def _available_gpu_memory_bytes():
         return 0
 
 
-def _check_memory(height, width):
+def _check_memory(height, width, weighted=False):
     """Raise MemoryError if the BFS kernel would exceed 50% of RAM."""
-    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    per_pixel = _BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     available = _available_memory_bytes()
     if required > 0.5 * available:
         raise MemoryError(
@@ -102,7 +106,7 @@ def _check_memory(height, width):
         )
 
 
-def _check_gpu_memory(height, width):
+def _check_gpu_memory(height, width, weighted=False):
     """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
 
     Skips the check (returns silently) when ``_available_gpu_memory_bytes``
@@ -112,7 +116,8 @@ def _check_gpu_memory(height, width):
     available = _available_gpu_memory_bytes()
     if available <= 0:
         return
-    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    per_pixel = _GPU_BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     if required > 0.5 * available:
         raise MemoryError(
             f"flow_accumulation on a {height}x{width} grid requires "
@@ -130,6 +135,57 @@ def _to_numpy_f64(arr):
     if hasattr(arr, 'get'):
         arr = arr.get()
     return np.asarray(arr, dtype=np.float64)
+
+
+# =====================================================================
+# Weight helpers
+# =====================================================================
+#
+# Every kernel takes ``(weight, has_weight)``.  When ``has_weight`` is
+# 0 the ``weight`` array is a 1x1 dummy and each valid cell starts at
+# 1.0 (cell count).  When 1, each valid cell starts at ``weight[r, c]``,
+# with NaN weights contributing 0.0 so a missing weight never alters
+# the flow network or the output NaN mask (which stays ``isnan(flow_dir)``).
+
+_NO_WEIGHT = np.ones((1, 1), dtype=np.float64)
+
+
+@ngjit
+def _cell_weight(weight, has_weight, r, c):
+    """Initial accumulation for a valid cell."""
+    if has_weight == 0:
+        return 1.0
+    w = weight[r, c]
+    if w != w:  # NaN weight -> zero contribution
+        return 0.0
+    return w
+
+
+def _validate_weight(weight, flow_dir, func_name):
+    """Validate a companion weight raster against ``flow_dir``.
+
+    Returns the raw weight array (``weight.data``) for backend-specific
+    coercion by the caller.
+    """
+    _validate_raster(weight, func_name=func_name, name='weight')
+    _validate_matching_shape(weight, flow_dir.shape[-2:],
+                             func_name=func_name, name='weight',
+                             expected_name='`flow_dir`')
+    return weight.data
+
+
+def _weight_as_dask(weight_data, chunks):
+    """Coerce a weight array to a dask array chunked like ``flow_dir``."""
+    if isinstance(weight_data, da.Array):
+        if weight_data.chunks != chunks:
+            weight_data = weight_data.rechunk(chunks)
+        return weight_data
+    return da.from_array(weight_data, chunks=chunks)
+
+
+def _no_weight_cupy():
+    import cupy as cp
+    return cp.ones((1, 1), dtype=cp.float64)
 
 
 # =====================================================================
@@ -225,7 +281,7 @@ def _detect_flow_type(data):
 # =====================================================================
 
 @ngjit
-def _flow_accum_cpu(flow_dir, height, width):
+def _flow_accum_cpu(flow_dir, height, width, weight, has_weight):
     """Kahn's BFS topological sort for flow accumulation."""
     accum = np.empty((height, width), dtype=np.float64)
     in_degree = np.zeros((height, width), dtype=np.int32)
@@ -237,7 +293,7 @@ def _flow_accum_cpu(flow_dir, height, width):
             v = flow_dir[r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
             else:
                 accum[r, c] = np.nan
 
@@ -293,7 +349,8 @@ def _flow_accum_cpu(flow_dir, height, width):
 # =====================================================================
 
 @cuda.jit
-def _init_accum_indegree(flow_dir, accum, in_degree, state, H, W):
+def _init_accum_indegree(flow_dir, accum, in_degree, state, H, W,
+                         weight, has_weight):
     """Initialise accum, in_degree and state arrays on GPU."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -306,7 +363,13 @@ def _init_accum_indegree(flow_dir, accum, in_degree, state, H, W):
         return
 
     state[i, j] = 1
-    accum[i, j] = 1.0
+    if has_weight == 0:
+        accum[i, j] = 1.0
+    else:
+        w = weight[i, j]
+        if w != w:  # NaN weight -> zero contribution
+            w = 0.0
+        accum[i, j] = w
 
     # Decode direction (inline -- can't call @ngjit from @cuda.jit)
     code = int(v)
@@ -417,12 +480,14 @@ def _pull_from_frontier(flow_dir, accum, in_degree, state, H, W):
             in_degree[i, j] -= 1
 
 
-def _flow_accum_cupy(flow_dir_data):
+def _flow_accum_cupy(flow_dir_data, weight=None):
     """GPU driver: iterative frontier peeling."""
     import cupy as cp
 
     H, W = flow_dir_data.shape
     flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    has_weight = 0 if weight is None else 1
+    weight_f64 = _no_weight_cupy() if weight is None else weight
 
     accum = cp.zeros((H, W), dtype=cp.float64)
     in_degree = cp.zeros((H, W), dtype=cp.int32)
@@ -432,7 +497,7 @@ def _flow_accum_cupy(flow_dir_data):
     griddim, blockdim = cuda_args((H, W))
 
     _init_accum_indegree[griddim, blockdim](
-        flow_dir_f64, accum, in_degree, state, H, W)
+        flow_dir_f64, accum, in_degree, state, H, W, weight_f64, has_weight)
 
     max_iter = H * W
     for _ in range(max_iter):
@@ -453,7 +518,8 @@ def _flow_accum_cupy(flow_dir_data):
 
 def _flow_accum_tile_cupy(flow_dir_data,
                           seed_top, seed_bottom, seed_left, seed_right,
-                          seed_tl, seed_tr, seed_bl, seed_br):
+                          seed_tl, seed_tr, seed_bl, seed_br,
+                          weight=None):
     """GPU seeded flow accumulation for a single tile.
 
     Same algorithm as ``_flow_accum_cupy`` but injects external seed
@@ -464,6 +530,8 @@ def _flow_accum_tile_cupy(flow_dir_data,
 
     H, W = flow_dir_data.shape
     flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    has_weight = 0 if weight is None else 1
+    weight_f64 = _no_weight_cupy() if weight is None else weight
 
     accum = cp.zeros((H, W), dtype=cp.float64)
     in_degree = cp.zeros((H, W), dtype=cp.int32)
@@ -473,7 +541,7 @@ def _flow_accum_tile_cupy(flow_dir_data,
     griddim, blockdim = cuda_args((H, W))
 
     _init_accum_indegree[griddim, blockdim](
-        flow_dir_f64, accum, in_degree, state, H, W)
+        flow_dir_f64, accum, in_degree, state, H, W, weight_f64, has_weight)
 
     # Inject seeds at boundary cells.  Invalid cells (state==0) are
     # masked to NaN at the end and never enter frontier peeling, so
@@ -510,7 +578,8 @@ def _flow_accum_tile_cupy(flow_dir_data,
 @ngjit
 def _flow_accum_tile_kernel(flow_dir, h, w,
                             seed_top, seed_bottom, seed_left, seed_right,
-                            seed_tl, seed_tr, seed_bl, seed_br):
+                            seed_tl, seed_tr, seed_bl, seed_br,
+                            weight, has_weight):
     """Seeded BFS flow accumulation for a single tile.
 
     Same as ``_flow_accum_cpu`` but adds external seeds to boundary
@@ -526,7 +595,7 @@ def _flow_accum_tile_kernel(flow_dir, h, w,
             v = flow_dir[r, c]
             if v == v:
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
             else:
                 accum[r, c] = np.nan
 
@@ -734,8 +803,15 @@ def _compute_seeds(iy, ix, boundaries, flow_bdry,
             seed_tl, seed_tr, seed_bl, seed_br)
 
 
+def _weight_tile(weight_da, iy, ix):
+    """Materialise one weight tile as numpy, or the dummy when unweighted."""
+    if weight_da is None:
+        return _NO_WEIGHT, 0
+    return _to_numpy_f64(weight_da.blocks[iy, ix].compute()), 1
+
+
 def _process_tile(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+                  chunks_y, chunks_x, n_tile_y, n_tile_x, weight_da=None):
     """Run seeded BFS on one tile; update boundaries in-place.
 
     Returns the maximum absolute boundary change (float).
@@ -747,8 +823,9 @@ def _process_tile(iy, ix, flow_dir_da, boundaries, flow_bdry,
     seeds = _compute_seeds(
         iy, ix, boundaries, flow_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
+    weight, has_weight = _weight_tile(weight_da, iy, ix)
 
-    accum = _flow_accum_tile_kernel(chunk, h, w, *seeds)
+    accum = _flow_accum_tile_kernel(chunk, h, w, *seeds, weight, has_weight)
 
     # Extract new boundary strips
     new_top = accum[0, :].copy()
@@ -777,7 +854,7 @@ def _process_tile(iy, ix, flow_dir_da, boundaries, flow_bdry,
     return change
 
 
-def _flow_accum_dask_iterative(flow_dir_da):
+def _flow_accum_dask_iterative(flow_dir_da, weight_da=None):
     """Iterative boundary-propagation for arbitrarily large dask arrays.
 
     Memory usage is O(tile_size + boundary_strips) per iteration.
@@ -786,6 +863,8 @@ def _flow_accum_dask_iterative(flow_dir_da):
     chunks_x = flow_dir_da.chunks[1]
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, flow_dir_da.chunks)
 
     # Phase 0: extract boundary flow dirs
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
@@ -805,7 +884,7 @@ def _flow_accum_dask_iterative(flow_dir_da):
             for ix in range(n_tile_x):
                 c = _process_tile(iy, ix, flow_dir_da, boundaries,
                                   flow_bdry, chunks_y, chunks_x,
-                                  n_tile_y, n_tile_x)
+                                  n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -814,7 +893,7 @@ def _flow_accum_dask_iterative(flow_dir_da):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile(iy, ix, flow_dir_da, boundaries,
                                   flow_bdry, chunks_y, chunks_x,
-                                  n_tile_y, n_tile_x)
+                                  n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -826,14 +905,16 @@ def _flow_accum_dask_iterative(flow_dir_da):
 
     # Phase 3: lazy assembly via da.map_blocks
     return _assemble_result(flow_dir_da, boundaries, flow_bdry,
-                            chunks_y, chunks_x, n_tile_y, n_tile_x)
+                            chunks_y, chunks_x, n_tile_y, n_tile_x,
+                            weight_da)
 
 
 def _assemble_result(flow_dir_da, boundaries, flow_bdry,
-                     chunks_y, chunks_x, n_tile_y, n_tile_x):
+                     chunks_y, chunks_x, n_tile_y, n_tile_x,
+                     weight_da=None):
     """Build a lazy dask array by re-running each tile with converged seeds."""
 
-    def _tile_fn(flow_dir_block, block_info=None):
+    def _tile_fn(flow_dir_block, weight_block=None, block_info=None):
         if block_info is None or 0 not in block_info:
             return np.full(flow_dir_block.shape, np.nan, dtype=np.float64)
         iy, ix = block_info[0]['chunk-location']
@@ -841,20 +922,35 @@ def _assemble_result(flow_dir_da, boundaries, flow_bdry,
         seeds = _compute_seeds(
             iy, ix, boundaries, flow_bdry,
             chunks_y, chunks_x, n_tile_y, n_tile_x)
+        if weight_block is None:
+            weight, has_weight = _NO_WEIGHT, 0
+        else:
+            weight, has_weight = _to_numpy_f64(weight_block), 1
         return _flow_accum_tile_kernel(
-            np.asarray(flow_dir_block, dtype=np.float64), h, w, *seeds)
+            np.asarray(flow_dir_block, dtype=np.float64), h, w, *seeds,
+            weight, has_weight)
 
+    inputs = [flow_dir_da] if weight_da is None else [flow_dir_da, weight_da]
     return da.map_blocks(
         _tile_fn,
-        flow_dir_da,
+        *inputs,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
         **_dask_task_name_kwargs('xrspatial.flow_accumulation_d8'),
     )
 
 
+def _weight_tile_cupy(weight_da, iy, ix):
+    """Materialise one weight tile on the GPU, or None when unweighted."""
+    if weight_da is None:
+        return None
+    import cupy as cp
+    return cp.asarray(weight_da.blocks[iy, ix].compute(), dtype=cp.float64)
+
+
 def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                       chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       chunks_y, chunks_x, n_tile_y, n_tile_x,
+                       weight_da=None):
     """Run seeded GPU flow accumulation on one tile; update boundaries."""
     import cupy as cp
 
@@ -865,7 +961,8 @@ def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
         iy, ix, boundaries, flow_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    accum = _flow_accum_tile_cupy(chunk, *seeds)
+    accum = _flow_accum_tile_cupy(
+        chunk, *seeds, weight=_weight_tile_cupy(weight_da, iy, ix))
 
     # Extract boundaries to CPU (small 1-D strips)
     new_top = accum[0, :].get().copy()
@@ -893,35 +990,42 @@ def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
 
 
 def _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
-                          chunks_y, chunks_x, n_tile_y, n_tile_x):
+                          chunks_y, chunks_x, n_tile_y, n_tile_x,
+                          weight_da=None):
     """Build a lazy dask+cupy array using GPU tile kernel."""
     import cupy as cp
 
-    def _tile_fn(flow_dir_block, block_info=None):
+    def _tile_fn(flow_dir_block, weight_block=None, block_info=None):
         if block_info is None or 0 not in block_info:
             return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
         iy, ix = block_info[0]['chunk-location']
         seeds = _compute_seeds(
             iy, ix, boundaries, flow_bdry,
             chunks_y, chunks_x, n_tile_y, n_tile_x)
+        weight = None if weight_block is None else cp.asarray(
+            weight_block, dtype=cp.float64)
         return _flow_accum_tile_cupy(
-            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds)
+            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds,
+            weight=weight)
 
+    inputs = [flow_dir_da] if weight_da is None else [flow_dir_da, weight_da]
     return da.map_blocks(
         _tile_fn,
-        flow_dir_da,
+        *inputs,
         dtype=np.float64,
         meta=cp.array((), dtype=cp.float64),
         **_dask_task_name_kwargs('xrspatial.flow_accumulation_d8'),
     )
 
 
-def _flow_accum_dask_cupy(flow_dir_da):
+def _flow_accum_dask_cupy(flow_dir_da, weight_da=None):
     """Dask+CuPy D8: native GPU processing per tile."""
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, flow_dir_da.chunks)
 
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
     flow_bdry = flow_bdry.snapshot()
@@ -937,7 +1041,7 @@ def _flow_accum_dask_cupy(flow_dir_da):
             for ix in range(n_tile_x):
                 c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
                                        flow_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -945,7 +1049,7 @@ def _flow_accum_dask_cupy(flow_dir_da):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
                                        flow_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -955,7 +1059,8 @@ def _flow_accum_dask_cupy(flow_dir_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
-                                 chunks_y, chunks_x, n_tile_y, n_tile_x)
+                                 chunks_y, chunks_x, n_tile_y, n_tile_x,
+                                 weight_da)
 
 
 # =====================================================================
@@ -964,12 +1069,17 @@ def _flow_accum_dask_cupy(flow_dir_da):
 
 @supports_dataset
 def flow_accumulation_d8(flow_dir: xr.DataArray,
+                         weight: xr.DataArray | None = None,
                          name: str = 'flow_accumulation') -> xr.DataArray:
     """Compute flow accumulation from a D8 flow direction grid.
 
     Each cell drains to exactly one downstream neighbor based on
     integer D8 direction codes.  For D-infinity (continuous angle)
     grids, use ``flow_accumulation_dinf`` instead.
+
+    By default each cell contributes 1, so the result is a count of
+    upstream cells.  Pass ``weight`` (for example a precipitation or
+    melt field) to accumulate that quantity instead.
 
     Parameters
     ----------
@@ -980,6 +1090,13 @@ def flow_accumulation_d8(flow_dir: xr.DataArray,
         CuPy-backed Dask.
         If a Dataset is passed, the operation is applied to each
         data variable independently.
+    weight : xarray.DataArray, optional
+        2D raster on the same grid as ``flow_dir`` giving each cell's
+        own contribution.  When given, each output cell is the sum of
+        ``weight`` over itself and every upstream cell draining
+        through it.  NaN weights contribute 0 and do not change the
+        output NaN mask; weights at cells where ``flow_dir`` is NaN
+        are ignored.
     name : str, default='flow_accumulation'
         Name of output DataArray.
 
@@ -988,7 +1105,9 @@ def flow_accumulation_d8(flow_dir: xr.DataArray,
     xarray.DataArray or xr.Dataset
         2D float64 array of flow accumulation values.  Each cell
         contains the count of upstream cells (including itself) that
-        drain through it.  Cells with NaN flow direction produce NaN.
+        drain through it, or the sum of ``weight`` over those cells
+        when ``weight`` is given.  Cells with NaN flow direction
+        produce NaN.
 
     References
     ----------
@@ -1000,17 +1119,27 @@ def flow_accumulation_d8(flow_dir: xr.DataArray,
     _validate_raster(flow_dir, func_name='flow_accumulation', name='flow_dir')
 
     data = flow_dir.data
+    weighted = weight is not None
+    w_data = _validate_weight(weight, flow_dir, 'flow_accumulation') \
+        if weighted else None
 
     if isinstance(data, np.ndarray):
-        _check_memory(*data.shape)
-        out = _flow_accum_cpu(data.astype(np.float64), *data.shape)
+        _check_memory(*data.shape, weighted=weighted)
+        if weighted:
+            w_np, has_w = _to_numpy_f64(w_data), 1
+        else:
+            w_np, has_w = _NO_WEIGHT, 0
+        out = _flow_accum_cpu(data.astype(np.float64), *data.shape,
+                              w_np, has_w)
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        _check_gpu_memory(*data.shape)
-        out = _flow_accum_cupy(data)
+        import cupy as cp
+        _check_gpu_memory(*data.shape, weighted=weighted)
+        w_cp = cp.asarray(w_data, dtype=cp.float64) if weighted else None
+        out = _flow_accum_cupy(data, w_cp)
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir):
-        out = _flow_accum_dask_cupy(data)
+        out = _flow_accum_dask_cupy(data, w_data)
     elif da is not None and isinstance(data, da.Array):
-        out = _flow_accum_dask_iterative(data)
+        out = _flow_accum_dask_iterative(data, w_data)
     else:
         raise TypeError(f"Unsupported array type: {type(data)}")
 

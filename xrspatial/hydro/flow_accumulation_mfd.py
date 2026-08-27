@@ -41,6 +41,15 @@ from xrspatial.utils import (
 )
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro.flow_accumulation_d8 import (
+    _NO_WEIGHT,
+    _WEIGHT_BYTES_PER_PIXEL,
+    _cell_weight,
+    _no_weight_cupy,
+    _to_numpy_f64,
+    _validate_weight,
+    _weight_as_dask,
+)
 
 
 # =====================================================================
@@ -98,9 +107,10 @@ def _available_gpu_memory_bytes():
         return 0
 
 
-def _check_memory(height, width):
+def _check_memory(height, width, weighted=False):
     """Raise MemoryError if the BFS kernel would exceed 50% of RAM."""
-    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    per_pixel = _BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     available = _available_memory_bytes()
     if required > 0.5 * available:
         raise MemoryError(
@@ -111,7 +121,7 @@ def _check_memory(height, width):
         )
 
 
-def _check_gpu_memory(height, width):
+def _check_gpu_memory(height, width, weighted=False):
     """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
 
     Skips the check (returns silently) when ``_available_gpu_memory_bytes``
@@ -121,7 +131,8 @@ def _check_gpu_memory(height, width):
     available = _available_gpu_memory_bytes()
     if available <= 0:
         return
-    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    per_pixel = _GPU_BYTES_PER_PIXEL + (_WEIGHT_BYTES_PER_PIXEL if weighted else 0)
+    required = int(height) * int(width) * per_pixel
     if required > 0.5 * available:
         raise MemoryError(
             f"flow_accumulation_mfd on a {height}x{width} grid requires "
@@ -145,13 +156,15 @@ _OPPOSITE = np.array([4, 5, 6, 7, 0, 1, 2, 3], dtype=np.int64)
 # =====================================================================
 
 @ngjit
-def _flow_accum_mfd_cpu(fractions, height, width):
+def _flow_accum_mfd_cpu(fractions, height, width, weight, has_weight):
     """Kahn's BFS topological sort for MFD flow accumulation.
 
     Parameters
     ----------
     fractions : (8, H, W) float64 array of flow fractions
     height, width : int
+    weight : (H, W) float64 per-cell contribution (1x1 dummy when unused)
+    has_weight : int, 1 to use ``weight`` instead of a unit count
 
     Returns
     -------
@@ -173,7 +186,7 @@ def _flow_accum_mfd_cpu(fractions, height, width):
                 accum[r, c] = np.nan
             else:
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
                 n_valid += 1
 
     # Pass 2: compute in-degrees
@@ -238,7 +251,8 @@ def _flow_accum_mfd_cpu(fractions, height, width):
 # =====================================================================
 
 @cuda.jit
-def _init_accum_indegree_mfd(fractions, accum, in_degree, state, H, W):
+def _init_accum_indegree_mfd(fractions, accum, in_degree, state, H, W,
+                             weight, has_weight):
     """Initialise accum, in_degree and state for MFD on GPU."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -251,7 +265,13 @@ def _init_accum_indegree_mfd(fractions, accum, in_degree, state, H, W):
         return
 
     state[i, j] = 1
-    accum[i, j] = 1.0
+    if has_weight == 0:
+        accum[i, j] = 1.0
+    else:
+        w = weight[i, j]
+        if w != w:  # NaN weight -> zero contribution
+            w = 0.0
+        accum[i, j] = w
 
     # Neighbor offsets: E, SE, S, SW, W, NW, N, NE
     for k in range(8):
@@ -359,12 +379,14 @@ def _pull_from_frontier_mfd(fractions, accum, in_degree, state, H, W):
             in_degree[i, j] -= 1
 
 
-def _flow_accum_mfd_cupy(fractions_data):
+def _flow_accum_mfd_cupy(fractions_data, weight=None):
     """GPU driver: iterative frontier peeling for MFD."""
     import cupy as cp
 
     _, H, W = fractions_data.shape
     fractions_f64 = fractions_data.astype(cp.float64)
+    has_weight = 0 if weight is None else 1
+    weight_f64 = _no_weight_cupy() if weight is None else weight
 
     accum = cp.zeros((H, W), dtype=cp.float64)
     in_degree = cp.zeros((H, W), dtype=cp.int32)
@@ -374,7 +396,7 @@ def _flow_accum_mfd_cupy(fractions_data):
     griddim, blockdim = cuda_args((H, W))
 
     _init_accum_indegree_mfd[griddim, blockdim](
-        fractions_f64, accum, in_degree, state, H, W)
+        fractions_f64, accum, in_degree, state, H, W, weight_f64, has_weight)
 
     max_iter = H * W
     for _ in range(max_iter):
@@ -400,12 +422,15 @@ def _flow_accum_mfd_cupy(fractions_data):
 def _flow_accum_mfd_tile_kernel(fractions, h, w,
                                  seed_top, seed_bottom,
                                  seed_left, seed_right,
-                                 seed_tl, seed_tr, seed_bl, seed_br):
+                                 seed_tl, seed_tr, seed_bl, seed_br,
+                                 weight, has_weight):
     """Seeded BFS MFD flow accumulation for a single tile.
 
     Parameters
     ----------
     fractions : (8, h, w) float64 -- MFD flow fractions for this tile
+    weight : (h, w) float64 per-cell contribution (1x1 dummy when unused)
+    has_weight : int, 1 to use ``weight`` instead of a unit count
     """
     dy = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.int64)
     dx = np.array([1, 1, 0, -1, -1, -1, 0, 1], dtype=np.int64)
@@ -421,7 +446,7 @@ def _flow_accum_mfd_tile_kernel(fractions, h, w,
             v = fractions[0, r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
-                accum[r, c] = 1.0
+                accum[r, c] = _cell_weight(weight, has_weight, r, c)
                 n_valid += 1
             else:
                 accum[r, c] = np.nan
@@ -666,7 +691,8 @@ def _compute_seeds_mfd(iy, ix, boundaries, frac_bdry,
 
 
 def _process_tile_mfd(iy, ix, fractions_da, boundaries, frac_bdry,
-                       chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       chunks_y, chunks_x, n_tile_y, n_tile_x,
+                       weight_da=None):
     """Run seeded MFD BFS on one tile; update boundaries in-place."""
     # Extract this tile's fractions: (8, tile_h, tile_w)
     y_start = sum(chunks_y[:iy])
@@ -683,7 +709,15 @@ def _process_tile_mfd(iy, ix, fractions_da, boundaries, frac_bdry,
         iy, ix, boundaries, frac_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    accum = _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds)
+    if weight_da is None:
+        weight, has_weight = _NO_WEIGHT, 0
+    else:
+        weight = _to_numpy_f64(
+            weight_da[y_start:y_end, x_start:x_end].compute())
+        has_weight = 1
+
+    accum = _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds,
+                                        weight, has_weight)
 
     # NaN cells don't contribute flow; replace with 0 for boundary storage
     new_top = np.where(np.isnan(accum[0, :]), 0.0, accum[0, :])
@@ -710,16 +744,20 @@ def _process_tile_mfd(iy, ix, fractions_da, boundaries, frac_bdry,
     return change
 
 
-def _flow_accum_mfd_dask_iterative(fractions_da, chunks_y, chunks_x):
+def _flow_accum_mfd_dask_iterative(fractions_da, chunks_y, chunks_x,
+                                   weight_da=None):
     """Iterative boundary-propagation for MFD dask arrays.
 
     Parameters
     ----------
     fractions_da : dask array of shape (8, H, W)
     chunks_y, chunks_x : tuples of chunk sizes for the spatial dims
+    weight_da : optional (H, W) array of per-cell contributions
     """
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, (chunks_y, chunks_x))
 
     # The 8 direction bands must stay in a single chunk: every tile kernel
     # needs all 8 fractions, and the lazy assembly drops axis 0 per block.
@@ -742,7 +780,7 @@ def _flow_accum_mfd_dask_iterative(fractions_da, chunks_y, chunks_x):
             for ix in range(n_tile_x):
                 c = _process_tile_mfd(iy, ix, fractions_da, boundaries,
                                        frac_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -750,7 +788,7 @@ def _flow_accum_mfd_dask_iterative(fractions_da, chunks_y, chunks_x):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile_mfd(iy, ix, fractions_da, boundaries,
                                        frac_bdry, chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                       n_tile_y, n_tile_x, weight_da)
                 if c > max_change:
                     max_change = c
 
@@ -760,11 +798,13 @@ def _flow_accum_mfd_dask_iterative(fractions_da, chunks_y, chunks_x):
     boundaries = boundaries.snapshot()
 
     return _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
-                                 chunks_y, chunks_x, n_tile_y, n_tile_x)
+                                 chunks_y, chunks_x, n_tile_y, n_tile_x,
+                                 weight_da)
 
 
 def _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
-                          chunks_y, chunks_x, n_tile_y, n_tile_x):
+                          chunks_y, chunks_x, n_tile_y, n_tile_x,
+                          weight_da=None):
     """Build a lazy dask array by re-running each MFD tile with converged seeds.
 
     fractions_da is (8, H, W) chunked one tile per (chunks_y, chunks_x)
@@ -777,7 +817,7 @@ def _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
     y_starts = np.cumsum((0,) + tuple(chunks_y[:-1]))
     x_starts = np.cumsum((0,) + tuple(chunks_x[:-1]))
 
-    def _tile(chunk, block_info=None):
+    def _tile(chunk, weight_block=None, block_info=None):
         # block_info[0]['array-location'] gives ((0, 8), (y0, y1), (x0, x1)).
         loc = block_info[0]['array-location']
         y0 = loc[1][0]
@@ -790,16 +830,26 @@ def _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
         seeds = _compute_seeds_mfd(
             iy, ix, boundaries, frac_bdry,
             chunks_y, chunks_x, n_tile_y, n_tile_x)
-        return _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds)
+        if weight_block is None:
+            weight, has_weight = _NO_WEIGHT, 0
+        else:
+            weight = _to_numpy_f64(weight_block)
+            has_weight = 1
+        return _flow_accum_mfd_tile_kernel(chunk, h, w, *seeds,
+                                           weight, has_weight)
 
+    # The 2-D weight aligns with the trailing (y, x) axes of the 3-D
+    # fractions array, so map_blocks pairs each spatial tile correctly.
+    inputs = [fractions_da] if weight_da is None else [fractions_da, weight_da]
     return da.map_blocks(
-        _tile, fractions_da, drop_axis=0,
+        _tile, *inputs, drop_axis=0,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
         **_dask_task_name_kwargs('xrspatial.flow_accumulation_mfd'),
     )
 
 
-def _flow_accum_mfd_dask_cupy(fractions_da, chunks_y, chunks_x):
+def _flow_accum_mfd_dask_cupy(fractions_da, chunks_y, chunks_x,
+                              weight_da=None):
     """Dask+CuPy MFD: convert to numpy, run iterative, convert back."""
     import cupy as cp
 
@@ -807,7 +857,14 @@ def _flow_accum_mfd_dask_cupy(fractions_da, chunks_y, chunks_x):
         lambda b: b.get(), dtype=fractions_da.dtype,
         meta=np.array((), dtype=fractions_da.dtype),
     )
-    result = _flow_accum_mfd_dask_iterative(fractions_np, chunks_y, chunks_x)
+    if weight_da is not None:
+        weight_da = _weight_as_dask(weight_da, (chunks_y, chunks_x))
+        weight_da = weight_da.map_blocks(
+            lambda b: b.get() if hasattr(b, 'get') else b,
+            dtype=weight_da.dtype, meta=np.array((), dtype=weight_da.dtype),
+        )
+    result = _flow_accum_mfd_dask_iterative(fractions_np, chunks_y, chunks_x,
+                                            weight_da)
     return result.map_blocks(
         cp.asarray, dtype=result.dtype,
         meta=cp.array((), dtype=result.dtype),
@@ -820,14 +877,15 @@ def _flow_accum_mfd_dask_cupy(fractions_da, chunks_y, chunks_x):
 
 @supports_dataset
 def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
+                           weight: xr.DataArray | None = None,
                            name: str = 'flow_accumulation_mfd') -> xr.DataArray:
     """Compute flow accumulation from an MFD flow direction grid.
 
     Takes the 3-D fractional output of ``flow_direction_mfd`` and
     accumulates upstream contributing area through all downslope
-    paths simultaneously.  Each cell starts with a value of 1 (itself)
-    and passes fractions of its accumulated value to each downstream
-    neighbor.
+    paths simultaneously.  Each cell starts with a value of 1 (itself),
+    or its ``weight`` when given, and passes fractions of its
+    accumulated value to each downstream neighbor.
 
     Parameters
     ----------
@@ -840,6 +898,13 @@ def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
         CuPy-backed Dask.
         If a Dataset is passed, the operation is applied to each
         data variable independently.
+    weight : xarray.DataArray, optional
+        2-D ``(H, W)`` raster on the same grid as ``flow_dir_mfd``
+        giving each cell's own contribution (for example precipitation
+        or melt).  When given, each output cell is the fraction-split
+        sum of ``weight`` over itself and every upstream cell draining
+        through it.  NaN weights contribute 0 and do not change the
+        output NaN mask; weights at nodata cells are ignored.
     name : str, default='flow_accumulation_mfd'
         Name of output DataArray.
 
@@ -848,8 +913,9 @@ def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
     xarray.DataArray or xr.Dataset
         2-D float64 array of flow accumulation values.  Each cell
         holds the total upstream contributing area (including itself)
-        that drains through it, weighted by MFD fractions.
-        NaN where the input has NaN.
+        that drains through it, weighted by MFD fractions, or the
+        split sum of ``weight`` over those cells when ``weight`` is
+        given.  NaN where the input has NaN.
 
     References
     ----------
@@ -877,22 +943,33 @@ def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
     _validate_mfd_fractions(data, func_name='flow_accumulation_mfd',
                             name='flow_dir_mfd')
 
+    weighted = weight is not None
+    w_data = _validate_weight(weight, flow_dir_mfd, 'flow_accumulation_mfd') \
+        if weighted else None
+
     if isinstance(data, np.ndarray):
-        _check_memory(data.shape[1], data.shape[2])
+        _check_memory(data.shape[1], data.shape[2], weighted=weighted)
+        if weighted:
+            w_np, has_w = _to_numpy_f64(w_data), 1
+        else:
+            w_np, has_w = _NO_WEIGHT, 0
         out = _flow_accum_mfd_cpu(
-            data.astype(np.float64), data.shape[1], data.shape[2])
+            data.astype(np.float64), data.shape[1], data.shape[2],
+            w_np, has_w)
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        _check_gpu_memory(data.shape[1], data.shape[2])
-        out = _flow_accum_mfd_cupy(data)
+        import cupy as cp
+        _check_gpu_memory(data.shape[1], data.shape[2], weighted=weighted)
+        w_cp = cp.asarray(w_data, dtype=cp.float64) if weighted else None
+        out = _flow_accum_mfd_cupy(data, w_cp)
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir_mfd):
         # Spatial chunk sizes from dims 1 and 2
         chunks_y = data.chunks[1]
         chunks_x = data.chunks[2]
-        out = _flow_accum_mfd_dask_cupy(data, chunks_y, chunks_x)
+        out = _flow_accum_mfd_dask_cupy(data, chunks_y, chunks_x, w_data)
     elif da is not None and isinstance(data, da.Array):
         chunks_y = data.chunks[1]
         chunks_x = data.chunks[2]
-        out = _flow_accum_mfd_dask_iterative(data, chunks_y, chunks_x)
+        out = _flow_accum_mfd_dask_iterative(data, chunks_y, chunks_x, w_data)
     else:
         raise TypeError(f"Unsupported array type: {type(data)}")
 

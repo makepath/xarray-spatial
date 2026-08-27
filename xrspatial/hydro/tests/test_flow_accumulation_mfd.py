@@ -507,3 +507,81 @@ class TestFlowAccumulationMFDCycleDetection:
         mfd = _make_cyclic_mfd(backend='dask')
         with pytest.raises(ValueError, match="cycle"):
             flow_accumulation_mfd(mfd).data.compute()
+
+
+class TestFlowAccumulationMFDWeight:
+    """Weighted accumulation (#3734)."""
+
+    @staticmethod
+    def _weighted_case():
+        elev = _make_plane_south(7, 7)
+        mfd = flow_direction_mfd(elev)
+        rng = np.random.default_rng(3734)
+        weight = xr.DataArray(rng.random((7, 7)) * 3.0, dims=['y', 'x'])
+        weight.values[2, 3] = np.nan
+        return mfd, weight
+
+    def test_ones_equals_count(self):
+        mfd, weight = self._weighted_case()
+        np.testing.assert_allclose(
+            flow_accumulation_mfd(mfd, weight=xr.ones_like(weight)).values,
+            flow_accumulation_mfd(mfd).values, equal_nan=True)
+
+    def test_uniform_weight_scales_count(self):
+        """A uniform weight w scales the unweighted count by w everywhere,
+        since the MFD split is linear in the accumulated value."""
+        elev = _make_plane_south(7, 7)
+        mfd = flow_direction_mfd(elev)
+        weight = xr.DataArray(np.full((7, 7), 2.5), dims=['y', 'x'])
+        accum = flow_accumulation_mfd(mfd, weight=weight)
+        count = flow_accumulation_mfd(mfd)
+        np.testing.assert_allclose(accum.values, count.values * 2.5,
+                                   equal_nan=True)
+
+    def test_nan_weight_contributes_zero(self):
+        mfd, weight = self._weighted_case()
+        filled = weight.fillna(0.0)
+        np.testing.assert_allclose(
+            flow_accumulation_mfd(mfd, weight=weight).values,
+            flow_accumulation_mfd(mfd, weight=filled).values, equal_nan=True)
+        # Mask still follows the fraction grid, not the weight.
+        accum = flow_accumulation_mfd(mfd, weight=weight)
+        assert np.array_equal(np.isnan(accum.values),
+                              np.isnan(mfd.values[0]))
+
+    def test_shape_mismatch_raises(self):
+        mfd, weight = self._weighted_case()
+        with pytest.raises(ValueError, match="weight"):
+            flow_accumulation_mfd(mfd, weight=weight[:, :5])
+
+    @pytest.mark.parametrize("chunks", [(3, 3), (7, 7), (2, 5)])
+    def test_dask_equals_numpy(self, chunks):
+        pytest.importorskip("dask.array")
+        mfd, weight = self._weighted_case()
+        expected = flow_accumulation_mfd(mfd, weight=weight).values
+        mfd_dask = mfd.chunk({'neighbor': 8, 'y': chunks[0], 'x': chunks[1]})
+        for w in (weight, weight.chunk({'y': 4, 'x': 2})):
+            np.testing.assert_allclose(
+                flow_accumulation_mfd(mfd_dask, weight=w).values,
+                expected, equal_nan=True)
+
+    def test_cupy_equals_numpy(self):
+        from xrspatial.utils import has_cuda_and_cupy
+        if not has_cuda_and_cupy():
+            pytest.skip("CUDA/cupy not available")
+        import cupy
+        import dask.array as da
+        mfd, weight = self._weighted_case()
+        expected = flow_accumulation_mfd(mfd, weight=weight).values
+        mfd_cp = mfd.copy(data=cupy.asarray(mfd.values))
+        w_cp = weight.copy(data=cupy.asarray(weight.values))
+        np.testing.assert_allclose(
+            flow_accumulation_mfd(mfd_cp, weight=w_cp).data.get(),
+            expected, equal_nan=True)
+        mfd_dc = mfd.copy(data=da.from_array(cupy.asarray(mfd.values),
+                                             chunks=(8, 3, 3)))
+        w_dc = weight.copy(data=da.from_array(cupy.asarray(weight.values),
+                                              chunks=(3, 3)))
+        np.testing.assert_allclose(
+            flow_accumulation_mfd(mfd_dc, weight=w_dc).data.compute().get(),
+            expected, equal_nan=True)
