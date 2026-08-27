@@ -26,6 +26,9 @@
 - edge_detection: add asv benchmarks (#3673)
 - edge_detection: add Examples sections, document NaN propagation, and fix cross-correlation wording and lint (#3683, #3678, #3679)
 
+#### Thanks
+Thanks to @jkingslake for requesting the flow accumulation weight raster (#3734).
+
 
 ### Version 0.10.17 - 2026-07-17
 
