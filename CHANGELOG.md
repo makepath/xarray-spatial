@@ -2,6 +2,34 @@
 -----------
 
 
+### Version 0.10.18 - 2026-08-27
+
+#### New features
+- hydro: add an optional weight raster to flow accumulation (#3735)
+- packaging: make the gpu extra pip-installable by dropping cuspatial and using the cupy-cuda12x/13x wheels (#3700)
+- packaging: declare dependency version bounds and test them in CI (#3702)
+
+#### Bug fixes and improvements
+- surface_direction: fix bearings on north-up rasters and on chunked dask input (#3731)
+- surface_distance: reject NaN and negative max_distance (#3720)
+- surface_distance: stop outputs adopting the dask graph token as .name (#3716)
+- surface_distance: benchmark the paths that were never timed (#3717)
+- erosion: stop NaN input from reading out of bounds and flooding the output (#3704)
+- reproject: stop the numba fast path claiming CRSs it cannot reproduce (#3698)
+- proximity: compare nearest-target distances at float32 on every backend (#3690)
+- pathfinding: raise on empty rasters, fix perf nits, and fill test and benchmark gaps (#3706)
+- geotiff: take color_ramp statistics from the materialised COG buffer instead of re-running the source graph (#3696)
+- gpu_rtx: hash mesh data without a full device-to-host copy and launch the triangulation kernel once (#3693)
+- hydro: drop the twi dask+cupy host round-trip and vectorize the watershed init loops (#3694)
+- edge_detection: promote wide integer rasters to float64 (#3686)
+- edge_detection: pin results to scipy.ndimage with golden-value tests and add tests for Inf, boundary NaN, degenerate shapes, and multi-chunk dask (#3681, #3685)
+- edge_detection: add asv benchmarks (#3673)
+- edge_detection: add Examples sections, document NaN propagation, and fix cross-correlation wording and lint (#3683, #3678, #3679)
+
+#### Thanks
+Thanks to @jkingslake for requesting the flow accumulation weight raster (#3734).
+
+
 ### Version 0.10.17 - 2026-07-17
 
 #### Bug fixes and improvements
