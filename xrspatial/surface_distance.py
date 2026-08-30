@@ -83,13 +83,14 @@ _MODE_TASK_NAMES = {
 #   src_row (int64)             8
 #   src_col (int64)             8
 #   visited (int8)              1
-#   h_keys (float64)            8
-#   h_rows (int64)              8
-#   h_cols (int64)              8
+#   heap (float64 + 2x int64)   24 per slot
 #   output (float32)            4
 #   direction-mode temps        ~16
-# Total ~80 bytes/pixel.  A 50000x50000 raster needs ~200 GB.
-_BYTES_PER_PIXEL = 80
+# The Dijkstra heap holds up to (n_neighbors + 1) slots per pixel, so the
+# worst case is 8-connectivity: 9 * 24 = 216 bytes/pixel of heap on top of
+# the ~53 bytes of everything else.  Round up to 272.  A 50000x50000 raster
+# needs ~680 GB.
+_BYTES_PER_PIXEL = 272
 
 # CuPy backend skips the explicit binary heap (parallel relaxation instead)
 # but still allocates dist, alloc, srow, scol, src cast, elev cast, mask,
@@ -211,7 +212,13 @@ def _dijkstra(elev_data, height, width, max_distance,
     """
     n_neighbors = len(dy)
 
-    max_heap = height * width
+    # Heap arrays.  This is a lazy-deletion min-heap: a pixel is enqueued
+    # again every time its tentative distance improves, and it can improve
+    # once per settled neighbour.  Total pushes are therefore bounded by the
+    # directed edge count (n_neighbors per pixel) plus one seed push per
+    # pixel.  The old height*width sizing underflows that bound and let
+    # _heap_push write past the end of the arrays, corrupting memory.
+    max_heap = height * width * (n_neighbors + 1)
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)
@@ -274,7 +281,9 @@ def _dijkstra_geodesic(elev_data, height, width, max_distance,
     """
     n_neighbors = len(dy)
 
-    max_heap = height * width
+    # See _dijkstra for why the heap is sized to the push bound rather than
+    # to the pixel count.
+    max_heap = height * width * (n_neighbors + 1)
     h_keys = np.empty(max_heap, dtype=np.float64)
     h_rows = np.empty(max_heap, dtype=np.int64)
     h_cols = np.empty(max_heap, dtype=np.int64)
