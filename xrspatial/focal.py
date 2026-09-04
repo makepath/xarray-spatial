@@ -1470,14 +1470,12 @@ def _calc_hotspots_numpy(z_array):
             zscore = z_array[y, x]
 
             # Confidence is 99 for |z| > 2.58, 95 for 1.96 < |z| <= 2.58,
-            # 90 for 1.65 < |z| <= 1.96, else 0. The GPU twin
-            # (_gpu_hotspots) spells this out as a p-value / confidence
-            # ladder; the p-value tests there are implied by the |z|
-            # tests, so the ladder collapses to these three thresholds.
-            # NaN compares False everywhere and classifies to 0.
+            # 90 for 1.65 < |z| <= 1.96, else 0. This is the p-value /
+            # confidence ladder collapsed to the three thresholds that
+            # reach the output. NaN compares False everywhere and
+            # classifies to 0.
             az = abs(zscore)
-            confidence = (90 * (az > 1.65) + 5 * (az > 1.96)
-                          + 4 * (az > 2.58))
+            confidence = 90 * (az > 1.65) + 5 * (az > 1.96) + 4 * (az > 2.58)
             hot_cold = (zscore > 0) - (zscore < 0)
 
             out[y, x] = hot_cold * confidence
