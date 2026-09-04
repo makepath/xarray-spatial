@@ -825,11 +825,16 @@ def test_bruteforce_concurrent_launches_match_serial():
     # pool and check every caller gets the single-threaded answer.
     from concurrent.futures import ThreadPoolExecutor
 
-    raster = _simple_raster()
-    expected = allocation(raster, x='lon', y='lat').data
+    # Use a raster large enough that the launches actually overlap.
+    data = np.zeros((40, 40), dtype=np.float64)
+    rng = np.random.default_rng(3740)
+    data.flat[rng.choice(data.size, 50, replace=False)] = rng.integers(
+        1, 6, 50)
+    raster = create_test_raster(data, backend='numpy')
+    expected = allocation(raster).data
 
     def one(_):
-        return allocation(raster, x='lon', y='lat').data
+        return allocation(raster).data
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(one, range(32)))

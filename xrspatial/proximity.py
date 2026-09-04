@@ -540,6 +540,9 @@ def _collect_targets(img, target_values):
 # comment in ``_proximity_cuda_kernel``). A candidate whose proxy does not
 # beat the running best has a float32 distance >= the running best and could
 # never have won under that rule, so skipping it changes nothing.
+# The running best is updated with a select rather than a branch, and only
+# when the candidate wins, so a NaN distance (say a haversine term rounded a
+# hair past 1.0) is skipped instead of poisoning every later comparison.
 
 @ngjit
 def _nearest_euclidean(px, py, txs, tys):
@@ -554,7 +557,7 @@ def _nearest_euclidean(px, py, txs, tys):
             d = np.float32(np.sqrt(proxy))
             better = d < best_dist
             best_idx = k if better else best_idx
-            best_dist = d
+            best_dist = d if better else best_dist
             best_proxy = proxy
     return best_idx, best_dist
 
@@ -572,7 +575,7 @@ def _nearest_manhattan(px, py, txs, tys):
             d = np.float32(proxy)
             better = d < best_dist
             best_idx = k if better else best_idx
-            best_dist = d
+            best_dist = d if better else best_dist
             best_proxy = proxy
     return best_idx, best_dist
 
@@ -596,7 +599,7 @@ def _nearest_great_circle(px, py, tlons, tlats, tcoslats):
             d = np.float32(6378137 * 2 * np.arcsin(np.sqrt(proxy)))
             better = d < best_dist
             best_idx = k if better else best_idx
-            best_dist = d
+            best_dist = d if better else best_dist
             best_proxy = proxy
     return best_idx, best_dist
 
@@ -729,6 +732,7 @@ def _process_numpy_bruteforce(
             raise ValueError(_GREAT_CIRCLE_RANGE_MESSAGES[violation])
         tlons, tlats, tcoslats = _great_circle_target_terms(txs, tys)
     else:
+        # Placeholders: the kernel only reads these under GREAT_CIRCLE.
         tlons = tlats = tcoslats = np.empty(0, dtype=np.float64)
 
     with _PARALLEL_KERNEL_LOCK:
