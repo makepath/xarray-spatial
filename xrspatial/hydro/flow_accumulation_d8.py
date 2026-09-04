@@ -210,10 +210,15 @@ del _code, _dy, _dx
 @ngjit
 def _code_to_offset(code):
     """Return (dy, dx) row/col offset for a D8 direction code."""
+    # NaN never reaches int(): the float-to-int conversion of NaN is
+    # undefined (INT64_MIN on x86, 0 on aarch64) and numba does no bounds
+    # checking, so the table index must never depend on it.
+    if code != code:
+        return 0, 0
     c = int(code)
-    # Inside-the-box guard, not a rejection test: int(nan) is INT64_MIN in
-    # numba and there is no bounds checking, so ``c < 0 or c > 128`` style
-    # guards would not stop a NaN code from indexing out of bounds.
+    # Guard on the converted integer with an inside-the-box test.  A
+    # rejection test on the float (``code < 0 or code > 128``) is False for
+    # NaN and would fall through to the lookup.
     if 0 <= c <= 128:
         return _D8_DY[c], _D8_DX[c]
     return 0, 0

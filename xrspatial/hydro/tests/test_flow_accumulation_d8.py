@@ -3,6 +3,12 @@ import pytest
 import xarray as xr
 
 from xrspatial.hydro import flow_accumulation
+from xrspatial.hydro.flow_accumulation_d8 import (
+    _D8_DX,
+    _D8_DY,
+    _code_to_offset,
+    _code_to_offset_py,
+)
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,
@@ -662,10 +668,6 @@ def test_weight_dataset_accessor():
     (np.nan, (0, 0)),
 ])
 def test_code_to_offset_matches_if_chain(code, expected):
-    from xrspatial.hydro.flow_accumulation_d8 import (
-        _code_to_offset,
-        _code_to_offset_py,
-    )
     dy, dx = _code_to_offset(code)
     assert (dy, dx) == expected
     assert isinstance(dy, (int, np.integer))
@@ -675,7 +677,6 @@ def test_code_to_offset_matches_if_chain(code, expected):
 
 
 def test_code_to_offset_tables_only_populate_d8_codes():
-    from xrspatial.hydro.flow_accumulation_d8 import _D8_DX, _D8_DY
     assert _D8_DY.shape == _D8_DX.shape == (129,)
     populated = np.flatnonzero((_D8_DY != 0) | (_D8_DX != 0))
     assert populated.tolist() == [1, 2, 4, 8, 16, 32, 64, 128]
