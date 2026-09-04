@@ -29,10 +29,13 @@ class SlopeNaN(Benchmarking):
         ny = nx // 2
         agg = get_xr_dataarray((ny, nx), type, include_nan=True)
         rng = np.random.default_rng(71942)
-        speckle = rng.random((ny, nx)) < 0.3
+        speckle = rng.random((ny, nx), dtype=np.float32) < 0.3
         self.xr = agg.where(~speckle)
 
     def time_slope_nan(self, nx, type):
+        # Force the compute so the dask case times the kernel rather than
+        # graph construction. Slope.time_slope does not, so the dask numbers
+        # of the two classes are not directly comparable.
         result = self.func(self.xr)
         if hasattr(result.data, "compute"):
             result.data.compute()

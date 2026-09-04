@@ -43,7 +43,7 @@ def _geodesic_cuda_dims(shape):
 
 
 # =====================================================================
-# Planar backend functions (unchanged)
+# Planar backend functions
 # =====================================================================
 
 @ngjit

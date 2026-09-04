@@ -631,7 +631,9 @@ def test_units_overridden_to_degrees_geodesic():
 # flows through the Horn stencil and the centre is masked with a select. Pin
 # the resulting footprint on speckled nodata so a future edit can't widen or
 # shrink it: NaN at every centre-NaN cell and its 8-neighbours, finite
-# everywhere else in the interior.
+# everywhere else in the interior. The old kernel produced the same footprint,
+# so these pass on either version; they pin behaviour rather than reproduce a
+# regression.
 def _speckled_nan_data():
     rng = np.random.default_rng(3739)
     data = rng.normal(0, 2, size=(40, 60))
