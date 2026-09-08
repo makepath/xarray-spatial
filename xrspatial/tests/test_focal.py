@@ -1541,6 +1541,71 @@ def test_hotspots_dask_cupy():
         dask_cupy_hotspots.data[pad:-pad, pad:-pad].compute().get())
 
 
+def test_hotspots_classifier_thresholds_3737():
+    # Regression for #3737: the z-score classifier was rewritten from a
+    # nine-branch threshold ladder into boolean arithmetic. Pin the
+    # classification at every threshold and its float64 neighbours, at
+    # both signs, so the open/closed side of each interval cannot drift.
+    from xrspatial.focal import _calc_hotspots_numpy
+
+    thresholds = np.array([1.29, 1.65, 1.96, 2.33, 2.58])
+    below = np.nextafter(thresholds, -np.inf)
+    above = np.nextafter(thresholds, np.inf)
+    z = np.stack([below, thresholds, above])
+    z = np.concatenate([z, -z])
+
+    # Confidence is 99 for |z| > 2.58, 95 for 1.96 < |z| <= 2.58,
+    # 90 for 1.65 < |z| <= 1.96, else 0. 1.29 and 2.33 are p-value
+    # thresholds in the original ladder and never change the output.
+    expected = np.array([
+        [0, 0, 90, 95, 95],     # just below each threshold
+        [0, 0, 90, 95, 95],     # exactly on each threshold
+        [0, 90, 95, 95, 99],    # just above each threshold
+    ], dtype=np.int8)
+    expected = np.concatenate([expected, -expected])
+
+    out = _calc_hotspots_numpy(z)
+    assert out.dtype == np.int8
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_hotspots_classifier_float32_3737():
+    # The production callers feed the classifier float32 z-scores
+    # (_hotspots_numpy casts before classifying). The thresholds are
+    # float64 literals, so a float32 input is promoted before comparison:
+    # np.float32(1.65) sits just below 1.65 and np.float32(1.96) just
+    # above it. Pin that the float32 result equals the classification of
+    # the same values widened to float64, so a dtype-specific comparison
+    # cannot creep in.
+    from xrspatial.focal import _calc_hotspots_numpy
+
+    thresholds = np.array([1.29, 1.65, 1.96, 2.33, 2.58])
+    z = np.stack([np.nextafter(thresholds, -np.inf), thresholds,
+                  np.nextafter(thresholds, np.inf)])
+    z = np.concatenate([z, -z]).astype(np.float32)
+    z = np.concatenate([np.nextafter(z, np.float32(-np.inf)), z,
+                        np.nextafter(z, np.float32(np.inf))])
+
+    out32 = _calc_hotspots_numpy(z)
+    out64 = _calc_hotspots_numpy(z.astype(np.float64))
+    assert out32.dtype == np.int8
+    np.testing.assert_array_equal(out32, out64)
+    # The float32 grid must still hit every band on both sides.
+    assert set(np.unique(out32).tolist()) == {-99, -95, -90, 0, 90, 95, 99}
+
+
+def test_hotspots_classifier_nonfinite_3737():
+    # NaN compares False against every threshold and classifies to 0;
+    # +/-inf land in the top band with the matching sign; signed zeros
+    # are neither hot nor cold.
+    from xrspatial.focal import _calc_hotspots_numpy
+
+    z = np.array([[np.nan, np.inf, -np.inf, 0.0, -0.0]])
+    out = _calc_hotspots_numpy(z)
+    assert out.dtype == np.int8
+    np.testing.assert_array_equal(out, [[0, 99, -99, 0, 0]])
+
+
 @dask_array_available
 @cuda_and_cupy_available
 def test_hotspots_dask_cupy_matches_numpy():

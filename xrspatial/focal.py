@@ -1469,29 +1469,14 @@ def _calc_hotspots_numpy(z_array):
         for x in prange(cols):
             zscore = z_array[y, x]
 
-            # find p value
-            p_value = 1.0
-            if abs(zscore) >= 2.33:
-                p_value = 0.0099
-            elif abs(zscore) >= 1.65:
-                p_value = 0.0495
-            elif abs(zscore) >= 1.29:
-                p_value = 0.0985
-
-            # confidence
-            confidence = 0
-            if abs(zscore) > 2.58 and p_value < 0.01:
-                confidence = 99
-            elif abs(zscore) > 1.96 and p_value < 0.05:
-                confidence = 95
-            elif abs(zscore) > 1.65 and p_value < 0.1:
-                confidence = 90
-
-            hot_cold = 0
-            if zscore > 0:
-                hot_cold = 1
-            elif zscore < 0:
-                hot_cold = -1
+            # Confidence is 99 for |z| > 2.58, 95 for 1.96 < |z| <= 2.58,
+            # 90 for 1.65 < |z| <= 1.96, else 0. This is the p-value /
+            # confidence ladder collapsed to the three thresholds that
+            # reach the output. NaN compares False everywhere and
+            # classifies to 0.
+            az = abs(zscore)
+            confidence = 90 * (az > 1.65) + 5 * (az > 1.96) + 4 * (az > 2.58)
+            hot_cold = (zscore > 0) - (zscore < 0)
 
             out[y, x] = hot_cold * confidence
     return out
