@@ -625,3 +625,49 @@ def test_units_overridden_to_degrees_geodesic():
     result = slope(raster, method='geodesic')
     assert result.attrs['units'] == 'degrees'
     assert raster.attrs['units'] == 'm'
+
+
+# The planar CPU kernel has no per-cell NaN early-out (#3739): neighbour NaN
+# flows through the Horn stencil and the centre is masked with a select. Pin
+# the resulting footprint on speckled nodata so a future edit can't widen or
+# shrink it: NaN at every centre-NaN cell and its 8-neighbours, finite
+# everywhere else in the interior. The old kernel produced the same footprint,
+# so these pass on either version; they pin behaviour rather than reproduce a
+# regression.
+def _speckled_nan_data():
+    rng = np.random.default_rng(3739)
+    data = rng.normal(0, 2, size=(40, 60))
+    data[rng.random(data.shape) < 0.1] = np.nan
+    return data
+
+
+def _expected_nan_footprint(data):
+    nan_mask = np.isnan(data)
+    footprint = np.zeros_like(nan_mask)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            footprint[1:-1, 1:-1] |= nan_mask[1 + dy:data.shape[0] - 1 + dy,
+                                              1 + dx:data.shape[1] - 1 + dx]
+    footprint[0, :] = footprint[-1, :] = footprint[:, 0] = footprint[:, -1] = True
+    return footprint
+
+
+def test_speckled_nan_footprint_numpy():
+    data = _speckled_nan_data()
+    agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    result = slope(agg)
+    general_output_checks(agg, result, verify_attrs=False)
+    np.testing.assert_array_equal(np.isnan(result.data), _expected_nan_footprint(data))
+    assert np.all(np.isfinite(result.data[~np.isnan(result.data)]))
+
+
+@dask_array_available
+def test_speckled_nan_footprint_dask_numpy():
+    data = _speckled_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(16, 24))
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, slope, nan_edges=False,
+                                   verify_attrs=False)
+    np.testing.assert_array_equal(np.isnan(slope(dask_agg).data.compute()),
+                                  _expected_nan_footprint(data))

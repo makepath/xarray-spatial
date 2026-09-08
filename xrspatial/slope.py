@@ -43,7 +43,7 @@ def _geodesic_cuda_dims(shape):
 
 
 # =====================================================================
-# Planar backend functions (unchanged)
+# Planar backend functions
 # =====================================================================
 
 @ngjit
@@ -54,8 +54,11 @@ def _cpu(data, cellsize_x, cellsize_y):
     rows, cols = data.shape
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
-            if np.isnan(data[y, x]):
-                continue
+            # No early-out on a NaN centre: the branch is unpredictable on
+            # speckled nodata and costs more than the arithmetic it skips.
+            # Neighbour NaN already propagates through the stencil; the centre
+            # is folded back in with a select so out[y, x] is NaN whenever
+            # data[y, x] is.
             a = data[y + 1, x - 1]
             b = data[y + 1, x]
             c = data[y + 1, x + 1]
@@ -67,7 +70,9 @@ def _cpu(data, cellsize_x, cellsize_y):
             dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x)
             dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y)
             p = (dz_dx * dz_dx + dz_dy * dz_dy) ** .5
-            out[y, x] = np.arctan(p) * 57.29578
+            r = np.arctan(p) * 57.29578
+            ctr = data[y, x]
+            out[y, x] = r if ctr == ctr else np.nan
     return out
 
 
