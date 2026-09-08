@@ -3,6 +3,12 @@ import pytest
 import xarray as xr
 
 from xrspatial.hydro import flow_accumulation
+from xrspatial.hydro.flow_accumulation_d8 import (
+    _D8_DX,
+    _D8_DY,
+    _code_to_offset,
+    _code_to_offset_py,
+)
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,
@@ -626,3 +632,51 @@ def test_weight_dataset_accessor():
     expected = flow_accumulation(agg, weight=w).data
     for var in ('a', 'b'):
         np.testing.assert_allclose(out[var].data, expected, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# D8 code -> (dy, dx) lookup (#3738)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("code, expected", [
+    # the eight valid codes: E, SE, S, SW, W, NW, N, NE
+    (1, (0, 1)),
+    (2, (1, 1)),
+    (4, (1, 0)),
+    (8, (1, -1)),
+    (16, (0, -1)),
+    (32, (-1, -1)),
+    (64, (-1, 0)),
+    (128, (-1, 1)),
+    # float codes as they arrive from a float64 flow-direction raster
+    (4.0, (1, 0)),
+    (128.0, (-1, 1)),
+    # no-flow / pit
+    (0, (0, 0)),
+    (0.0, (0, 0)),
+    # in-range but not a power of two
+    (3, (0, 0)),
+    (5, (0, 0)),
+    # outside the table
+    (129, (0, 0)),
+    (255, (0, 0)),
+    (-1, (0, 0)),
+    (1e9, (0, 0)),
+    (-1e9, (0, 0)),
+    # NaN: int(nan) is INT64_MIN inside numba, the guard must catch it
+    # before the table is indexed (run under NUMBA_BOUNDSCHECK=1 to check)
+    (np.nan, (0, 0)),
+])
+def test_code_to_offset_matches_if_chain(code, expected):
+    dy, dx = _code_to_offset(code)
+    assert (dy, dx) == expected
+    assert isinstance(dy, (int, np.integer))
+    assert isinstance(dx, (int, np.integer))
+    if code == code:  # _code_to_offset_py raises on NaN like int(nan) does
+        assert _code_to_offset_py(code) == expected
+
+
+def test_code_to_offset_tables_only_populate_d8_codes():
+    assert _D8_DY.shape == _D8_DX.shape == (129,)
+    populated = np.flatnonzero((_D8_DY != 0) | (_D8_DX != 0))
+    assert populated.tolist() == [1, 2, 4, 8, 16, 32, 64, 128]

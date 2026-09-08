@@ -192,26 +192,35 @@ def _no_weight_cupy():
 # Direction helpers
 # =====================================================================
 
+# (dy, dx) row/col offset per D8 code, indexed by the code itself.  Only
+# the eight power-of-two entries are non-zero; every other in-range index
+# stays (0, 0) so codes like 3 or 5 keep meaning "no flow".  numba freezes
+# module-level arrays as compile-time constants, so the lookup below is a
+# range check plus two loads instead of an eight-way branch chain.
+_D8_DY = np.zeros(129, dtype=np.int64)
+_D8_DX = np.zeros(129, dtype=np.int64)
+for _code, (_dy, _dx) in ((1, (0, 1)), (2, (1, 1)), (4, (1, 0)), (8, (1, -1)),
+                          (16, (0, -1)), (32, (-1, -1)), (64, (-1, 0)),
+                          (128, (-1, 1))):
+    _D8_DY[_code] = _dy
+    _D8_DX[_code] = _dx
+del _code, _dy, _dx
+
+
 @ngjit
 def _code_to_offset(code):
     """Return (dy, dx) row/col offset for a D8 direction code."""
+    # NaN never reaches int(): the float-to-int conversion of NaN is
+    # undefined (INT64_MIN on x86, 0 on aarch64) and numba does no bounds
+    # checking, so the table index must never depend on it.
+    if code != code:
+        return 0, 0
     c = int(code)
-    if c == 1:
-        return 0, 1
-    elif c == 2:
-        return 1, 1
-    elif c == 4:
-        return 1, 0
-    elif c == 8:
-        return 1, -1
-    elif c == 16:
-        return 0, -1
-    elif c == 32:
-        return -1, -1
-    elif c == 64:
-        return -1, 0
-    elif c == 128:
-        return -1, 1
+    # Guard on the converted integer with an inside-the-box test.  A
+    # rejection test on the float (``code < 0 or code > 128``) is False for
+    # NaN and would fall through to the lookup.
+    if 0 <= c <= 128:
+        return _D8_DY[c], _D8_DX[c]
     return 0, 0
 
 
