@@ -1,3 +1,4 @@
+import threading
 import warnings
 from functools import partial
 
@@ -15,7 +16,7 @@ import math as _math
 
 import numpy as np
 import xarray as xr
-from numba import cuda, prange
+from numba import cuda, jit, prange
 
 try:
     import cupy
@@ -493,7 +494,209 @@ def _is_target_value(v, target_values):
     return False
 
 
+# Numba parallel=True kernels must not be launched concurrently from multiple
+# Python threads: the default 'workqueue' threading layer is not threadsafe and
+# aborts the process (SIGABRT on macOS) when two host threads enter a parallel
+# region at once. _process_dask maps _process_numpy over chunks under dask's
+# threaded scheduler, and that reaches the brute-force kernel for GREAT_CIRCLE,
+# ALLOCATION, DIRECTION and the no-scipy PROXIMITY fallback, so the kernel
+# launch is serialized behind this lock. Same hazard and fix as the
+# convolution, terrain and reproject kernels (#3141).
+_PARALLEL_KERNEL_LOCK = threading.Lock()
+
+
 @ngjit
+def _collect_targets(img, target_values):
+    """Row/col indices of every target pixel, in flat (row-major) order."""
+    height, width = img.shape
+    n_targets = 0
+    for line in range(height):
+        for col in range(width):
+            if _is_target_value(img[line, col], target_values):
+                n_targets += 1
+
+    target_rows = np.empty(n_targets, dtype=np.int64)
+    target_cols = np.empty(n_targets, dtype=np.int64)
+    t = 0
+    for line in range(height):
+        for col in range(width):
+            if _is_target_value(img[line, col], target_values):
+                target_rows[t] = line
+                target_cols[t] = col
+                t += 1
+    return target_rows, target_cols
+
+
+# The three inner loops below each scan every target for one pixel and return
+# (index, float32 distance) of the nearest one, or (-1, inf) with no targets.
+#
+# They compare a cheap proxy that is monotone in the distance (squared
+# distance, |dx| + |dy|, the haversine term) and only evaluate the sqrt /
+# arcsin and the float32 rounding when the proxy beats the running best. The
+# strict ``<`` that decides the winner still runs on the float32 distance, the
+# same value ``_distance`` returns, so the documented tie-break is unchanged:
+# two targets whose float64 distances differ only past the float32 mantissa
+# are a tie and the lowest flat index wins (issue #3689, and the matching
+# comment in ``_proximity_cuda_kernel``). A candidate whose proxy does not
+# beat the running best has a float32 distance >= the running best and could
+# never have won under that rule, so skipping it changes nothing.
+# The running best is updated with a select rather than a branch, and only
+# when the candidate wins, so a NaN distance (say a haversine term rounded a
+# hair past 1.0) is skipped instead of poisoning every later comparison.
+
+@ngjit
+def _nearest_euclidean(px, py, txs, tys):
+    best_proxy = np.inf
+    best_dist = np.float32(np.inf)
+    best_idx = -1
+    for k in range(len(txs)):
+        dx = px - txs[k]
+        dy = py - tys[k]
+        proxy = dx * dx + dy * dy
+        if proxy < best_proxy:
+            d = np.float32(np.sqrt(proxy))
+            better = d < best_dist
+            best_idx = k if better else best_idx
+            best_dist = d if better else best_dist
+            best_proxy = proxy
+    return best_idx, best_dist
+
+
+@ngjit
+def _nearest_manhattan(px, py, txs, tys):
+    best_proxy = np.inf
+    best_dist = np.float32(np.inf)
+    best_idx = -1
+    for k in range(len(txs)):
+        dx = px - txs[k]
+        dy = py - tys[k]
+        proxy = abs(dx) + abs(dy)
+        if proxy < best_proxy:
+            d = np.float32(proxy)
+            better = d < best_dist
+            best_idx = k if better else best_idx
+            best_dist = d if better else best_dist
+            best_proxy = proxy
+    return best_idx, best_dist
+
+
+@ngjit
+def _nearest_great_circle(px, py, tlons, tlats, tcoslats):
+    # Same arithmetic, in the same order, as great_circle_distance with the
+    # default radius, so the float32 distance is bit-identical to _distance.
+    lat1 = np.radians(py)
+    lon1 = np.radians(px)
+    coslat1 = np.cos(lat1)
+    best_proxy = np.inf
+    best_dist = np.float32(np.inf)
+    best_idx = -1
+    for k in range(len(tlons)):
+        dlon = tlons[k] - lon1
+        dlat = tlats[k] - lat1
+        proxy = np.sin(dlat / 2.0) ** 2 + \
+            coslat1 * tcoslats[k] * np.sin(dlon / 2.0) ** 2
+        if proxy < best_proxy:
+            d = np.float32(6378137 * 2 * np.arcsin(np.sqrt(proxy)))
+            better = d < best_dist
+            best_idx = k if better else best_idx
+            best_dist = d if better else best_dist
+            best_proxy = proxy
+    return best_idx, best_dist
+
+
+@ngjit
+def _great_circle_target_terms(txs, tys):
+    # Precompute the per-target radians and cos(lat) with numba's np.radians /
+    # np.cos rather than numpy's, so they match what the per-pixel side of
+    # _nearest_great_circle (and great_circle_distance) computes bit for bit.
+    n = len(txs)
+    tlons = np.empty(n, dtype=np.float64)
+    tlats = np.empty(n, dtype=np.float64)
+    tcoslats = np.empty(n, dtype=np.float64)
+    for k in range(n):
+        tlons[k] = np.radians(txs[k])
+        tlats[k] = np.radians(tys[k])
+        tcoslats[k] = np.cos(tlats[k])
+    return tlons, tlats, tcoslats
+
+
+@ngjit
+def _great_circle_range_violation(xs, ys, txs, tys):
+    # Report the first out-of-range coordinate in the order the per-pair
+    # guards in great_circle_distance would have hit it when the pixel loop
+    # called it pair by pair: pixel (0, 0) against every target, then the
+    # remaining pixels. 0 = no violation, otherwise the guard number (1: x of
+    # the first point, 2: x of the second, 3: y of the first, 4: y of the
+    # second). NaN coordinates (dask halo padding) fail no comparison, as
+    # before.
+    px = xs[0, 0]
+    py = ys[0, 0]
+    if px > 180 or px < -180:
+        return 1
+    if txs[0] > 180 or txs[0] < -180:
+        return 2
+    if py > 90 or py < -90:
+        return 3
+    if tys[0] > 90 or tys[0] < -90:
+        return 4
+    for k in range(1, len(txs)):
+        if txs[k] > 180 or txs[k] < -180:
+            return 2
+        if tys[k] > 90 or tys[k] < -90:
+            return 4
+    height, width = xs.shape
+    for line in range(height):
+        for col in range(width):
+            if xs[line, col] > 180 or xs[line, col] < -180:
+                return 1
+            if ys[line, col] > 90 or ys[line, col] < -90:
+                return 3
+    return 0
+
+
+_GREAT_CIRCLE_RANGE_MESSAGES = {
+    1: "Invalid x-coordinate of the first point."
+       "Must be in the range [-180, 180]",
+    2: "Invalid x-coordinate of the second point."
+       "Must be in the range [-180, 180]",
+    3: "Invalid y-coordinate of the first point."
+       "Must be in the range [-90, 90]",
+    4: "Invalid y-coordinate of the second point."
+       "Must be in the range [-90, 90]",
+}
+
+
+@jit(nopython=True, nogil=True, parallel=True)
+def _bruteforce_kernel(
+    img, xs, ys, target_rows, target_cols, txs, tys, tlons, tlats, tcoslats,
+    max_distance, distance_metric, process_mode, output
+):
+    # The metric branch sits per pixel, outside the target loop, and the
+    # metric stays a runtime value so one compiled specialization serves all
+    # three. Rows are independent, so prange over them.
+    height, width = img.shape
+    for line in prange(height):
+        for col in range(width):
+            px = xs[line, col]
+            py = ys[line, col]
+            if distance_metric == EUCLIDEAN:
+                best_idx, best_dist = _nearest_euclidean(px, py, txs, tys)
+            elif distance_metric == GREAT_CIRCLE:
+                best_idx, best_dist = _nearest_great_circle(
+                    px, py, tlons, tlats, tcoslats)
+            else:
+                best_idx, best_dist = _nearest_manhattan(px, py, txs, tys)
+            if best_idx >= 0 and best_dist <= max_distance:
+                if process_mode == PROXIMITY:
+                    output[line, col] = best_dist
+                elif process_mode == ALLOCATION:
+                    output[line, col] = img[
+                        target_rows[best_idx], target_cols[best_idx]]
+                else:
+                    output[line, col] = _calc_direction(
+                        px, txs[best_idx], py, tys[best_idx])
+
+
 def _process_numpy_bruteforce(
     img, xs, ys, target_values, max_distance, distance_metric, process_mode
 ):
@@ -506,53 +709,38 @@ def _process_numpy_bruteforce(
     ALLOCATION/DIRECTION modes, and PROXIMITY when scipy is missing.
 
     ``xs`` and ``ys`` are the per-pixel 2D coordinate grids built by the caller.
+
+    The target coordinates are gathered into flat arrays once, the per-metric
+    inner loops live in ``_nearest_*`` and the pixel loop runs in parallel over
+    rows in ``_bruteforce_kernel``, serialized behind ``_PARALLEL_KERNEL_LOCK``
+    because the dask path calls this per chunk from worker threads.
     """
-    height, width = img.shape
+    target_rows, target_cols = _collect_targets(img, target_values)
 
-    # Collect target pixel rows/cols in flat arrays (two passes: count, fill).
-    n_targets = 0
-    for line in range(height):
-        for col in range(width):
-            if _is_target_value(img[line, col], target_values):
-                n_targets += 1
-
-    output = np.full((height, width), np.nan, dtype=np.float32)
-    if n_targets == 0:
+    output = np.full(img.shape, np.nan, dtype=np.float32)
+    if len(target_rows) == 0:
         return output
 
-    target_rows = np.empty(n_targets, dtype=np.int64)
-    target_cols = np.empty(n_targets, dtype=np.int64)
-    t = 0
-    for line in range(height):
-        for col in range(width):
-            if _is_target_value(img[line, col], target_values):
-                target_rows[t] = line
-                target_cols[t] = col
-                t += 1
+    txs = xs[target_rows, target_cols]
+    tys = ys[target_rows, target_cols]
 
-    for line in prange(height):
-        for col in range(width):
-            px = xs[line, col]
-            py = ys[line, col]
-            best_dist = np.float32(np.inf)
-            best_idx = -1
-            for k in range(n_targets):
-                tx = xs[target_rows[k], target_cols[k]]
-                ty = ys[target_rows[k], target_cols[k]]
-                d = _distance(px, tx, py, ty, distance_metric)
-                if d < best_dist:
-                    best_dist = d
-                    best_idx = k
-            if best_idx >= 0 and best_dist <= max_distance:
-                if process_mode == PROXIMITY:
-                    output[line, col] = best_dist
-                elif process_mode == ALLOCATION:
-                    output[line, col] = img[
-                        target_rows[best_idx], target_cols[best_idx]]
-                else:
-                    output[line, col] = _calc_direction(
-                        px, xs[target_rows[best_idx], target_cols[best_idx]],
-                        py, ys[target_rows[best_idx], target_cols[best_idx]])
+    if distance_metric == GREAT_CIRCLE:
+        # The per-pair guards in great_circle_distance no longer run inside
+        # the loop; check the grids once up front and raise the same message.
+        violation = _great_circle_range_violation(xs, ys, txs, tys)
+        if violation:
+            raise ValueError(_GREAT_CIRCLE_RANGE_MESSAGES[violation])
+        tlons, tlats, tcoslats = _great_circle_target_terms(txs, tys)
+    else:
+        # Placeholders: the kernel only reads these under GREAT_CIRCLE.
+        tlons = tlats = tcoslats = np.empty(0, dtype=np.float64)
+
+    with _PARALLEL_KERNEL_LOCK:
+        _bruteforce_kernel(
+            img, xs, ys, target_rows, target_cols, txs, tys,
+            tlons, tlats, tcoslats,
+            max_distance, distance_metric, process_mode, output,
+        )
     return output
 
 

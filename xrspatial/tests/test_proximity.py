@@ -729,6 +729,119 @@ def test_tie_break_float32_precision_nonlattice_grid(
     general_output_checks(raster, result, expected)
 
 
+def _raster_on_backend(raster, backend, chunks=(2, 2)):
+    raster = raster.copy()
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=chunks)
+    return raster
+
+
+@pytest.fixture
+def tie_break_proxy_gap_raster():
+    # The brute-force kernel compares a cheap proxy (the squared distance)
+    # and only rounds to float32 when the proxy beats the running best. Here
+    # the proxies differ by a whole unit, 36000000 against 36000001, yet both
+    # distances round to float32(6000.0). The float64-closer target B must
+    # still lose to target A, the lower flat index (issue #3740).
+    data = np.zeros((3, 3), dtype=np.float64)
+    data[1, 2] = 1.0   # target A at (x=6000, y=1), flat index 5
+    data[2, 1] = 2.0   # target B at (x=4800, y=3600), flat index 7
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['x'] = np.array([0.0, 4800.0, 6000.0])
+    raster['y'] = np.array([0.0, 1.0, 3600.0])
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [allocation, direction])
+def test_tie_break_float32_beats_float64_proxy(
+        backend, func, tie_break_proxy_gap_raster):
+    numpy_raster = tie_break_proxy_gap_raster
+    d_a = np.sqrt(6000.0 * 6000.0 + 1.0 * 1.0)
+    d_b = np.sqrt(4800.0 * 4800.0 + 3600.0 * 3600.0)
+    assert d_b < d_a
+    assert np.float32(d_a) == np.float32(d_b)
+
+    expected = func(numpy_raster).data
+    if func is allocation:
+        assert expected[0, 0] == 1.0
+    else:
+        assert expected[0, 0] == _calc_direction(0.0, 6000.0, 0.0, 1.0)
+
+    raster = _raster_on_backend(numpy_raster, backend)
+    result = func(raster)
+    general_output_checks(raster, result, expected)
+
+
+@pytest.mark.parametrize("which, bad_x, bad_y, point", [
+    ('pixel', -181.0, None, 'first'),
+    ('target', 181.0, None, 'second'),
+    ('pixel', None, 91.0, 'first'),
+    ('target', None, -91.0, 'second'),
+])
+def test_bruteforce_great_circle_range_check_messages(
+        which, bad_x, bad_y, point):
+    # GREAT_CIRCLE validates the coordinate grids once before the pixel loop
+    # and must raise the same message the per-pair guard in
+    # great_circle_distance raises for that coordinate (issue #3740).
+    from xrspatial.proximity import GREAT_CIRCLE, PROXIMITY, _process_numpy_bruteforce
+
+    img = np.zeros((2, 2))
+    img[1, 1] = 1.0
+    xs = np.tile(np.array([0.0, 1.0]), 2).reshape(2, 2)
+    ys = np.repeat(np.array([0.0, 1.0]), 2).reshape(2, 2)
+    row, col = (0, 0) if which == 'pixel' else (1, 1)
+    if bad_x is not None:
+        xs[row, col] = bad_x
+        kwargs = dict(x1=0.0, x2=0.0, y1=0.0, y2=0.0)
+        kwargs['x1' if point == 'first' else 'x2'] = bad_x
+    else:
+        ys[row, col] = bad_y
+        kwargs = dict(x1=0.0, x2=0.0, y1=0.0, y2=0.0)
+        kwargs['y1' if point == 'first' else 'y2'] = bad_y
+    with pytest.raises(ValueError) as reference:
+        great_circle_distance(**kwargs)
+    with pytest.raises(ValueError) as kernel:
+        _process_numpy_bruteforce(
+            img, xs, ys, np.array([]), np.float32(np.inf),
+            GREAT_CIRCLE, PROXIMITY)
+    assert str(kernel.value) == str(reference.value)
+    assert point in str(kernel.value)
+
+
+def test_bruteforce_kernel_compiled_parallel():
+    # prange over rows is a plain serial loop unless the kernel is compiled
+    # with parallel=True; guard against that regressing (issue #3740).
+    from xrspatial.proximity import _bruteforce_kernel
+    assert _bruteforce_kernel.targetoptions.get('parallel') is True
+
+
+def test_bruteforce_concurrent_launches_match_serial():
+    # The parallel kernel is launched per chunk from dask worker threads and
+    # is serialized behind _PARALLEL_KERNEL_LOCK; hammer it from a thread
+    # pool and check every caller gets the single-threaded answer.
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Use a raster large enough that the launches actually overlap.
+    data = np.zeros((40, 40), dtype=np.float64)
+    rng = np.random.default_rng(3740)
+    data.flat[rng.choice(data.size, 50, replace=False)] = rng.integers(
+        1, 6, 50)
+    raster = create_test_raster(data, backend='numpy')
+    expected = allocation(raster).data
+
+    def one(_):
+        return allocation(raster).data
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(one, range(32)))
+    for result in results:
+        np.testing.assert_array_equal(result, expected)
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_kdtree_no_targets():
     """No target pixels found → result is all NaN."""
