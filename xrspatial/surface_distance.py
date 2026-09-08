@@ -611,7 +611,15 @@ def _surface_distance_cupy(source_data, elev_data, cellsize_x, cellsize_y,
     changed = cp.zeros(1, dtype=cp.int32)
     griddim, blockdim = cuda_args((H, W))
 
-    max_iterations = H + W
+    # One pass moves distance information roughly one pixel hop, so the
+    # number of passes needed is the hop count of the longest shortest
+    # path.  On open terrain that is about H + W, but NaN barriers make
+    # paths wind, and the Bellman-Ford bound for a grid graph is the
+    # pixel count.  The `changed` check below exits as soon as the
+    # solution settles, so the ceiling only costs anything on the
+    # pathological inputs that need it.
+    max_iterations = H * W
+    converged = False
     for _ in range(max_iterations):
         changed[0] = 0
         _sd_relax_kernel[griddim, blockdim](
@@ -621,7 +629,18 @@ def _surface_distance_cupy(source_data, elev_data, cellsize_x, cellsize_y,
             np.float64(max_distance),
         )
         if int(changed[0]) == 0:
+            converged = True
             break
+
+    if not converged:
+        warnings.warn(
+            f"surface_distance: the GPU relaxation was still improving "
+            f"distances after {max_iterations} passes on a {H}x{W} raster "
+            f"and was stopped.  Some pixels may be reported as unreachable "
+            f"when a path exists.  Please report this raster upstream.",
+            UserWarning,
+            stacklevel=4,
+        )
 
     # Extract output
     if mode == DISTANCE:

@@ -748,6 +748,47 @@ def test_cupy_matches_numpy():
                                equal_nan=True)
 
 
+def _serpentine_elevation(n):
+    """NaN barriers everywhere except one winding open corridor.
+
+    The corridor from (0, 0) is about n*n/2 pixel hops long, far more than
+    the n+n the GPU relaxation used to allow itself.
+    """
+    elev = np.full((n, n), np.nan, dtype=np.float64)
+    for r in range(0, n, 2):
+        elev[r, :] = 0.0
+    for r in range(1, n, 2):
+        elev[r, n - 1 if (r // 2) % 2 == 0 else 0] = 0.0
+    return elev
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="cupy/cuda not available")
+@pytest.mark.parametrize(
+    "mode", [surface_distance, surface_allocation, surface_direction])
+def test_cupy_long_path_matches_numpy(mode):
+    """CuPy must relax until it converges, not for a fixed H+W (#3721).
+
+    A winding corridor needs far more relaxation passes than the raster is
+    wide plus tall. Stopping early makes reachable pixels come back NaN,
+    which reads as "no path exists".
+    """
+    n = 16
+    elev = _serpentine_elevation(n)
+    source = np.zeros((n, n), dtype=np.float64)
+    source[0, 0] = 1.0
+
+    np_result = _compute(mode(_make_raster(source), _make_raster(elev)))
+    cp_result = _compute(mode(_make_raster(source, backend='cupy'),
+                              _make_raster(elev, backend='cupy')))
+
+    # The corridor is genuinely reachable end to end on the CPU.
+    assert np.isfinite(np_result[n - 1, 0])
+    assert int(np.isfinite(np_result).sum()) > 4 * n
+
+    np.testing.assert_allclose(cp_result, np_result, rtol=1e-5,
+                               equal_nan=True)
+
+
 @pytest.mark.skipif(not has_cuda_and_cupy(), reason="cupy/cuda not available")
 def test_cupy_returns_cupy_array():
     """CuPy input should produce CuPy output."""
