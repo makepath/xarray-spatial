@@ -73,6 +73,18 @@ def test_every_required_dependency_has_a_lower_bound():
             f"{name} is declared without a lower bound"
 
 
+def test_numpy_floor_is_two():
+    """NumPy 1.x is not supported; the floor and the import-time check agree.
+
+    xrspatial/__init__.py raises ImportError on numpy < 2. The metadata
+    has to say the same thing or pip will happily install a combination
+    the package then refuses to import.
+    """
+    spec = _install_requires()["numpy"]
+    assert not spec.contains("1.26.4"), "setup.cfg still admits numpy 1.x"
+    assert spec.contains("2.0.0")
+
+
 def test_numpy_has_an_upper_bound():
     """numba caps numpy and re-checks the cap at import time.
 
