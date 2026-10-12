@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ github.event_name == 'pull_request' && fromJson('["ubuntu-latest"]') || fromJson('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
-        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.14"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.15"]') || fromJson('["3.12", "3.15"]') }}
     defaults:
       run:
         # `-el` so micromamba's activation hooks fire and `rasterio`
@@ -41,12 +41,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up micromamba env (conda-forge rasterio + GDAL)
-      # libjxl is pinned to 0.11.* because conda-forge published libjxl
-      # 0.12.0 (2026-07-03) before rebuilding libgdal-core / rasterio
-      # against it, so an unpinned solve pairs a GDAL linked to
-      # libjxl.so.0.11 with only 0.12 installed and rasterio fails to
-      # import. Drop the pin once conda-forge ships libgdal-core /
-      # rasterio builds linked against libjxl 0.12.
       uses: mamba-org/setup-micromamba@v1
       with:
         environment-name: xrspatial-geotiff
@@ -56,7 +50,6 @@ jobs:
           gdal
           pyyaml
           tifffile
-          libjxl=0.11.*
         condarc: |
           channels:
             - conda-forge
