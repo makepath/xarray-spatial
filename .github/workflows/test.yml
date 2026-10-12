@@ -34,7 +34,12 @@ jobs:
     strategy:
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14", "3.14t"]') || fromJson('["3.12", "3.13", "3.14", "3.14t"]') }}
+        # PRs run the newest GIL interpreter plus the free-threaded probe;
+        # push-to-main and the nightly run every supported version. There
+        # is no 3.15t entry yet: numba 0.68.0 ships cp314t wheels but no
+        # cp315t, so that job would build numba from source. Add it once a
+        # numba release carries the wheel.
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.15", "3.14t"]') || fromJson('["3.12", "3.13", "3.14", "3.15", "3.14t"]') }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
