@@ -1,3 +1,4 @@
+from xrspatial._numpy_floor import _check_numpy_version  # noqa: F401
 from xrspatial.aspect import aspect  # noqa
 from xrspatial.aspect import eastness  # noqa
 from xrspatial.aspect import northness  # noqa
